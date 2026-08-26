@@ -1,0 +1,9 @@
+node_modules/
+dist/
+android/
+ios/
+.DS_Store
+*.local
+android-signing/
+.claude/
+tsconfig.tsbuildinfo
