@@ -66,6 +66,10 @@ describe("buildFinancialCheck", () => {
   it("excludes already-sent lines (only the unsent round is fired)", () => {
     expect(xml).not.toContain("<MenuItem_POS_ID>300</MenuItem_POS_ID>");
   });
+  it("emits a <Tax_Group_Amt> per report group when tax groups are given", () => {
+    const withTax = buildFinancialCheck(check, ctx, { taxGroups: [{ reportGroupId: "2", amount: "1.80", isExempt: false }] });
+    expect(withTax).toContain('<Tax_Group_Amt><Tax_Report_Group_POS_ID Is_Exempt="0">2</Tax_Report_Group_POS_ID><Tax_Amount>1.80</Tax_Amount></Tax_Group_Amt>');
+  });
   it("is not settled by default (Is_Closed/Is_Settled = 0)", () => {
     expect(xml).toContain('Is_Closed="0"');
     expect(xml).toContain('Is_Settled="0"');

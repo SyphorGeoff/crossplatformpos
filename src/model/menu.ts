@@ -16,9 +16,10 @@
  */
 
 import {
-  categories, chains, indexBy, menuItems, revenueCenters, rcScreenGroups, screenChains, screenGroups, terminals,
-  type Category, type Chain, type MenuItem, type RevenueCenter, type RcScreenGroup, type ScreenChain,
-  type ScreenGroup, type Terminal,
+  categories, chains, indexBy, menuItems, menuItemTaxGroups, revenueCenters, rcScreenGroups, screenChains,
+  screenGroups, taxPacks, taxReportGroups, terminals,
+  type Category, type Chain, type MenuItem, type MenuItemTaxGroup, type RevenueCenter, type RcScreenGroup,
+  type ScreenChain, type ScreenGroup, type TaxPack, type TaxReportGroup, type Terminal,
 } from "./catalog";
 
 export interface Catalog {
@@ -30,11 +31,17 @@ export interface Catalog {
   terminals: Terminal[];
   chains: Chain[];
   screenChains: ScreenChain[];
+  taxPacks: TaxPack[];
+  menuItemTaxGroups: MenuItemTaxGroup[];
+  taxReportGroups: TaxReportGroup[];
   sgById: Map<string, ScreenGroup>;
   miById: Map<string, MenuItem>;
   rcById: Map<string, RevenueCenter>;
   catById: Map<string, Category>;
   termById: Map<string, Terminal>;
+  taxPackById: Map<string, TaxPack>;
+  taxGroupById: Map<string, MenuItemTaxGroup>;
+  reportGroupById: Map<string, TaxReportGroup>;
 }
 
 /** Snapshot the cached definitions into indexed typed views (cheap; call per mount). */
@@ -44,6 +51,9 @@ export function loadCatalog(): Catalog {
   const rc = revenueCenters();
   const cat = categories();
   const term = terminals();
+  const tp = taxPacks();
+  const mitg = menuItemTaxGroups();
+  const trg = taxReportGroups();
   return {
     revenueCenters: rc,
     screenGroups: sg,
@@ -53,11 +63,17 @@ export function loadCatalog(): Catalog {
     terminals: term,
     chains: chains(),
     screenChains: screenChains(),
+    taxPacks: tp,
+    menuItemTaxGroups: mitg,
+    taxReportGroups: trg,
     sgById: indexBy(sg, (x) => x.id),
     miById: indexBy(mi, (x) => x.id),
     rcById: indexBy(rc, (x) => x.id),
     catById: indexBy(cat, (x) => x.id),
     termById: indexBy(term, (x) => x.id),
+    taxPackById: indexBy(tp, (x) => x.id),
+    taxGroupById: indexBy(mitg, (x) => x.id),
+    reportGroupById: indexBy(trg, (x) => x.id),
   };
 }
 

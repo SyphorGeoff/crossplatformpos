@@ -105,11 +105,15 @@ function xmlTenderLine(t: TenderLine, lineNumber: number): string {
   return `<LineItem ${attrs}>${parts.join("")}</LineItem>`;
 }
 
+/** Per-report-group tax breakdown for the FinancialCheck (<Tax_Group_Amt>). */
+export interface WireTaxGroup { reportGroupId: string; amount: string; isExempt: boolean; }
+
 /** The full FinancialCheck document for the check's unsent round (one tray).
  *  `settle` closes the check: adds the tender lines' round and flips Is_Closed /
  *  Is_Settled (settle is the same POST re-sent, not a separate message —
- *  FinancialCheckManager.m:13824/23664/7953). */
-export function buildFinancialCheck(check: Check, ctx: SendContext, opts: { settle?: boolean } = {}, now = new Date()): string {
+ *  FinancialCheckManager.m:13824/23664/7953). `taxGroups` emit the tax
+ *  breakdown (FinancialCheckManager.m:8274-8298). */
+export function buildFinancialCheck(check: Check, ctx: SendContext, opts: { settle?: boolean; taxGroups?: WireTaxGroup[] } = {}, now = new Date()): string {
   const settle = opts.settle ?? false;
   const trayNumber = check.traysSent + 1;
   const stamp = dateTime(now);
@@ -155,7 +159,13 @@ export function buildFinancialCheck(check: Check, ctx: SendContext, opts: { sett
   if (ctx.isToGo) header.push(el("order_type", "1"));
   header.push(el("active_At", stamp));
 
-  return `${XML_HEAD}${DTD}<FinancialCheck ${checkAttrs}>${header.join("")}${tray}</FinancialCheck>`;
+  // Tax breakdown, one <Tax_Group_Amt> per report group (after the header,
+  // before the trays).
+  const taxXml = (opts.taxGroups ?? [])
+    .map((g) => `<Tax_Group_Amt><Tax_Report_Group_POS_ID Is_Exempt="${g.isExempt ? "1" : "0"}">${escapeXml(g.reportGroupId)}</Tax_Report_Group_POS_ID><Tax_Amount>${escapeXml(g.amount)}</Tax_Amount></Tax_Group_Amt>`)
+    .join("");
+
+  return `${XML_HEAD}${DTD}<FinancialCheck ${checkAttrs}>${header.join("")}${taxXml}${tray}</FinancialCheck>`;
 }
 
 /* ---- Session lookups needed before a check can be sent ---- */
@@ -210,7 +220,7 @@ export interface SendResult { ok: boolean; statusCode: string; message: string; 
 
 /** Fire the check to the kitchen (or settle it with `settle:true`).
  *  Success = Message_Status Status_Code=="100". */
-export async function sendCheck(enterpriseServerUrl: string, check: Check, ctx: SendContext, opts: { settle?: boolean } = {}): Promise<SendResult> {
+export async function sendCheck(enterpriseServerUrl: string, check: Check, ctx: SendContext, opts: { settle?: boolean; taxGroups?: WireTaxGroup[] } = {}): Promise<SendResult> {
   const xml = buildFinancialCheck(check, ctx, opts);
   try {
     const parsed = parseXmlResponse(await postXml(apiServerAddress(enterpriseServerUrl), xml));

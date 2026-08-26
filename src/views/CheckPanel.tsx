@@ -6,11 +6,13 @@
  */
 
 import { checkSubtotal, lineExtended, unsentLines, type Check, type CheckLine } from "@/model/check";
+import { grandTotal, type TaxResult } from "@/model/tax";
 
 const fmt = (n: number): string => `$${n.toFixed(2)}`;
 
 export interface CheckPanelProps {
   check: Check;
+  tax: TaxResult;
   revenueCenterName: string;
   onQty: (key: string, qty: number) => void;
   onRemove: (key: string) => void;
@@ -45,8 +47,9 @@ function LineRow({ line, onQty, onRemove }: { line: CheckLine; onQty: CheckPanel
 }
 
 export default function CheckPanel(p: CheckPanelProps) {
-  const { check } = p;
+  const { check, tax } = p;
   const subtotal = checkSubtotal(check);
+  const total = grandTotal(subtotal, tax);
   const nUnsent = unsentLines(check).length;
 
   return (
@@ -67,7 +70,10 @@ export default function CheckPanel(p: CheckPanelProps) {
       </div>
 
       <div className="cfoot">
-        <div className="csub"><span>Subtotal</span><b>{fmt(subtotal)}</b></div>
+        <div className="csubline"><span>Subtotal</span><span>{fmt(subtotal)}</span></div>
+        {tax.taxTotal > 0 && <div className="csubline"><span>Tax</span><span>{fmt(tax.taxTotal)}</span></div>}
+        {tax.inclusiveTax > 0 && <div className="csubline dim"><span>incl. tax</span><span>{fmt(tax.inclusiveTax)}</span></div>}
+        <div className="csub"><span>Total</span><b>{fmt(total)}</b></div>
         {p.sendError && <div className="cerr">{p.sendError}</div>}
         <div className="cactions">
           <button className="cnew" onClick={p.onNewCheck} disabled={p.sending}>New</button>

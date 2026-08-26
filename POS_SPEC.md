@@ -211,7 +211,7 @@ gateways and live PMS posting are out of scope. Verified live against enox
 - **Settle is the same `<FinancialCheck>` POST re-sent** with `Is_Closed="1"` /
   `Is_Settled="1"` and the tender lines' tray — NOT a separate message
   (FinancialCheckManager.m:13824/23664). Success = Status_Code 100. Balance due =
-  subtotal (tax computation is a separate subsystem, deferred).
+  grand total (subtotal + tax; see §4.5).
 - Change: `amountTendered − balance` (Overpay_Is_Tip folds overpay to tip on the
   iPad; here overpay is change). Split/partial = multiple tender lines; the check
   closes when the balance reaches 0.
@@ -236,8 +236,28 @@ gateways and live PMS posting are out of scope. Verified live against enox
 
 Implemented: `src/protocol/payment.ts`, `src/protocol/order.ts` (settle + Type=T),
 `src/model/check.ts` (tenders/balance), `src/views/PaymentView.tsx`. Tests:
-`tests/order.test.ts` (settle + tender lines). Deferred: tax computation,
-live PMS posting, credit-card processing, loyalty (off in store 3).
+`tests/order.test.ts` (settle + tender lines). Deferred: live PMS posting,
+credit-card processing, loyalty (off in store 3).
+
+### 4.5 Tax computation  (`src/model/tax.ts`, TaxManager.m)
+Chain: `Menu_Item.Menu_Item_Tax_Group_POS_ID` → `Menu_Item_Tax_Group`
+(`Tax_Pack_POS_ID`, `Round_Down`) → `Tax_Pack` (up to 5 `Tax_DefN`: Rate,
+`TRG_POS_ID`, Threshold, Rebate, `Is_Compounded`) → `Tax_Report_Group`
+(`Is_Inclusive`). Store 3: group 1 = Sales Tax 10% exclusive, group 2 = No Tax.
+- Per def (TaxManager.m:1861-1899): exclusive `tax = base × rate/100` (two-step
+  ×4dp, round-down if the group's `Round_Down`); inclusive `tax = base −
+  base/(1+rate/100)`. Compound (Def2..5, :1930) folds the prior def's tax into
+  the base. Accumulate per report group at 4dp; **round each group to 2dp at
+  assembly** then sum — exclusive → grand total, inclusive → already in prices
+  (:1105-1150). Grand total = round2(subtotal) + round2(exclusive tax).
+- Wire: one `<Tax_Group_Amt><Tax_Report_Group_POS_ID Is_Exempt="…">{id}</…>
+  <Tax_Amount>…</Tax_Amount></Tax_Group_Amt>` per report group on the
+  FinancialCheck (FinancialCheckManager.m:8274-8298); no separate total element.
+- Verified live: Big Burger $10 → tax $1.00 → total $11.00; cash $11 settle with
+  the tax breakdown → Status_Code 100. Tests: `tests/tax.test.ts` (9).
+  Simplified (not in store 3, documented in tax.ts): Item_Count_Trigger>1,
+  per-def Threshold/Rebate tiering, multi-inclusive combined-rate reconciliation.
+  Whole-check tax exemption (remove report groups) is modeled but no UI yet.
 
 ---
 

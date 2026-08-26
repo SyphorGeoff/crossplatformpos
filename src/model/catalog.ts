@@ -26,6 +26,7 @@ export interface MenuItem {
   otherScreenGroupIds: string[]; // Secondary_ + Screen_Group_POS_ID3..10
   sort: number;               // Screen_Sort_Order within the group
   categoryId: string;
+  taxGroupId: string;         // Menu_Item_Tax_Group_POS_ID
   printGroupId: string;
   isModifier: boolean;        // Is_Modifier=="1" — a topping/mod, not a sellable tile
   modChainId: string;         // Screen_Chain_POS_ID — forces modifiers when added (M2)
@@ -124,6 +125,7 @@ function toMenuItem(r: DefRow): MenuItem {
     otherScreenGroupIds: EXTRA_SG_KEYS.map((k) => s(r, k)).filter(Boolean),
     sort: Number(s(r, "Screen_Sort_Order")) || 0,
     categoryId: s(r, "Category_POS_ID"),
+    taxGroupId: s(r, "Menu_Item_Tax_Group_POS_ID"),
     printGroupId: s(r, "Print_Group_POS_ID"),
     isModifier: s(r, "Is_Modifier") === "1",
     modChainId: s(r, "Screen_Chain_POS_ID"),
@@ -178,6 +180,66 @@ export function rcScreenGroups(): RcScreenGroup[] {
       s(r, "saturday") === "1",
     ],
     _raw: r,
+  }));
+}
+
+/** One tax definition within a Tax_Pack (up to 5: Tax_Def1..5). */
+export interface TaxDef {
+  name: string;
+  rate: number;             // percent, e.g. 10 (Tax_DefN_Rate)
+  reportGroupId: string;    // Tax_DefN_TRG_POS_ID → Tax_Report_Group
+  threshold: number;        // Tax_DefN_Threshold (0 = none)
+  rebateRate: number;       // Tax_DefN_Rebate_Rate
+  compounded: boolean;      // Tax_DefN_Is_Compounded (tax on prior tax)
+}
+export interface TaxPack {
+  id: string;               // POS_ID
+  name: string;
+  defs: TaxDef[];           // active definitions (rate or name present)
+  _raw: DefRow;
+}
+export interface MenuItemTaxGroup {
+  id: string;               // POS_ID (Menu_Item.Menu_Item_Tax_Group_POS_ID)
+  taxPackId: string;        // Tax_Pack_POS_ID
+  roundDown: boolean;
+  _raw: DefRow;
+}
+export interface TaxReportGroup {
+  id: string;               // POS_ID
+  name: string;
+  isInclusive: boolean;     // Is_Inclusive — tax baked into the price vs added on top
+  _raw: DefRow;
+}
+
+export function taxPacks(): TaxPack[] {
+  return loadDefRows("Tax_Pack").filter(alive).map((r) => {
+    const defs: TaxDef[] = [];
+    for (let i = 1; i <= 5; i++) {
+      const rate = s(r, `Tax_Def${i}_Rate`);
+      const name = s(r, `Tax_Def${i}_Name`);
+      const trg = s(r, `Tax_Def${i}_TRG_POS_ID`);
+      if (!name && !rate && !trg) continue;         // slot unused
+      if (!trg && Number(rate) === 0) continue;     // 0% no-op with no group
+      defs.push({
+        name, rate: Number(rate) || 0, reportGroupId: trg,
+        threshold: Number(s(r, `Tax_Def${i}_Threshold`)) || 0,
+        rebateRate: Number(s(r, `Tax_Def${i}_Rebate_Rate`)) || 0,
+        compounded: s(r, `Tax_Def${i}_Is_Compounded`) === "1",
+      });
+    }
+    return { id: s(r, "POS_ID"), name: s(r, "Name").trim(), defs, _raw: r };
+  });
+}
+
+export function menuItemTaxGroups(): MenuItemTaxGroup[] {
+  return loadDefRows("Menu_Item_Tax_Group").filter(alive).map((r) => ({
+    id: s(r, "POS_ID"), taxPackId: s(r, "Tax_Pack_POS_ID"), roundDown: s(r, "Round_Down") === "1", _raw: r,
+  }));
+}
+
+export function taxReportGroups(): TaxReportGroup[] {
+  return loadDefRows("Tax_Report_Group").filter(alive).map((r) => ({
+    id: s(r, "POS_ID"), name: s(r, "Name").trim(), isInclusive: s(r, "Is_Inclusive") === "1", _raw: r,
   }));
 }
 

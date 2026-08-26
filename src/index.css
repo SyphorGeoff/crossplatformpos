@@ -100,7 +100,9 @@ body { background: var(--bg); color: var(--ink); font-family: system-ui, -apple-
 .clctl .rm { width: auto; padding: 0 10px; font-size: 12px; color: var(--ink-dim); }
 
 .cfoot { border-top: 1px solid var(--edge); padding: 12px; display: flex; flex-direction: column; gap: 10px; }
-.csub { display: flex; justify-content: space-between; font-size: 16px; }
+.csubline { display: flex; justify-content: space-between; font-size: 13px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.csubline.dim { color: var(--ink-dim); font-size: 12px; }
+.csub { display: flex; justify-content: space-between; font-size: 17px; padding-top: 4px; border-top: 1px solid var(--edge); margin-top: 2px; }
 .csub b { font-variant-numeric: tabular-nums; }
 .cerr { font-size: 12px; color: #ff8a8a; }
 .cactions { display: flex; gap: 8px; }

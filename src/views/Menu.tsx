@@ -25,6 +25,7 @@ import {
   type SendContext, type SessionConfig,
 } from "@/protocol/order";
 import { sendPayment, type GiftType, type LoyaltyType, type PaymentContext, type PaymentResult } from "@/protocol/payment";
+import { computeCheckTax, taxGroupsForWire } from "@/model/tax";
 
 const TILE_COLORS = ["#26303f", "#2f6fb0", "#b0472f", "#2f8f5f", "#b98a2b", "#7a55c0", "#2f8fae", "#b0416f"];
 const tileColor = (idx: string): string => {
@@ -74,6 +75,7 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
   const ck = useCheck(init.rcId);
   const payTenders = useMemo(() => loadTenders().filter((t) => t.appliesToCheck && !t.hidden).sort((a, b) => a.sort - b.sort), []);
   const store = useMemo(() => storeConfig(), []);
+  const tax = useMemo(() => computeCheckTax(cat, ck.check), [cat, ck.check]);
 
   const roots = useMemo(() => rootScreenGroups(cat, rcId), [cat, rcId]);
   const current = stack[stack.length - 1];
@@ -134,7 +136,7 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
 
   /** POST the check with an already-resolved business date + number. */
   const postCheckWith = async (settle: boolean, bd: string, checkNo: string): Promise<{ ok: boolean; message: string }> => {
-    const res = await sendCheck(settings.enterpriseServerUrl, { ...ck.check, checkNumber: checkNo }, buildCtx(bd, checkNo), { settle });
+    const res = await sendCheck(settings.enterpriseServerUrl, { ...ck.check, checkNumber: checkNo }, buildCtx(bd, checkNo), { settle, taxGroups: taxGroupsForWire(tax) });
     if (res.ok) ck.markSent(settle);
     return { ok: res.ok, message: res.message };
   };
@@ -244,6 +246,7 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
 
         <CheckPanel
           check={ck.check}
+          tax={tax}
           revenueCenterName={cat.rcById.get(ck.check.revenueCenterId)?.name ?? ""}
           onQty={ck.setQty}
           onRemove={ck.remove}
@@ -264,6 +267,7 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
       {showPay && (
         <PaymentView
           check={ck.check}
+          tax={tax}
           tenders={payTenders}
           applyTender={ck.applyTender}
           processGift={processGift}

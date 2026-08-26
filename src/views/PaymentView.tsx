@@ -10,7 +10,8 @@
  */
 
 import { useState } from "react";
-import { balanceDue, checkSubtotal, tenderApplied, type Check, type TenderLine } from "@/model/check";
+import { checkSubtotal, tenderApplied, type Check, type TenderLine } from "@/model/check";
+import { balanceWithTax, grandTotal, type TaxResult } from "@/model/tax";
 import type { Tender } from "@/model/catalog";
 import type { GiftType, LoyaltyType, PaymentResult } from "@/protocol/payment";
 
@@ -21,6 +22,7 @@ type Mode = { kind: "tenders" } | { kind: "cash" } | { kind: "gift"; tender: Ten
 
 export interface PaymentViewProps {
   check: Check;
+  tax: TaxResult;
   tenders: Tender[];
   applyTender: (t: Omit<TenderLine, "key">) => void;
   processGift: (card: string, type: GiftType | LoyaltyType, amount: number) => Promise<PaymentResult>;
@@ -30,8 +32,10 @@ export interface PaymentViewProps {
 }
 
 export default function PaymentView(p: PaymentViewProps) {
-  const due = balanceDue(p.check);
+  const subtotal = checkSubtotal(p.check);
   const paid = tenderApplied(p.check);
+  const due = balanceWithTax(subtotal, p.tax, paid);
+  const total = grandTotal(subtotal, p.tax);
   const [mode, setMode] = useState<Mode>({ kind: "tenders" });
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
@@ -63,7 +67,7 @@ export default function PaymentView(p: PaymentViewProps) {
           <div>
             <div className="pvtitle">{due <= 0.005 ? "Balance Paid" : "Balance Due"}</div>
             <div className="pvbal">{fmt(due)}</div>
-            <div className="pvsub">Subtotal {fmt(checkSubtotal(p.check))} · paid {fmt(paid)} · tax not incl.</div>
+            <div className="pvsub">Subtotal {fmt(subtotal)}{p.tax.taxTotal > 0 ? ` · tax ${fmt(p.tax.taxTotal)}` : ""} · total {fmt(total)} · paid {fmt(paid)}</div>
           </div>
           <button className="x" onClick={p.onClose} disabled={busy}>✕</button>
         </div>
