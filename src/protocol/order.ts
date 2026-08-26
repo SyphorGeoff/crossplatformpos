@@ -62,9 +62,9 @@ const el = (name: string, value: string | number): string => `<${name}>${escapeX
 /** One <LineItem …>. `lineNumber` map lets modifiers point at their parent. */
 function xmlLineItem(line: CheckLine, lineNumber: number, trayNumber: number, parentLineNumber?: number): string {
   const attrs = [
-    `Is_Held="${line.isVoid ? "0" : "0"}"`,
+    `Is_Held="0"`,
     `Is_Void="${line.isVoid ? "1" : "0"}"`,
-    `Transfered_Out="0"`,
+    `Transfered_Out="${line.transferOut ? "1" : "0"}"`,
     `Print_On_Check="1"`,
     `Show_On_Display="1"`,
     `Type="M"`,

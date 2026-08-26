@@ -29,7 +29,7 @@ import {
 } from "@/protocol/order";
 import { sendPayment, type GiftType, type LoyaltyType, type PaymentContext, type PaymentResult } from "@/protocol/payment";
 import { fetchOpenChecks, lockCheck, readCheck, unlockCheck, type OpenCheck } from "@/protocol/tables";
-import { unsentLines } from "@/model/check";
+import { markRoundSent, splitToNewCheck, unsentLines } from "@/model/check";
 import { computeCheckTax, taxGroupsForWire } from "@/model/tax";
 
 const TILE_COLORS = ["#26303f", "#2f6fb0", "#b0472f", "#2f8f5f", "#b98a2b", "#7a55c0", "#2f8fae", "#b0416f"];
@@ -260,6 +260,30 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
 
   const settle = () => postCheck(true);
 
+  /** Split selected items onto a new check (recon C): post the source with the
+   *  void-off lines, then the new check. Both are ordinary FinancialCheck POSTs. */
+  const splitSelected = async (keys: Set<string>) => {
+    const { source, dest } = splitToNewCheck(ck.check, keys);
+    if (dest.lines.length === 0) return;
+    setSending(true); setSendError("");
+    try {
+      const { bd, checkNo: srcNo } = await ensureSession();
+      if (unsentLines(source).length > 0) {
+        const r1 = await sendCheck(settings.enterpriseServerUrl, { ...source, checkNumber: srcNo }, buildCtx(bd, srcNo),
+          { settle: false, taxGroups: taxGroupsForWire(computeCheckTax(cat, source)) });
+        if (!r1.ok) { setSendError(`Split failed (source): ${r1.message}`); setSending(false); return; }
+      }
+      const destNo = nextCheckNo(await fetchHighestCheck(sessionCfg(), bd), settings.terminalPosId);
+      const destCheck = { ...dest, checkNumber: destNo };
+      const r2 = await sendCheck(settings.enterpriseServerUrl, destCheck, buildCtx(bd, destNo),
+        { settle: false, taxGroups: taxGroupsForWire(computeCheckTax(cat, destCheck)) });
+      if (!r2.ok) { setSendError(`Split failed (new check ${destNo}): ${r2.message}`); setSending(false); return; }
+      ck.loadCheck(markRoundSent(source));
+      setSendError(`Split ${dest.lines.length} item(s) → new check ${destNo}`);
+    } catch (e) { setSendError(String((e as Error).message ?? e)); }
+    setSending(false);
+  };
+
   /** Native gift/loyalty <Payment> processing (balance inquiry + redeem). */
   const processGift = async (card: string, type: GiftType | LoyaltyType, amount: number): Promise<PaymentResult> => {
     if (!employee) return { ok: false, status: "", message: "No employee", fields: {} };
@@ -377,6 +401,7 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
           onSetGuests={ck.setGuests}
           onSend={doSend}
           onPay={() => setShowPay(true)}
+          onSplit={splitSelected}
           onNewCheck={() => { ck.reset(rcId); setSendError(""); }}
           sending={sending}
           sendError={sendError}

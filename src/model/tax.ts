@@ -49,7 +49,7 @@ export function computeCheckTax(cat: Catalog, check: Check, exempt: Set<string> 
   };
 
   for (const line of check.lines) {
-    if (line.isVoid || line.kind === "Co") continue;
+    if (line.isVoid || line.transferOut || line.kind === "Co") continue;
     const item = cat.miById.get(line.menuItemId);
     const group = item?.taxGroupId ? cat.taxGroupById.get(item.taxGroupId) : undefined;
     const pack = group ? cat.taxPackById.get(group.taxPackId) : undefined;

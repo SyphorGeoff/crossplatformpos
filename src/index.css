@@ -91,6 +91,11 @@ body { background: var(--bg); color: var(--ink); font-family: system-ui, -apple-
 .cl.sent { opacity: .55; }
 .cl.fresh .clname::before { content: "• "; color: var(--accent); }
 .cl.void .clname { text-decoration: line-through; color: var(--ink-dim); }
+.cl.selectable { cursor: pointer; }
+.cl.selectable:hover { background: #1c2333; }
+.cl.picked { background: #24344e; }
+.clcheck { color: var(--accent); }
+.cnew.wide { flex: 1; }
 .clmain { display: flex; align-items: baseline; gap: 8px; }
 .clqty { color: var(--ink-dim); font-variant-numeric: tabular-nums; min-width: 22px; }
 .clname { flex: 1; font-size: 14px; }

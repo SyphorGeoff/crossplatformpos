@@ -300,12 +300,23 @@ transfer mode on the floorplan; picking a table re-POSTs and the server frees th
 old table / occupies the new. Verified live: #200006 moved table 4 → table 3.
 (Provenance reference lines and transfer-to-employee are deferred.)
 
+### 5.4 Splits (`splitToNewCheck`, recon C)
+Select item lines → move them to a NEW check (modifiers move with their parent).
+No dedicated Split message: the source re-POSTs with a negative
+`Transfered_Out="1"` void-off for each already-sent moved line (unsent lines are
+just dropped), and a fresh `<FinancialCheck>` is POSTed for the destination
+(new check number). `transferOut` lines are excluded from the displayed
+subtotal/tax but sent on the wire (negative `Line_Amount`). Verified live: Check
+200007 (Coca Cola + Coffee) → split Coffee → source reduced to Coca Cola, new
+check 200008 created (both Status_Code 100). Tests: `tests/check.test.ts`.
+(Seat/even splits reuse this primitive and are a later refinement.)
+
 ---
 
 ## Later chapters (planned, per milestone)
 M1 store/terminal pick + assignment + menu browse ✓ · M2 order entry + send to
 kitchen (closes the loop with the shipped KDS) ✓ · M3 payments (cash + room
 charge + native Aireus gift/loyalty; CC seam stubbed) ✓ · M4 table service /
-splits / transfers / floorplan · M5 manager functions / timeclock / cash mgmt.
+splits / transfers / floorplan ✓ · M5 manager functions / timeclock / cash mgmt.
 Each ends with an enox side-by-side against the iPad. M1–M2 run entirely on the
 existing XML API — no dependency on the server rewrite.

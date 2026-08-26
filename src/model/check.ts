@@ -26,6 +26,7 @@ export interface CheckLine {
   guestNumber?: number;     // seat/guest this line is for
   modChainId?: string;      // item's forced-modifier chain (Screen_Chain_POS_ID)
   isVoid?: boolean;
+  transferOut?: boolean;    // a negative void-off line moving an item off this check (split/transfer)
   sent?: boolean;           // already fired to the kitchen in a prior round
 }
 
@@ -106,10 +107,9 @@ export function setQuantity(check: Check, key: string, quantity: number): Check 
 /** A line's extended price (unit × qty). Modifiers may carry an upcharge. */
 export const lineExtended = (l: CheckLine): number => (l.isVoid ? 0 : l.amount * l.quantity);
 
-/** Running subtotal across all non-void lines. NOTE: tax is not yet computed —
- *  the balance due is the subtotal (the tax subsystem is a separate concern). */
+/** Running subtotal across current lines (excludes void-off/transfer lines). */
 export const checkSubtotal = (check: Check): number =>
-  check.lines.reduce((sum, l) => sum + lineExtended(l), 0);
+  check.lines.reduce((sum, l) => sum + (l.transferOut ? 0 : lineExtended(l)), 0);
 
 /** Total applied by tenders so far (change is not applied; it's returned cash). */
 export const tenderApplied = (check: Check): number =>
@@ -136,6 +136,38 @@ export function removeTender(check: Check, key: string): Check {
 /** Lines not yet fired to the kitchen — the "new round" a send transmits. */
 export const unsentLines = (check: Check): CheckLine[] => check.lines.filter((l) => !l.sent);
 export const unsentTenders = (check: Check): TenderLine[] => check.tenders.filter((t) => !t.sent);
+
+/**
+ * Split selected item lines onto a brand-new check (move items). Modifiers of a
+ * selected item move with it. Already-sent lines leave a negative Transfered_Out
+ * void-off on the source (to cancel them server-side, recon C); unsent lines are
+ * simply dropped. The new check carries positive copies (same table).
+ */
+export function splitToNewCheck(source: Check, keys: Set<string>): { source: Check; dest: Check } {
+  // Expand selection to include modifiers hanging off a selected parent.
+  const selected = new Set<string>();
+  for (const l of source.lines) {
+    if (keys.has(l.key) || (l.parentKey && selected.has(l.parentKey))) selected.add(l.key);
+  }
+  const dest = newCheck(source.revenueCenterId, source.tableName, source.guestCount, source.diningTableId);
+  const keyMap = new Map<string, string>();
+  const destLines: CheckLine[] = [];
+  for (const l of source.lines) {
+    if (!selected.has(l.key)) continue;
+    const nk = mintLineKey();
+    keyMap.set(l.key, nk);
+    destLines.push({ ...l, key: nk, sent: false, transferOut: false, parentKey: l.parentKey ? keyMap.get(l.parentKey) : undefined });
+  }
+  dest.lines = destLines;
+
+  const srcLines: CheckLine[] = [];
+  for (const l of source.lines) {
+    if (!selected.has(l.key)) { srcLines.push(l); continue; }
+    if (l.sent) srcLines.push({ ...l, key: mintLineKey(), amount: -Math.abs(l.amount), transferOut: true, sent: false });
+    // unsent selected lines: dropped (never reached the server)
+  }
+  return { source: { ...source, lines: srcLines }, dest };
+}
 
 /** Mark the current round (items + tenders) sent and advance the tray counter. */
 export function markRoundSent(check: Check, closed = false): Check {
