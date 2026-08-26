@@ -77,6 +77,7 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
   const [bdid, setBdid] = useState("");
   const [showPay, setShowPay] = useState(false);
   const [mode, setMode] = useState<"floor" | "order">("order");
+  const [transferMode, setTransferMode] = useState(false);
   const [openChecks, setOpenChecks] = useState<OpenCheck[]>([]);
   const [floorLoading, setFloorLoading] = useState(false);
   const [floorStatus, setFloorStatus] = useState("");
@@ -172,13 +173,34 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
   const goToFloor = async () => {
     if (ck.check.diningTableId && unsentLines(ck.check).length > 0) { setSending(true); await postCheck(false); setSending(false); }
     await releaseLock();
-    setMode("floor");
+    setTransferMode(false); setMode("floor");
     void refreshOpenChecks();
   };
 
-  const quickSale = () => { void releaseLock(); ck.reset(rcId); setSendError(""); setMode("order"); };
+  const quickSale = () => { void releaseLock(); setTransferMode(false); ck.reset(rcId); setSendError(""); setMode("order"); };
+
+  /** Move the current (posted) check to another table — a re-POST of the
+   *  FinancialCheck with a new DiningTable_POS_ID (recon D). */
+  const startTransfer = async () => {
+    if (unsentLines(ck.check).length > 0) { setSending(true); const r = await postCheck(false); setSending(false); if (!r.ok) { setSendError(r.message); return; } }
+    setTransferMode(true); setMode("floor"); void refreshOpenChecks();
+  };
+  const transferTo = async (table: DiningTable) => {
+    setFloorLoading(true); setFloorStatus(`Moving check to table ${table.name}…`);
+    try {
+      const { bd, checkNo } = await ensureSession();
+      const moved = { ...ck.check, diningTableId: table.id, tableName: table.name, checkNumber: checkNo };
+      const res = await sendCheck(settings.enterpriseServerUrl, moved, buildCtx(bd, checkNo), { settle: false, taxGroups: taxGroupsForWire(tax) });
+      if (!res.ok) { setFloorStatus(`Transfer failed: ${res.message}`); setFloorLoading(false); return; }
+      await releaseLock();
+      ck.reset(rcId); setTransferMode(false); setFloorStatus(`Moved to table ${table.name}`);
+      await refreshOpenChecks();
+    } catch (e) { setFloorStatus(String((e as Error).message ?? e)); }
+    setFloorLoading(false);
+  };
 
   const pickTable = async (table: DiningTable, occ?: OpenCheck) => {
+    if (transferMode) { void transferTo(table); return; }
     if (!occ) { // open a fresh check bound to the table
       void releaseLock();
       ck.reset(table.revenueCenterId || rcId, table.name, 1, table.id);
@@ -279,6 +301,8 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
         onSignOut={signOut}
         loading={floorLoading}
         status={floorStatus}
+        transferMode={transferMode}
+        onCancelTransfer={() => { setTransferMode(false); setMode("order"); }}
       />
     );
   }
@@ -295,6 +319,7 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
         <div className="tools">
           <input className="search" placeholder="Search items…" value={query} onChange={(e) => setQuery(e.target.value)} />
           {query && <button className="clr" onClick={() => setQuery("")}>✕</button>}
+          {ck.check.diningTableId && <button className="station" onClick={startTransfer} disabled={sending}>Move</button>}
           <button className="station" onClick={goToFloor} disabled={sending}>Tables</button>
           <button className="station" onClick={signOut}>Sign out</button>
           <button className="station" onClick={onChangeStation}>Station</button>

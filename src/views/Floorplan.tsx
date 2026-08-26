@@ -25,6 +25,8 @@ export interface FloorplanProps {
   onSignOut: () => void;
   loading: boolean;
   status?: string;
+  transferMode?: boolean;
+  onCancelTransfer?: () => void;
 }
 
 type Status = "open" | "occupied" | "allergy" | "held" | "printed";
@@ -60,6 +62,9 @@ export default function Floorplan(p: FloorplanProps) {
         </div>
       </header>
 
+      {p.transferMode && (
+        <div className="floorstatus xfer">Pick a table to move the check to · <button className="link" onClick={p.onCancelTransfer}>Cancel</button></div>
+      )}
       {p.status && <div className="floorstatus">{p.status}</div>}
 
       <div className="floorscroll">

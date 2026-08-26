@@ -137,6 +137,8 @@ body { background: var(--bg); color: var(--ink); font-family: system-ui, -apple-
 /* Floorplan */
 .floor { display: flex; flex-direction: column; height: 100vh; }
 .floorstatus { padding: 6px 14px; font-size: 12px; color: var(--ink-dim); background: var(--chrome); border-bottom: 1px solid var(--edge); }
+.floorstatus.xfer { color: #fff; background: var(--accent); }
+.floorstatus .link { background: none; border: none; color: inherit; text-decoration: underline; cursor: pointer; font-size: 12px; }
 .floorscroll { flex: 1; overflow: auto; padding: 20px; display: flex; justify-content: center; }
 .floorcanvas { position: relative; width: min(760px, 100%); background: #12151d; border: 1px solid var(--edge); border-radius: 12px; }
 .floorcanvas .empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--ink-dim); }

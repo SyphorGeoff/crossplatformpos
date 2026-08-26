@@ -291,7 +291,14 @@ tax on resumed checks.
   extended amount (unit × qty), matching the iPad.
 
 Implemented: `src/protocol/tables.ts`, `src/views/Floorplan.tsx`; `Menu.tsx`
-floor/order switch, `useCheck.loadCheck`. Splits & transfers: next.
+floor/order switch, `useCheck.loadCheck`.
+
+### 5.3 Transfer check → table
+Move a table check to another table: re-POST the `<FinancialCheck>` with a new
+`DiningTable_POS_ID` (recon D — no dedicated Transfer message). "Move" enters a
+transfer mode on the floorplan; picking a table re-POSTs and the server frees the
+old table / occupies the new. Verified live: #200006 moved table 4 → table 3.
+(Provenance reference lines and transfer-to-employee are deferred.)
 
 ---
 

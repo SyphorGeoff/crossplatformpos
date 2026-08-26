@@ -42,6 +42,7 @@ export function useCheck(defaultRcId: string) {
   const setTable = useCallback((tableName: string) => mutate((c) => ({ ...c, tableName })), [mutate]);
   const setGuests = useCallback((guestCount: number) => mutate((c) => ({ ...c, guestCount: Math.max(1, guestCount) })), [mutate]);
   const setRevenueCenter = useCallback((revenueCenterId: string) => mutate((c) => ({ ...c, revenueCenterId })), [mutate]);
+  const setDiningTable = useCallback((diningTableId: string, tableName: string) => mutate((c) => ({ ...c, diningTableId, tableName })), [mutate]);
   const setCheckNumber = useCallback((checkNumber: string) => mutate((c) => ({ ...c, checkNumber })), [mutate]);
 
   const applyTender = useCallback((t: Omit<TenderLine, "key">) => mutate((c) => addTender(c, t)), [mutate]);
@@ -59,5 +60,5 @@ export function useCheck(defaultRcId: string) {
   /** Replace the current check with one pulled from the server (resume a table). */
   const loadCheck = useCallback((c: Check) => { persist(c); setCheck(c); }, []);
 
-  return { check, addItem, addModifier, remove: remove_, setQty, setTable, setGuests, setRevenueCenter, setCheckNumber, applyTender, voidTender, markSent, reset, loadCheck };
+  return { check, addItem, addModifier, remove: remove_, setQty, setTable, setGuests, setRevenueCenter, setDiningTable, setCheckNumber, applyTender, voidTender, markSent, reset, loadCheck };
 }
