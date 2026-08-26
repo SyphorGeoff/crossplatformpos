@@ -16,8 +16,9 @@
  */
 
 import {
-  categories, indexBy, menuItems, revenueCenters, rcScreenGroups, screenGroups, terminals,
-  type Category, type MenuItem, type RevenueCenter, type RcScreenGroup, type ScreenGroup, type Terminal,
+  categories, chains, indexBy, menuItems, revenueCenters, rcScreenGroups, screenChains, screenGroups, terminals,
+  type Category, type Chain, type MenuItem, type RevenueCenter, type RcScreenGroup, type ScreenChain,
+  type ScreenGroup, type Terminal,
 } from "./catalog";
 
 export interface Catalog {
@@ -27,6 +28,8 @@ export interface Catalog {
   rcScreenGroups: RcScreenGroup[];
   categories: Category[];
   terminals: Terminal[];
+  chains: Chain[];
+  screenChains: ScreenChain[];
   sgById: Map<string, ScreenGroup>;
   miById: Map<string, MenuItem>;
   rcById: Map<string, RevenueCenter>;
@@ -48,12 +51,50 @@ export function loadCatalog(): Catalog {
     rcScreenGroups: rcScreenGroups(),
     categories: cat,
     terminals: term,
+    chains: chains(),
+    screenChains: screenChains(),
     sgById: indexBy(sg, (x) => x.id),
     miById: indexBy(mi, (x) => x.id),
     rcById: indexBy(rc, (x) => x.id),
     catById: indexBy(cat, (x) => x.id),
     termById: indexBy(term, (x) => x.id),
   };
+}
+
+/** One resolved modifier step: the screen to show + its rules + its items. */
+export interface ModifierStep {
+  screenChainId: string;
+  screenGroupId: string;
+  title: string;            // the modifier screen's name
+  min: number;
+  max: number;
+  isForced: boolean;        // must pick (no skip)
+  maxFreeCount: number;     // first N free
+  items: MenuItem[];        // modifier tiles
+}
+
+/**
+ * Resolve a menu item's forced-modifier chain into ordered steps
+ * (CheckViewController.m:17284-17362): Screen_Chain_POS_ID → Chain rows by
+ * Sort_Order → each Chain's Screen_Group → that group's items. Steps whose
+ * modifier screen is hidden for the RC are dropped (:17327).
+ */
+export function modifierSteps(cat: Catalog, screenChainId: string, rcId: string, when?: Date): ModifierStep[] {
+  if (!screenChainId) return [];
+  const rc = cat.rcById.get(rcId);
+  return cat.chains
+    .filter((ch) => ch.screenChainId === screenChainId)
+    .sort((a, b) => a.sort - b.sort)
+    .map((ch) => {
+      const sg = cat.sgById.get(ch.screenGroupId);
+      if (!sg || !isScreenGroupVisible(cat, sg, rc, when)) return null;
+      return {
+        screenChainId, screenGroupId: ch.screenGroupId, title: sg.name,
+        min: ch.min, max: ch.max, isForced: ch.isForced, maxFreeCount: ch.maxFreeCount,
+        items: itemsInScreenGroup(cat, ch.screenGroupId),
+      } as ModifierStep;
+    })
+    .filter((s): s is ModifierStep => s !== null && s.items.length > 0);
 }
 
 const bySortThenName = <T extends { sort: number; name: string }>(a: T, b: T) =>

@@ -86,8 +86,14 @@ export function parseXmlResponse(xmlText: string): XmlDict {
 
 function elementToValue(el: Element): string | XmlDict {
   const children = Array.from(el.children);
-  if (children.length === 0) return el.textContent ?? "";
+  const attrs = Array.from(el.attributes);
+  // Pure leaf, no attributes → the text value (unchanged behavior).
+  if (children.length === 0 && attrs.length === 0) return el.textContent ?? "";
   const dict: XmlDict = {};
+  // Attributes become plain keys so findKey() reaches them — HBroker carries
+  // status on attributes, e.g. <Message_Status Status_Code="100">.
+  for (const a of attrs) dict[a.name] = a.value;
+  if (children.length === 0) { dict._text = el.textContent ?? ""; return dict; }
   for (const c of children) {
     const v = elementToValue(c);
     const existing = dict[c.tagName];

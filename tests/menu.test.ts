@@ -10,11 +10,11 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { indexBy, type Catalog } from "@/model/catalog";
+import { indexBy } from "@/model/catalog";
 import type { MenuItem, RcScreenGroup, RevenueCenter, ScreenGroup, Terminal } from "@/model/catalog";
 import {
   childScreenGroups, initialSelection, isScreenGroupVisible, itemsInScreenGroup,
-  rootScreenGroups, searchItems,
+  rootScreenGroups, searchItems, type Catalog,
 } from "@/model/menu";
 
 const sg = (id: string, name: string, o: Partial<ScreenGroup> & { skip?: string } = {}): ScreenGroup => ({
@@ -43,7 +43,7 @@ function build(parts: {
   const terminals = parts.terminals ?? [];
   return {
     screenGroups, menuItems, revenueCenters, terminals,
-    rcScreenGroups: parts.rcScreenGroups ?? [], categories: [],
+    rcScreenGroups: parts.rcScreenGroups ?? [], categories: [], chains: [], screenChains: [],
     sgById: indexBy(screenGroups, (x) => x.id), miById: indexBy(menuItems, (x) => x.id),
     rcById: indexBy(revenueCenters, (x) => x.id), catById: new Map(), termById: indexBy(terminals, (x) => x.id),
   };

@@ -72,6 +72,27 @@ export interface Category {
   _raw: DefRow;
 }
 
+/** One step of a modifier chain: a modifier Screen_Group shown after an item,
+ *  with min/max selection rules (Chain rows, ordered by Sort_Order). */
+export interface Chain {
+  screenChainId: string;    // Screen_Chain_POS_ID (the chain this step belongs to)
+  screenGroupId: string;    // Screen_Group_POS_ID (the modifier screen to show)
+  isForced: boolean;        // Is_Forced=="1" — must pick, no skip
+  isModifier: boolean;
+  min: number;
+  max: number;              // iPad caps at 20
+  maxFreeCount: number;     // first N modifiers priced free
+  sort: number;             // Sort_Order (step order)
+  _raw: DefRow;
+}
+
+/** A named modifier chain (Screen_Chain), referenced by Menu_Item.Screen_Chain_POS_ID. */
+export interface ScreenChain {
+  id: string;               // POS_ID
+  name: string;
+  _raw: DefRow;
+}
+
 export interface Terminal {
   id: string;                 // POS_ID
   name: string;
@@ -157,6 +178,42 @@ export function rcScreenGroups(): RcScreenGroup[] {
       s(r, "saturday") === "1",
     ],
     _raw: r,
+  }));
+}
+
+export interface Employee {
+  id: string;               // Emp_POS_ID
+  name: string;             // First Last
+  inTraining: boolean;
+  _raw: DefRow;
+}
+
+export function employees(): Employee[] {
+  return loadDefRows("Employee").filter(alive).map((r) => ({
+    id: s(r, "Emp_POS_ID"),
+    name: `${s(r, "First_Name")} ${s(r, "Last_Name")}`.trim() || s(r, "Emp_POS_ID"),
+    inTraining: s(r, "In_Training") === "1",
+    _raw: r,
+  })).filter((e) => e.id);
+}
+
+export function chains(): Chain[] {
+  return loadDefRows("Chain").filter(alive).map((r) => ({
+    screenChainId: s(r, "Screen_Chain_POS_ID"),
+    screenGroupId: s(r, "Screen_Group_POS_ID"),
+    isForced: s(r, "Is_Forced") === "1",
+    isModifier: s(r, "Is_Modifier") === "1",
+    min: Number(s(r, "Min")) || 0,
+    max: Math.min(20, Number(s(r, "Max")) || 0), // iPad caps Max at 20
+    maxFreeCount: Number(s(r, "max_Free_Count")) || 0,
+    sort: Number(s(r, "Sort_Order")) || 0,
+    _raw: r,
+  }));
+}
+
+export function screenChains(): ScreenChain[] {
+  return loadDefRows("Screen_Chain").filter(alive).map((r) => ({
+    id: s(r, "POS_ID"), name: s(r, "Name").trim(), _raw: r,
   }));
 }
 

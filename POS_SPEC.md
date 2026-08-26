@@ -128,9 +128,67 @@ link (Main Dishes ⇄ Breakfast) — faithfully reproduced, matching the iPad.
 
 ---
 
+## Chapter 3 — Order entry & send to kitchen  *(M2, this slice)*
+
+Tap items to build a check, run forced-modifier chains, and fire the check to
+the kitchen — closing the loop with the shipped KDS. Verified live end-to-end
+against enox (2026-08-26): a FinancialCheck POST was accepted (Status_Code 100)
+and the server assigned/incremented the check number (200001 → 200002).
+
+### 3.1 Check model (client-local, offline doctrine)
+`src/model/check.ts` — a check is a flat array of line items mirroring the KDS
+wire shape: each `CheckLine` has a kind (M item / Mo modifier / Co course),
+`indentLevel`, and modifiers carry `parentKey` (→ the item line). Persisted to
+storage on every change (`useCheck`), flushed on send — never a local database.
+
+### 3.2 Add + forced-modifier flow (CheckViewController.m:17284-17476)
+- `Menu_Item.Screen_Chain_POS_ID` → `Screen_Chain` → `Chain` rows (by Sort_Order)
+  → each `Chain.Screen_Group_POS_ID` is a modifier screen. `src/model/menu.ts`
+  `modifierSteps()` resolves them; `ModifierFlow.tsx` walks them.
+- Per step: `Min`/`Max` selection, `Is_Forced` (no Skip) vs optional (Skip),
+  `max_Free_Count` (first N picks priced 0, extras keep price — CheckViewController
+  .m:16869-16878). Modifiers attach as their own lines under the parent.
+
+### 3.3 Send message — FinancialCheck (FinancialCheckManager.m:12841-13158)
+POST to `/ISISPOS/HBroker`, `Content-type: text/xml`. `src/protocol/order.ts`
+`buildFinancialCheck()` reproduces it byte-for-byte:
+- `<FinancialCheck …attrs…>` (Guest_Count, Check_Name, Is_New, …) + header in
+  emission order: ISIS_Ver, BusinessDate_ID, Store_ID, Security_Token, Check_No,
+  Employee_POS_ID, check_key, is_Mobile, RevenueCenter_POS_ID, Opened_On, active_At.
+- One `<Tray>` per service round (Tray_Number, Terminal_POS_ID, Sent_On,
+  Employee_POS_ID, traykey) holding the round's unsent lines.
+- `<LineItem … Type="M" lineitemkey=…>` with Guest_Num, Quantity, Line_Number,
+  MenuItem_POS_ID, Line_Amount; **modifiers are Type="M" lines carrying
+  `Parent_LineItem_ID` + `Parent_Tray_Number`** pointing at the parent's
+  Line_Number/Tray. Escaping: `&`→`&amp;`, `'`→`&apos;`, newline→`&#xA;`.
+- **Success = `<Message_Status Status_Code="100">`.** (Status_Code is an XML
+  *attribute* — the response parser was fixed to capture attributes, which also
+  hardened the Terminal_Assignment check.)
+- Routing to kitchen/printer is **server-side** (by RevenueCenter + each item's
+  print groups); the client sends one check.
+
+### 3.4 Session coordination (all `Transactional_Request` POSTs to /ISISPOS/HBroker)
+- **BusinessDate_ID** (`resolveBusinessDate`): `Trans_Type="BusinessDate"` →
+  `/BusinessDates/Business_Date[]`; pick the row whose (EndsAt−24h, EndsAt] window
+  contains now (the feed carries future dates — live-confirmed bdid 90042 for
+  2026-08-26). Required; empty ⇒ not-ready.
+- **Check number** (`fetchHighestCheck` + `nextCheckNo`):
+  `Trans_Type="HighestCheck"` (with BusinessDate_ID + Terminal_POS_ID) →
+  `/HighestCheck/Check_Number`; next = highest+1, or `{terminalId}0001` when none.
+- **Employee**: any `Employee.Emp_POS_ID` populates `Employee_POS_ID`; no
+  client-side clock-in is required to send. `useEmployee` signs a server in.
+
+Implemented: `src/model/check.ts`, `src/state/useCheck.ts`, `src/state/useEmployee.ts`,
+`src/protocol/order.ts`, `src/views/{CheckPanel,ModifierFlow,Menu}.tsx`.
+Tests: `tests/order.test.ts` (10). Live-verified: employee sign-in, tap-to-add,
+3-step modifier chain (single + multi-select + free-count), send → Status 100,
+check-number coordination, offline check persistence.
+
+---
+
 ## Later chapters (planned, per milestone)
 M1 store/terminal pick + assignment + menu browse ✓ · M2 order entry + send to
-kitchen (closes the loop with the shipped KDS) · M3 payments (cash + room
+kitchen (closes the loop with the shipped KDS) ✓ · M3 payments (cash + room
 charge + native Aireus gift/loyalty; CC seam stubbed) · M4 table service /
 splits / transfers / floorplan · M5 manager functions / timeclock / cash mgmt.
 Each ends with an enox side-by-side against the iPad. M1–M2 run entirely on the
