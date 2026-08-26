@@ -186,10 +186,65 @@ check-number coordination, offline check persistence.
 
 ---
 
+## Chapter 4 — Payments  *(M3, this slice)*
+
+Settle a check: cash, room charge, and the native Aireus gift/loyalty. Credit
+cards are deferred (stubbed, disabled in the UI); third-party gift/loyalty
+gateways and live PMS posting are out of scope. Verified live against enox
+(2026-08-26): cash settle, room-charge (offline) settle, and a native gift
+`<Payment>` all round-tripped (Status_Code 100 / real PaymentResponse).
+
+### 4.1 Tender model & routing
+- `Tender` kind flags (Tender.m): `Is_Cash`, `Is_Credit`, `Is_GiftCert`,
+  `is_Loyalty`, `roomCharge`; `payment_Driver` selects an external processor
+  ("" = native/plain). Classified in `src/model/catalog.ts` (`tenders()`).
+- Processor is Store-level: `GC_Processor`/`loyalty_Processor` — native when the
+  string contains "isis"/"aireus" (store 3: `GC_Processor="ISISGiftCard"` → native
+  gift; `use_Loyalty=0` → no loyalty here). `storeConfig()` + `isNativeGift`/
+  `isNativeLoyalty` gate to native-only; non-native card/gift/loyalty is stubbed.
+
+### 4.2 Payment → tender line & settle
+- A payment is a `Type="T"` LineItem (Tender_POS_ID, Line_Amount, Tip_Amount,
+  Change_Given, Transaction_Ref=gift balance, Reference=room/auth) —
+  FinancialCheckManager.m:7224/12255. `src/model/check.ts` holds tenders +
+  balance math; `src/protocol/order.ts` `xmlTenderLine`.
+- **Settle is the same `<FinancialCheck>` POST re-sent** with `Is_Closed="1"` /
+  `Is_Settled="1"` and the tender lines' tray — NOT a separate message
+  (FinancialCheckManager.m:13824/23664). Success = Status_Code 100. Balance due =
+  subtotal (tax computation is a separate subsystem, deferred).
+- Change: `amountTendered − balance` (Overpay_Is_Tip folds overpay to tip on the
+  iPad; here overpay is change). Split/partial = multiple tender lines; the check
+  closes when the balance reaches 0.
+
+### 4.3 Cash & room charge
+- Cash: amount pad / fast-cash → change → tender line → settle.
+- Room charge: prompt room number (+ last name) → recorded **offline** as a
+  tender line (Reference="Room N …"). The live PMS post is a separate host
+  (`http://{PMS_Address}:{PMS_Port}/OraclePMSProxy/OracleProxy`, `<PostRequest/>`,
+  PMSManager.m:2998/3475) — the builder is in `src/protocol/payment.ts` but not
+  auto-fired (external hotel system).
+
+### 4.4 Native gift / loyalty  (`src/protocol/payment.ts`)
+- `<Payment Type="…">` POST to **HBroker** (CreditCardManager.m:653/1168):
+  gift `PrePaidBalance`/`PrePaidSale`, loyalty `LoyaltyBalance`/`LoyaltyRedeem`
+  (native only; third-party uses `ai_givex.jsp`/`ai_loyalty.jsp` — never here).
+  Response `<PaymentResponse Status="…">` (children Balance/TextResponse/…).
+- **The check must be posted before a `<Payment>`** — the server rejects an
+  unknown check with Status_Code 500 "Check not posted"; the client posts the
+  check first (verified live: bogus card → `Status="Failure"` "Account doesn't
+  exist", i.e. the native processor accepted and processed the message).
+
+Implemented: `src/protocol/payment.ts`, `src/protocol/order.ts` (settle + Type=T),
+`src/model/check.ts` (tenders/balance), `src/views/PaymentView.tsx`. Tests:
+`tests/order.test.ts` (settle + tender lines). Deferred: tax computation,
+live PMS posting, credit-card processing, loyalty (off in store 3).
+
+---
+
 ## Later chapters (planned, per milestone)
 M1 store/terminal pick + assignment + menu browse ✓ · M2 order entry + send to
 kitchen (closes the loop with the shipped KDS) ✓ · M3 payments (cash + room
-charge + native Aireus gift/loyalty; CC seam stubbed) · M4 table service /
+charge + native Aireus gift/loyalty; CC seam stubbed) ✓ · M4 table service /
 splits / transfers / floorplan · M5 manager functions / timeclock / cash mgmt.
 Each ends with an enox side-by-side against the iPad. M1–M2 run entirely on the
 existing XML API — no dependency on the server rewrite.

@@ -15,7 +15,7 @@
  */
 
 import { apiServerAddress, asList, findKey, parseXmlResponse, postXml, textOf } from "./hbroker";
-import type { Check, CheckLine } from "@/model/check";
+import { unsentLines, unsentTenders, type Check, type CheckLine, type TenderLine } from "@/model/check";
 
 export interface SessionConfig {
   enterpriseServerUrl: string;
@@ -86,31 +86,59 @@ function xmlLineItem(line: CheckLine, lineNumber: number, trayNumber: number, pa
   return `<LineItem ${attrs}>${parts.join("")}</LineItem>`;
 }
 
-/** The full FinancialCheck document for the check's unsent lines (one tray). */
-export function buildFinancialCheck(check: Check, ctx: SendContext, now = new Date()): string {
-  const trayNumber = 1;
+/** One <LineItem Type="T"> — a tender/payment (FinancialCheckManager.m:7224/12255). */
+function xmlTenderLine(t: TenderLine, lineNumber: number): string {
+  const attrs = [
+    `Is_Held="0"`, `Is_Void="0"`, `Transfered_Out="0"`, `Print_On_Check="1"`,
+    `Show_On_Display="0"`, `Type="T"`, `Finalized="1"`, `Is_Split="0"`,
+    `lineitemkey="${escapeXml(t.key)}"`, `posted="0"`,
+  ].join(" ");
+  const parts: string[] = [];
+  parts.push(el("Quantity", 1));
+  parts.push(el("Line_Number", lineNumber));
+  parts.push(el("Tender_POS_ID", t.tenderId));
+  if (t.tip) parts.push(el("Tip_Amount", t.tip.toFixed(2)));
+  if (t.change) parts.push(el("Change_Given", t.change.toFixed(2)));
+  if (t.balanceRef) parts.push(el("Transaction_Ref", t.balanceRef));
+  if (t.reference) parts.push(el("Reference", t.reference));
+  parts.push(el("Line_Amount", t.amount.toFixed(2)));
+  return `<LineItem ${attrs}>${parts.join("")}</LineItem>`;
+}
+
+/** The full FinancialCheck document for the check's unsent round (one tray).
+ *  `settle` closes the check: adds the tender lines' round and flips Is_Closed /
+ *  Is_Settled (settle is the same POST re-sent, not a separate message —
+ *  FinancialCheckManager.m:13824/23664/7953). */
+export function buildFinancialCheck(check: Check, ctx: SendContext, opts: { settle?: boolean } = {}, now = new Date()): string {
+  const settle = opts.settle ?? false;
+  const trayNumber = check.traysSent + 1;
   const stamp = dateTime(now);
 
-  // Assign a Line_Number to each line being sent; map keys → number so
-  // modifiers can reference their parent line.
-  const lines = check.lines.filter((l) => !l.sent);
+  // Line_Number is tray-scoped: items first (so modifiers can reference their
+  // parent's number within the tray), then tender lines.
+  const items = unsentLines(check);
   const numberByKey = new Map<string, number>();
-  lines.forEach((l, i) => numberByKey.set(l.key, i + 1));
+  items.forEach((l, i) => numberByKey.set(l.key, i + 1));
+  const tenders = unsentTenders(check);
 
-  const lineXml = lines
+  const itemXml = items
     .map((l) => xmlLineItem(l, numberByKey.get(l.key)!, trayNumber, l.parentKey ? numberByKey.get(l.parentKey) : undefined))
     .join("");
+  const tenderXml = tenders.map((t, i) => xmlTenderLine(t, items.length + i + 1)).join("");
 
   const tray =
     `<Tray Tray_Number="${trayNumber}" Terminal_POS_ID="${escapeXml(ctx.terminalPosId)}" ` +
     `Sent_On="${stamp}" Employee_POS_ID="${escapeXml(ctx.employeePosId)}" traykey="${mintCheckKey()}">` +
-    lineXml + `</Tray>`;
+    itemXml + tenderXml + `</Tray>`;
 
+  const flag = (b: boolean) => (b ? "1" : "0");
   const checkAttrs = [
     `Is_Cancelled="0"`, `Is_Return="0"`, `Print_Count="0"`, `Is_Transferred="0"`,
     `is_FutureOrder="0"`, `Is_Split="0"`, `Is_Tax_Exempt="0"`,
-    `Guest_Count="${check.guestCount}"`, `Is_Closed="0"`, `Is_Reopen="0"`,
-    `is_Settled="0"`, `Check_Name="${escapeXml(check.tableName || "")}"`, `Is_New="1"`,
+    `Guest_Count="${check.guestCount}"`, `Is_Closed="${flag(settle)}"`, `Is_Reopen="0"`,
+    // is_Settled (lowercase) is always empty on the wire; Is_Settled carries the flag.
+    `is_Settled=""`, `Is_Settled="${flag(settle)}"`,
+    `Check_Name="${escapeXml(check.tableName || "")}"`, `Is_New="${flag(check.traysSent === 0)}"`,
   ].join(" ");
 
   const header: string[] = [];
@@ -180,9 +208,10 @@ export function nextCheckNo(highest: number, terminalPosId: string): string {
 
 export interface SendResult { ok: boolean; statusCode: string; message: string; }
 
-/** Fire the check to the kitchen. Success = Message_Status Status_Code=="100". */
-export async function sendCheck(enterpriseServerUrl: string, check: Check, ctx: SendContext): Promise<SendResult> {
-  const xml = buildFinancialCheck(check, ctx);
+/** Fire the check to the kitchen (or settle it with `settle:true`).
+ *  Success = Message_Status Status_Code=="100". */
+export async function sendCheck(enterpriseServerUrl: string, check: Check, ctx: SendContext, opts: { settle?: boolean } = {}): Promise<SendResult> {
+  const xml = buildFinancialCheck(check, ctx, opts);
   try {
     const parsed = parseXmlResponse(await postXml(apiServerAddress(enterpriseServerUrl), xml));
     const code = textOf(findKey(parsed, "Status_Code"));

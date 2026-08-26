@@ -17,6 +17,7 @@ export interface CheckPanelProps {
   onSetTable: (name: string) => void;
   onSetGuests: (n: number) => void;
   onSend: () => void;
+  onPay: () => void;
   onNewCheck: () => void;
   sending?: boolean;
   sendError?: string;
@@ -74,6 +75,7 @@ export default function CheckPanel(p: CheckPanelProps) {
             {p.sending ? "Sending…" : nUnsent > 0 ? `Send ${nUnsent} to kitchen` : "Sent"}
           </button>
         </div>
+        <button className="cpay" onClick={p.onPay} disabled={p.sending || check.lines.length === 0}>Pay</button>
       </div>
     </aside>
   );

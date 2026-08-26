@@ -13,16 +13,18 @@ import { useCheck } from "@/state/useCheck";
 import { useEmployee, type CurrentEmployee } from "@/state/useEmployee";
 import CheckPanel from "./CheckPanel";
 import ModifierFlow, { type ChosenModifier } from "./ModifierFlow";
+import PaymentView from "./PaymentView";
 import {
   childScreenGroups, initialSelection, itemsInScreenGroup, loadCatalog, modifierSteps,
   rootScreenGroups, searchItems, type Catalog, type ModifierStep,
 } from "@/model/menu";
-import { employees } from "@/model/catalog";
+import { employees, isNativeGift, isNativeLoyalty, storeConfig, tenders as loadTenders } from "@/model/catalog";
 import type { MenuItem, ScreenGroup } from "@/model/catalog";
 import {
   fetchHighestCheck, nextCheckNo, resolveBusinessDate, sendCheck,
   type SendContext, type SessionConfig,
 } from "@/protocol/order";
+import { sendPayment, type GiftType, type LoyaltyType, type PaymentContext, type PaymentResult } from "@/protocol/payment";
 
 const TILE_COLORS = ["#26303f", "#2f6fb0", "#b0472f", "#2f8f5f", "#b98a2b", "#7a55c0", "#2f8fae", "#b0416f"];
 const tileColor = (idx: string): string => {
@@ -67,8 +69,11 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState("");
   const [bdid, setBdid] = useState("");
+  const [showPay, setShowPay] = useState(false);
 
   const ck = useCheck(init.rcId);
+  const payTenders = useMemo(() => loadTenders().filter((t) => t.appliesToCheck && !t.hidden).sort((a, b) => a.sort - b.sort), []);
+  const store = useMemo(() => storeConfig(), []);
 
   const roots = useMemo(() => rootScreenGroups(cat, rcId), [cat, rcId]);
   const current = stack[stack.length - 1];
@@ -106,27 +111,75 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
     setPending(null);
   };
 
-  const doSend = async () => {
-    if (!employee) return;
-    setSending(true); setSendError("");
-    const cfg: SessionConfig = {
-      enterpriseServerUrl: settings.enterpriseServerUrl, isisVer: ISIS_VER,
-      storeId: settings.storeId, token: settings.token, terminalPosId: settings.terminalPosId,
-    };
+  const sessionCfg = (): SessionConfig => ({
+    enterpriseServerUrl: settings.enterpriseServerUrl, isisVer: ISIS_VER,
+    storeId: settings.storeId, token: settings.token, terminalPosId: settings.terminalPosId,
+  });
+
+  /** Resolve BusinessDate_ID and a check number, assigning the number once. */
+  const ensureSession = async (): Promise<{ bd: string; checkNo: string }> => {
+    const cfg = sessionCfg();
+    let bd = bdid;
+    if (!bd) { bd = await resolveBusinessDate(cfg); setBdid(bd); }
+    if (!bd) throw new Error("No open business date on the server");
+    let checkNo = ck.check.checkNumber;
+    if (!checkNo) { checkNo = nextCheckNo(await fetchHighestCheck(cfg, bd), settings.terminalPosId); ck.setCheckNumber(checkNo); }
+    return { bd, checkNo };
+  };
+
+  const buildCtx = (bd: string, checkNo: string): SendContext => ({
+    isisVer: ISIS_VER, storeId: settings.storeId, securityToken: settings.token,
+    terminalPosId: settings.terminalPosId, employeePosId: employee!.id, businessDateId: bd, checkNo,
+  });
+
+  /** POST the check with an already-resolved business date + number. */
+  const postCheckWith = async (settle: boolean, bd: string, checkNo: string): Promise<{ ok: boolean; message: string }> => {
+    const res = await sendCheck(settings.enterpriseServerUrl, { ...ck.check, checkNumber: checkNo }, buildCtx(bd, checkNo), { settle });
+    if (res.ok) ck.markSent(settle);
+    return { ok: res.ok, message: res.message };
+  };
+
+  /** POST the check — kitchen fire (settle=false) or settle+close (settle=true). */
+  const postCheck = async (settle: boolean): Promise<{ ok: boolean; message: string }> => {
+    if (!employee) return { ok: false, message: "No employee signed in" };
     try {
-      let bd = bdid;
-      if (!bd) { bd = await resolveBusinessDate(cfg); setBdid(bd); }
-      if (!bd) throw new Error("No open business date on the server");
-      let checkNo = ck.check.checkNumber;
-      if (!checkNo) { checkNo = nextCheckNo(await fetchHighestCheck(cfg, bd), settings.terminalPosId); ck.setCheckNumber(checkNo); }
-      const ctx: SendContext = {
-        isisVer: ISIS_VER, storeId: settings.storeId, securityToken: settings.token,
-        terminalPosId: settings.terminalPosId, employeePosId: employee.id, businessDateId: bd, checkNo,
-      };
-      const res = await sendCheck(settings.enterpriseServerUrl, { ...ck.check, checkNumber: checkNo }, ctx);
-      if (res.ok) ck.markSent(); else setSendError(res.message);
-    } catch (e) { setSendError(String((e as Error).message ?? e)); }
+      const { bd, checkNo } = await ensureSession();
+      return await postCheckWith(settle, bd, checkNo);
+    } catch (e) { return { ok: false, message: String((e as Error).message ?? e) }; }
+  };
+
+  const doSend = async () => {
+    setSending(true); setSendError("");
+    const r = await postCheck(false);
+    if (!r.ok) setSendError(r.message);
     setSending(false);
+  };
+
+  const settle = () => postCheck(true);
+
+  /** Native gift/loyalty <Payment> processing (balance inquiry + redeem). */
+  const processGift = async (card: string, type: GiftType | LoyaltyType, amount: number): Promise<PaymentResult> => {
+    if (!employee) return { ok: false, status: "", message: "No employee", fields: {} };
+    const loyalty = type.startsWith("Loyalty");
+    if (loyalty && !isNativeLoyalty(store)) return { ok: false, status: "", message: "Third-party loyalty is out of scope", fields: {} };
+    if (!loyalty && !isNativeGift(store)) return { ok: false, status: "", message: "Third-party gift card is out of scope", fields: {} };
+    try {
+      const { bd, checkNo } = await ensureSession();
+      // Native <Payment> processing references a check the server already knows —
+      // post the check first if it hasn't been sent (server: "Check not posted").
+      if (ck.check.traysSent === 0) {
+        const r = await postCheckWith(false, bd, checkNo);
+        if (!r.ok) return { ok: false, status: "", message: `Send check first: ${r.message}`, fields: {} };
+      }
+      const pctx: PaymentContext = {
+        enterpriseServerUrl: settings.enterpriseServerUrl, isisVer: ISIS_VER, storeId: settings.storeId,
+        terminalPosId: settings.terminalPosId, securityToken: settings.token, businessDateId: bd,
+        merchantId: loyalty ? store.loyaltyMerchantId : store.gcMerchantId,
+        merchantPassword: loyalty ? store.loyaltyMerchantPassword : store.gcMerchantPassword,
+        operatorId: employee.id, invoiceNo: checkNo, checkKey: ck.check.id,
+      };
+      return await sendPayment(type, pctx, { card, amount });
+    } catch (e) { return { ok: false, status: "ERROR", message: String((e as Error).message ?? e), fields: {} }; }
   };
 
   if (!employee) return <EmployeePicker onPick={signIn} />;
@@ -197,6 +250,7 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
           onSetTable={ck.setTable}
           onSetGuests={ck.setGuests}
           onSend={doSend}
+          onPay={() => setShowPay(true)}
           onNewCheck={() => { ck.reset(rcId); setSendError(""); }}
           sending={sending}
           sendError={sendError}
@@ -205,6 +259,18 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
 
       {pending && (
         <ModifierFlow itemName={pending.item.name} steps={pending.steps} onDone={finishMods} onCancel={() => setPending(null)} />
+      )}
+
+      {showPay && (
+        <PaymentView
+          check={ck.check}
+          tenders={payTenders}
+          applyTender={ck.applyTender}
+          processGift={processGift}
+          settle={settle}
+          onClose={() => setShowPay(false)}
+          onClosed={() => { setShowPay(false); ck.reset(rcId); setSendError(""); }}
+        />
       )}
     </div>
   );

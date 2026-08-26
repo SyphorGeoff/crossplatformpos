@@ -8,8 +8,8 @@
 import { useCallback, useState } from "react";
 import { loadJSON, remove, saveJSON } from "@/platform/storage";
 import {
-  addItemLine, addModifierLine, markAllSent, mintLineKey, newCheck, removeLine, setQuantity,
-  type Check,
+  addItemLine, addModifierLine, addTender, markRoundSent, mintLineKey, newCheck, removeLine,
+  removeTender, setQuantity, type Check, type TenderLine,
 } from "@/model/check";
 import type { MenuItem } from "@/model/catalog";
 
@@ -44,13 +44,17 @@ export function useCheck(defaultRcId: string) {
   const setRevenueCenter = useCallback((revenueCenterId: string) => mutate((c) => ({ ...c, revenueCenterId })), [mutate]);
   const setCheckNumber = useCallback((checkNumber: string) => mutate((c) => ({ ...c, checkNumber })), [mutate]);
 
-  /** After a successful fire to the kitchen: mark lines sent (keep the check open). */
-  const markSent = useCallback(() => mutate(markAllSent), [mutate]);
+  const applyTender = useCallback((t: Omit<TenderLine, "key">) => mutate((c) => addTender(c, t)), [mutate]);
+  const voidTender = useCallback((key: string) => mutate((c) => removeTender(c, key)), [mutate]);
+
+  /** After a successful POST: mark the round (items + tenders) sent, advance the
+   *  tray counter, and optionally flag the check closed (settled). */
+  const markSent = useCallback((closed = false) => mutate((c) => markRoundSent(c, closed)), [mutate]);
 
   /** Start a fresh check (e.g. after settling / clearing). */
   const reset = useCallback((rcId: string, tableName = "", guestCount = 1) => {
     const next = newCheck(rcId, tableName, guestCount); persist(next); setCheck(next);
   }, []);
 
-  return { check, addItem, addModifier, remove: remove_, setQty, setTable, setGuests, setRevenueCenter, setCheckNumber, markSent, reset };
+  return { check, addItem, addModifier, remove: remove_, setQty, setTable, setGuests, setRevenueCenter, setCheckNumber, applyTender, voidTender, markSent, reset };
 }

@@ -15,6 +15,7 @@ const ctx: SendContext = {
 
 const check: Check = {
   id: "CK1", revenueCenterId: "3", tableName: "Bob's & Table", guestCount: 2, openedAt: 0,
+  traysSent: 0, tenders: [],
   lines: [
     { key: "a", menuItemId: "100", description: "T-Bone", quantity: 1, amount: 18, kind: "M", indentLevel: 0, guestNumber: 1 },
     { key: "b", menuItemId: "200", description: "Rare", quantity: 1, amount: 0, kind: "Mo", indentLevel: 1, parentKey: "a" },
@@ -64,5 +65,42 @@ describe("buildFinancialCheck", () => {
   });
   it("excludes already-sent lines (only the unsent round is fired)", () => {
     expect(xml).not.toContain("<MenuItem_POS_ID>300</MenuItem_POS_ID>");
+  });
+  it("is not settled by default (Is_Closed/Is_Settled = 0)", () => {
+    expect(xml).toContain('Is_Closed="0"');
+    expect(xml).toContain('Is_Settled="0"');
+    expect(xml).toContain('is_Settled=""'); // lowercase always empty (iPad quirk)
+  });
+});
+
+describe("buildFinancialCheck settle", () => {
+  const settled: Check = {
+    ...check, traysSent: 1, // items already fired in tray 1
+    lines: check.lines.map((l) => ({ ...l, sent: true })),
+    tenders: [
+      { key: "t1", tenderId: "1", name: "Cash", amount: 20, tip: 0, change: 3 },
+      { key: "t2", tenderId: "18", name: "Gift Card", amount: 5, tip: 0, change: 0, reference: "1234", balanceRef: "12.00" },
+    ],
+  };
+  const xml = buildFinancialCheck(settled, ctx, { settle: true });
+
+  it("flips Is_Closed and Is_Settled to 1", () => {
+    expect(xml).toContain('Is_Closed="1"');
+    expect(xml).toContain('Is_Settled="1"');
+  });
+  it("uses the next tray number and marks the check not-new", () => {
+    expect(xml).toContain('Tray_Number="2"');
+    expect(xml).toContain('Is_New="0"');
+  });
+  it("emits Type=T tender lines with Tender_POS_ID, Change_Given and Line_Amount", () => {
+    expect(xml).toContain('Type="T"');
+    expect(xml).toContain("<Tender_POS_ID>1</Tender_POS_ID>");
+    expect(xml).toContain("<Change_Given>3.00</Change_Given><Line_Amount>20.00</Line_Amount>");
+  });
+  it("carries gift balance in Transaction_Ref and the card ref in Reference", () => {
+    expect(xml).toContain("<Transaction_Ref>12.00</Transaction_Ref><Reference>1234</Reference>");
+  });
+  it("does not re-send already-fired item lines", () => {
+    expect(xml).not.toContain('Type="M"');
   });
 });

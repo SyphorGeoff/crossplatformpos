@@ -29,13 +29,29 @@ export interface CheckLine {
   sent?: boolean;           // already fired to the kitchen in a prior round
 }
 
+/** A payment applied to the check — serialized as a Type="T" LineItem on send. */
+export interface TenderLine {
+  key: string;
+  tenderId: string;         // Tender_POS_ID
+  name: string;
+  amount: number;           // applied to the balance (reduces balance due)
+  tip: number;              // Tip_Amount
+  change: number;           // Change_Given (cash overpay returned; informational)
+  reference?: string;       // room number / auth ref (Reference on the wire)
+  balanceRef?: string;      // gift/loyalty remaining balance (Transaction_Ref)
+  sent?: boolean;
+}
+
 export interface Check {
   id: string;               // local check id (uuid-ish)
   revenueCenterId: string;
   tableName: string;
   guestCount: number;
   lines: CheckLine[];
+  tenders: TenderLine[];
   checkNumber?: string;     // server- or locally-assigned; set on first send
+  traysSent: number;        // service rounds already POSTed (tray numbering)
+  closed?: boolean;         // settled + closed (Is_Closed/Is_Settled on the wire)
   openedAt: number;         // ms
 }
 
@@ -45,7 +61,7 @@ let seq = 0;
 export const mintLineKey = (): string => `L${Date.now().toString(36)}${(seq++).toString(36)}`;
 
 export function newCheck(revenueCenterId: string, tableName = "", guestCount = 1): Check {
-  return { id: mintLineKey(), revenueCenterId, tableName, guestCount, lines: [], openedAt: Date.now() };
+  return { id: mintLineKey(), revenueCenterId, tableName, guestCount, lines: [], tenders: [], traysSent: 0, openedAt: Date.now() };
 }
 
 /** Append a menu item as a new order line (quantity 1) with the caller's key. */
@@ -89,14 +105,44 @@ export function setQuantity(check: Check, key: string, quantity: number): Check 
 /** A line's extended price (unit × qty). Modifiers may carry an upcharge. */
 export const lineExtended = (l: CheckLine): number => (l.isVoid ? 0 : l.amount * l.quantity);
 
-/** Running subtotal across all non-void lines (tax is an M3/payments concern). */
+/** Running subtotal across all non-void lines. NOTE: tax is not yet computed —
+ *  the balance due is the subtotal (the tax subsystem is a separate concern). */
 export const checkSubtotal = (check: Check): number =>
   check.lines.reduce((sum, l) => sum + lineExtended(l), 0);
 
+/** Total applied by tenders so far (change is not applied; it's returned cash). */
+export const tenderApplied = (check: Check): number =>
+  check.tenders.reduce((sum, t) => sum + t.amount, 0);
+
+/** Balance still owed (subtotal − tenders applied). Tax deferred; see above. */
+export const balanceDue = (check: Check): number =>
+  Math.max(0, round2(checkSubtotal(check) - tenderApplied(check)));
+
+const round2 = (n: number): number => Math.round(n * 100) / 100;
+
+export const isPaid = (check: Check): boolean =>
+  check.lines.length > 0 && balanceDue(check) <= 0.005;
+
+/** Append a tender (payment) to the check. */
+export function addTender(check: Check, t: Omit<TenderLine, "key">): Check {
+  return { ...check, tenders: [...check.tenders, { ...t, key: mintLineKey() }] };
+}
+
+export function removeTender(check: Check, key: string): Check {
+  return { ...check, tenders: check.tenders.filter((t) => t.key !== key && t.sent !== true) };
+}
+
 /** Lines not yet fired to the kitchen — the "new round" a send transmits. */
 export const unsentLines = (check: Check): CheckLine[] => check.lines.filter((l) => !l.sent);
+export const unsentTenders = (check: Check): TenderLine[] => check.tenders.filter((t) => !t.sent);
 
-/** Mark every current line as sent (after a successful fire to the kitchen). */
-export function markAllSent(check: Check): Check {
-  return { ...check, lines: check.lines.map((l) => ({ ...l, sent: true })) };
+/** Mark the current round (items + tenders) sent and advance the tray counter. */
+export function markRoundSent(check: Check, closed = false): Check {
+  return {
+    ...check,
+    lines: check.lines.map((l) => ({ ...l, sent: true })),
+    tenders: check.tenders.map((t) => ({ ...t, sent: true })),
+    traysSent: check.traysSent + 1,
+    closed: closed || check.closed,
+  };
 }

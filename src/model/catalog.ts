@@ -181,6 +181,74 @@ export function rcScreenGroups(): RcScreenGroup[] {
   }));
 }
 
+/** A tender (payment method). The kind flags classify it; `paymentDriver`
+ *  selects the processor (empty = native/plain, e.g. "WRPjson"/"AgilysysMember"
+ *  = external PMS drivers). Third-party card gateways are out of scope (deferred). */
+export interface Tender {
+  id: string;               // POS_ID
+  name: string;
+  sort: number;
+  isCash: boolean;
+  isCredit: boolean;        // deferred — stubbed in the UI
+  isGift: boolean;          // Is_GiftCert (native Aireus/HBroker)
+  isLoyalty: boolean;       // is_Loyalty (native ISISLOYALTY)
+  isRoomCharge: boolean;    // roomCharge (PMS)
+  paymentDriver: string;    // payment_Driver ("" = native/plain)
+  openCashDrawer: boolean;
+  askForTip: boolean;
+  overpayIsTip: boolean;
+  roundingAmount: string;   // when Enable_Rounding; e.g. "0.05"
+  appliesToCheck: boolean;
+  hidden: boolean;
+  _raw: DefRow;
+}
+
+/** Store-level payment config (processor selection + native merchant creds). */
+export interface StoreConfig {
+  gcProcessor: string;        // GC_Processor ("ISISGiftCard"/"aireus…" = native)
+  loyaltyProcessor: string;   // loyalty_Processor ("" or third-party name)
+  gcMerchantId: string;
+  gcMerchantPassword: string;
+  loyaltyMerchantId: string;
+  loyaltyMerchantPassword: string;
+}
+const nativeProcessor = (v: string) => /isis|aireus/i.test(v);
+export function storeConfig(): StoreConfig {
+  const r = loadDefRows("Store")[0] ?? {};
+  return {
+    gcProcessor: s(r, "GC_Processor"),
+    loyaltyProcessor: s(r, "loyalty_Processor"),
+    gcMerchantId: s(r, "GC_Merchant_ID"),
+    gcMerchantPassword: s(r, "GCMerchantPassword"),
+    loyaltyMerchantId: s(r, "loyalty_MerchantID"),
+    loyaltyMerchantPassword: s(r, "loyalty_Merchant_Password"),
+  };
+}
+/** Is the store's gift processor the native Aireus one (vs a third-party gateway)? */
+export const isNativeGift = (cfg: StoreConfig) => nativeProcessor(cfg.gcProcessor);
+export const isNativeLoyalty = (cfg: StoreConfig) => cfg.loyaltyProcessor === "" || nativeProcessor(cfg.loyaltyProcessor);
+
+export function tenders(): Tender[] {
+  return loadDefRows("Tender").filter(alive).map((r) => ({
+    id: s(r, "POS_ID"),
+    name: s(r, "Name").trim(),
+    sort: Number(s(r, "Sort_Order")) || 0,
+    isCash: s(r, "Is_Cash") === "1",
+    isCredit: s(r, "Is_Credit") === "1",
+    isGift: s(r, "Is_GiftCert") === "1",
+    isLoyalty: s(r, "is_Loyalty") === "1",
+    isRoomCharge: s(r, "roomCharge") === "1",
+    paymentDriver: s(r, "payment_Driver"),
+    openCashDrawer: s(r, "Open_Cash_Drawer") === "1",
+    askForTip: s(r, "Ask_For_Tip") === "1",
+    overpayIsTip: s(r, "Overpay_Is_Tip") === "1",
+    roundingAmount: s(r, "Enable_Rounding") === "1" ? s(r, "RoundingAmount") : "",
+    appliesToCheck: s(r, "Applies_To_Check") === "1",
+    hidden: s(r, "isHide") === "1",
+    _raw: r,
+  })).filter((t) => t.id);
+}
+
 export interface Employee {
   id: string;               // Emp_POS_ID
   name: string;             // First Last
