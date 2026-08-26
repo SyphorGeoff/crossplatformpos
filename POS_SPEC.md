@@ -64,15 +64,20 @@ Between enrol and session comes store-list → terminal-list → **Terminal_Assi
 Implemented: `src/protocol/hbroker.ts`, `src/protocol/activation.ts`,
 `src/protocol/defsync.ts`, `src/model/definitions.ts`. Tests: `tests/hbroker.test.ts`.
 
-### 1.4 Open questions — verify live against enox (do not mark resolved until then)
-1. Exact `<Security_Token_Value>` element for New_Terminal/Standard responses
-   (assumed same as KDS; confirm).
-2. Row element structure inside each `Definition_Request` response (the parser
-   is defensive — takes the array-valued child under the type wrapper).
-3. The `Definition_Type="All"` seq-map response shape — table-name field and
-   sequence field names (parser tries TABLE_NAME / Table_Name / Definition_Type
-   and Revision_Seq / change_sequence).
-4. Whether Terminal_Assignment for the POS matches the KDS shape.
+### 1.4 Live verification — VERIFIED end-to-end against enox (2026-08-26)
+Full chain drove live: sign-in → store (Aireus Cafe·3) → POS terminal list
+(Is_Licensed=="1") → assignment → Standard token → all 51 definitions synced
+(36 tables, ~2006 rows: Menu_Item 159, Chain 52, DiningTable 49, Employee 12,
+Employee_Job 30, +1413 images). Resolved:
+1. Token element is `<Security_Token_Value>` for New_Terminal & Standard. ✓
+2. Definition row parsing (array-valued child under the type wrapper) works on
+   every real response. ✓
+3. `Definition_Type` full-pull rows carry Revision_Seq; the "All" incremental
+   map path is coded but not yet exercised live (no def changed mid-session) —
+   the one remaining item to confirm on a real edit.
+4. Terminal_Assignment success is `Message_Status Status_Code="100"`
+   ("Terminal Authorized. Please Wait") — NOT an error. Interpret by numeric
+   Status_Code (>=400 = failure); an <error> element is failure.
 
 ---
 
