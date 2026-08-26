@@ -81,8 +81,55 @@ Employee_Job 30, +1413 images). Resolved:
 
 ---
 
+## Chapter 2 — Menu browse  *(M1, this slice)*
+
+The read side of the ordering screen: revenue-center pick → screen-group tabs →
+item grid, with drill-in sub-screens and a flat item search. Building the actual
+check (tap-to-add + forced modifiers + send) is M2; here an item tap opens a
+detail sheet. Verified live against enox (store 3 / terminal "Geoff 1").
+
+### 2.1 Data model (live field names, store 3)
+- **Menu_Item**: `POS_ID`, `Name`, `Price`, `Ask_For_Price` (open price),
+  `Screen_Group_POS_ID` + `Secondary_Screen_Group_POS_ID` + `Screen_Group_POS_ID3..10`
+  (placement), `Screen_Sort_Order`, `Category_POS_ID`, `Print_Group_POS_ID`,
+  `Is_Modifier`, `Screen_Chain_POS_ID` (forced-modifier chain, M2), `Hide_From_Store`.
+- **Screen_Group**: `POS_ID`, `Name`, `Sort_Order`, `Skip_Carousel` (root gate),
+  `Parent_Screen_Group_POS_ID` + `parent_Screen_Group_POS_ID2..10`, `button_color`.
+- **Revenue_Center**: `POS_ID`, `Name`, `enable_screen_group_filter`.
+- **RevenueCenter_Screen_Group**: `RevenueCenter_ID`, `Screen_Group_ID`,
+  `always_filter`, `filter_start_time`/`_end_time`, `monday..sunday` — a
+  **hide/schedule** table, NOT a membership join.
+- **Terminal**: `Screen_Group_POS_ID` (default section), `Default_RevenueCenter_POS_ID`.
+
+The ordering grid is built from Menu_Items grouped into Screen_Groups —
+**`AIScreen_Button` is the check/payment toolbar's programmable buttons, not the
+menu grid** (a common misread).
+
+### 2.2 Navigation rules (ground truth → `src/model/menu.ts`)
+- **Root tabs** = Screen_Groups with `Skip_Carousel != 1` passing the RC gate,
+  by `Sort_Order` then `Name` (CheckViewController.m:2791-2811). Depth is NOT the
+  predicate — a parented group can be a root tab (e.g. "Fresh Desserts").
+- **Initial selection** = terminal `Screen_Group_POS_ID` / `Default_RevenueCenter_POS_ID`,
+  each falling back to the first available (CheckViewController.m:2906-2923).
+- **RC visibility** (`shouldShowScreenGroup:` 21966-22025): filter off → all
+  groups show; filter on → a referenced group is hidden (`always_filter`) or
+  gated to its day/time window.
+- **Sub-screens** = Screen_Groups whose parent slot matches the current group
+  (ItemsTableViewController.m:1328-1397). **Items** = Menu_Items whose primary or
+  secondary Screen_Group slot matches, `Hide_From_Store` dropped, by
+  `Screen_Sort_Order` then Name (ItemsTableViewController.m:1400-1461).
+
+Implemented: `src/model/catalog.ts` (typed views over the synced rows),
+`src/model/menu.ts` (resolver), `src/views/Menu.tsx` (browse UI).
+Tests: `tests/menu.test.ts` (9). Live-confirmed: 6 root tabs (Beverages…Beer
+Menu), terminal default RC Coffee Bar, drill-in + breadcrumb, open-price items,
+modifier badge, search excludes modifiers. Note: store 3 has a mutual parent
+link (Main Dishes ⇄ Breakfast) — faithfully reproduced, matching the iPad.
+
+---
+
 ## Later chapters (planned, per milestone)
-M1 store/terminal pick + assignment + menu browse · M2 order entry + send to
+M1 store/terminal pick + assignment + menu browse ✓ · M2 order entry + send to
 kitchen (closes the loop with the shipped KDS) · M3 payments (cash + room
 charge + native Aireus gift/loyalty; CC seam stubbed) · M4 table service /
 splits / transfers / floorplan · M5 manager functions / timeclock / cash mgmt.
