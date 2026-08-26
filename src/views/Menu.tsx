@@ -14,17 +14,22 @@ import { useEmployee, type CurrentEmployee } from "@/state/useEmployee";
 import CheckPanel from "./CheckPanel";
 import ModifierFlow, { type ChosenModifier } from "./ModifierFlow";
 import PaymentView from "./PaymentView";
+import Floorplan from "./Floorplan";
 import {
   childScreenGroups, initialSelection, itemsInScreenGroup, loadCatalog, modifierSteps,
   rootScreenGroups, searchItems, type Catalog, type ModifierStep,
 } from "@/model/menu";
-import { employees, isNativeGift, isNativeLoyalty, storeConfig, tenders as loadTenders } from "@/model/catalog";
-import type { MenuItem, ScreenGroup } from "@/model/catalog";
+import {
+  diningRooms, diningTables, employees, isNativeGift, isNativeLoyalty, storeConfig, tenders as loadTenders,
+} from "@/model/catalog";
+import type { DiningTable, MenuItem, ScreenGroup } from "@/model/catalog";
 import {
   fetchHighestCheck, nextCheckNo, resolveBusinessDate, sendCheck,
   type SendContext, type SessionConfig,
 } from "@/protocol/order";
 import { sendPayment, type GiftType, type LoyaltyType, type PaymentContext, type PaymentResult } from "@/protocol/payment";
+import { fetchOpenChecks, lockCheck, readCheck, unlockCheck, type OpenCheck } from "@/protocol/tables";
+import { unsentLines } from "@/model/check";
 import { computeCheckTax, taxGroupsForWire } from "@/model/tax";
 
 const TILE_COLORS = ["#26303f", "#2f6fb0", "#b0472f", "#2f8f5f", "#b98a2b", "#7a55c0", "#2f8fae", "#b0416f"];
@@ -71,11 +76,23 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
   const [sendError, setSendError] = useState("");
   const [bdid, setBdid] = useState("");
   const [showPay, setShowPay] = useState(false);
+  const [mode, setMode] = useState<"floor" | "order">("order");
+  const [openChecks, setOpenChecks] = useState<OpenCheck[]>([]);
+  const [floorLoading, setFloorLoading] = useState(false);
+  const [floorStatus, setFloorStatus] = useState("");
+  const [lockedCheck, setLockedCheck] = useState<{ checkNo: string; checkKey: string; bd: string } | null>(null);
 
   const ck = useCheck(init.rcId);
   const payTenders = useMemo(() => loadTenders().filter((t) => t.appliesToCheck && !t.hidden).sort((a, b) => a.sort - b.sort), []);
   const store = useMemo(() => storeConfig(), []);
   const tax = useMemo(() => computeCheckTax(cat, ck.check), [cat, ck.check]);
+  const rooms = useMemo(() => diningRooms(), []);
+  const tables = useMemo(() => diningTables(), []);
+  const occupancy = useMemo(() => {
+    const m = new Map<string, OpenCheck>();
+    for (const oc of openChecks) if (oc.tableId && !m.has(oc.tableId)) m.set(oc.tableId, oc);
+    return m;
+  }, [openChecks]);
 
   const roots = useMemo(() => rootScreenGroups(cat, rcId), [cat, rcId]);
   const current = stack[stack.length - 1];
@@ -118,15 +135,77 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
     storeId: settings.storeId, token: settings.token, terminalPosId: settings.terminalPosId,
   });
 
+  const ensureBd = async (): Promise<string> => {
+    let bd = bdid;
+    if (!bd) { bd = await resolveBusinessDate(sessionCfg()); setBdid(bd); }
+    if (!bd) throw new Error("No open business date on the server");
+    return bd;
+  };
+
   /** Resolve BusinessDate_ID and a check number, assigning the number once. */
   const ensureSession = async (): Promise<{ bd: string; checkNo: string }> => {
-    const cfg = sessionCfg();
-    let bd = bdid;
-    if (!bd) { bd = await resolveBusinessDate(cfg); setBdid(bd); }
-    if (!bd) throw new Error("No open business date on the server");
+    const bd = await ensureBd();
     let checkNo = ck.check.checkNumber;
-    if (!checkNo) { checkNo = nextCheckNo(await fetchHighestCheck(cfg, bd), settings.terminalPosId); ck.setCheckNumber(checkNo); }
+    if (!checkNo) { checkNo = nextCheckNo(await fetchHighestCheck(sessionCfg(), bd), settings.terminalPosId); ck.setCheckNumber(checkNo); }
     return { bd, checkNo };
+  };
+
+  const refreshOpenChecks = async () => {
+    setFloorLoading(true); setFloorStatus("");
+    try {
+      const bd = await ensureBd();
+      const list = await fetchOpenChecks(sessionCfg(), bd);
+      setOpenChecks(list);
+      setFloorStatus(`${list.length} open check(s)`);
+    } catch (e) { setFloorStatus(String((e as Error).message ?? e)); }
+    setFloorLoading(false);
+  };
+
+  const releaseLock = async () => {
+    if (!lockedCheck) return;
+    await unlockCheck(sessionCfg(), { checkNo: lockedCheck.checkNo, checkKey: lockedCheck.checkKey, businessDateId: lockedCheck.bd });
+    setLockedCheck(null);
+  };
+
+  /** Leave the ordering view for the floorplan, holding an in-progress table
+   *  check so it persists on the server (an open check keeps the table occupied). */
+  const goToFloor = async () => {
+    if (ck.check.diningTableId && unsentLines(ck.check).length > 0) { setSending(true); await postCheck(false); setSending(false); }
+    await releaseLock();
+    setMode("floor");
+    void refreshOpenChecks();
+  };
+
+  const quickSale = () => { void releaseLock(); ck.reset(rcId); setSendError(""); setMode("order"); };
+
+  const pickTable = async (table: DiningTable, occ?: OpenCheck) => {
+    if (!occ) { // open a fresh check bound to the table
+      void releaseLock();
+      ck.reset(table.revenueCenterId || rcId, table.name, 1, table.id);
+      if (table.revenueCenterId && cat.rcById.has(table.revenueCenterId)) setRcId(table.revenueCenterId);
+      setSendError(""); setMode("order");
+      return;
+    }
+    setFloorLoading(true); setFloorStatus(`Opening table ${table.name}…`);
+    try {
+      const bd = occ.businessDateId || (await ensureBd());
+      const lock = await lockCheck(sessionCfg(), { checkNo: occ.checkNo, checkKey: occ.checkKey, businessDateId: bd });
+      if (!lock.ok) {
+        setFloorStatus(lock.alreadyLocked ? `Table ${table.name} is open on another terminal` : `Could not lock: ${lock.message}`);
+        setFloorLoading(false); return;
+      }
+      const names = {
+        menuItemName: (id: string) => cat.miById.get(id)?.name ?? `#${id}`,
+        tenderName: (id: string) => payTenders.find((t) => t.id === id)?.name ?? `#${id}`,
+      };
+      const pulled = await readCheck(sessionCfg(), { checkNo: occ.checkNo, checkKey: occ.checkKey, businessDateId: bd }, names);
+      if (!pulled) { setFloorStatus("Check not found on the server"); await unlockCheck(sessionCfg(), { checkNo: occ.checkNo, checkKey: occ.checkKey, businessDateId: bd }); setFloorLoading(false); return; }
+      ck.loadCheck(pulled);
+      if (pulled.revenueCenterId && cat.rcById.has(pulled.revenueCenterId)) setRcId(pulled.revenueCenterId);
+      setLockedCheck({ checkNo: occ.checkNo, checkKey: occ.checkKey, bd });
+      setSendError(""); setMode("order");
+    } catch (e) { setFloorStatus(String((e as Error).message ?? e)); }
+    setFloorLoading(false);
   };
 
   const buildCtx = (bd: string, checkNo: string): SendContext => ({
@@ -186,10 +265,28 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
 
   if (!employee) return <EmployeePicker onPick={signIn} />;
 
+  if (mode === "floor") {
+    return (
+      <Floorplan
+        storeName={settings.storeName || settings.storeId}
+        employeeName={employee.name}
+        rooms={rooms}
+        tables={tables}
+        occupancy={occupancy}
+        onPick={pickTable}
+        onQuickSale={quickSale}
+        onRefresh={refreshOpenChecks}
+        onSignOut={signOut}
+        loading={floorLoading}
+        status={floorStatus}
+      />
+    );
+  }
+
   return (
     <div className="pos">
       <header className="posbar">
-        <div className="ident"><b>{settings.storeName || settings.storeId}</b><span>{settings.terminalName || settings.terminalPosId} · {employee.name}</span></div>
+        <div className="ident"><b>{settings.storeName || settings.storeId}</b><span>{settings.terminalName || settings.terminalPosId} · {employee.name}{ck.check.diningTableId ? ` · Table ${ck.check.tableName}` : ""}</span></div>
         <div className="rcs">
           {cat.revenueCenters.map((rc) => (
             <button key={rc.id} className={`rc ${rc.id === rcId ? "on" : ""}`} onClick={() => selectRc(rc.id)}>{rc.name}</button>
@@ -198,6 +295,7 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
         <div className="tools">
           <input className="search" placeholder="Search items…" value={query} onChange={(e) => setQuery(e.target.value)} />
           {query && <button className="clr" onClick={() => setQuery("")}>✕</button>}
+          <button className="station" onClick={goToFloor} disabled={sending}>Tables</button>
           <button className="station" onClick={signOut}>Sign out</button>
           <button className="station" onClick={onChangeStation}>Station</button>
         </div>
@@ -273,7 +371,11 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
           processGift={processGift}
           settle={settle}
           onClose={() => setShowPay(false)}
-          onClosed={() => { setShowPay(false); ck.reset(rcId); setSendError(""); }}
+          onClosed={() => {
+            const wasTable = !!ck.check.diningTableId;
+            void releaseLock(); setShowPay(false); ck.reset(rcId); setSendError("");
+            if (wasTable) { setMode("floor"); void refreshOpenChecks(); }
+          }}
         />
       )}
     </div>

@@ -134,6 +134,24 @@ body { background: var(--bg); color: var(--ink); font-family: system-ui, -apple-
 .mfbtn.go { background: var(--accent); color: #fff; }
 .mfbtn.go:disabled { background: #2a3040; color: var(--ink-dim); cursor: default; }
 
+/* Floorplan */
+.floor { display: flex; flex-direction: column; height: 100vh; }
+.floorstatus { padding: 6px 14px; font-size: 12px; color: var(--ink-dim); background: var(--chrome); border-bottom: 1px solid var(--edge); }
+.floorscroll { flex: 1; overflow: auto; padding: 20px; display: flex; justify-content: center; }
+.floorcanvas { position: relative; width: min(760px, 100%); background: #12151d; border: 1px solid var(--edge); border-radius: 12px; }
+.floorcanvas .empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--ink-dim); }
+.table { position: absolute; transform: translate(-50%, -50%); width: 62px; height: 62px; border-radius: 12px; border: 2px solid var(--edge); background: #1e2836; color: var(--ink); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; cursor: pointer; font-family: inherit; }
+.table .tnum { font-size: 16px; font-weight: 800; line-height: 1; }
+.table .tchk { font-size: 10px; opacity: .85; }
+.table .tseats { font-size: 10px; color: var(--ink-dim); }
+.table.st-open { background: #1c2632; border-color: #33465a; }
+.table.st-occupied { background: #2f6fb0; border-color: #4a8fd6; color: #fff; }
+.table.st-printed { background: #2f8f5f; border-color: #46b07a; color: #fff; }
+.table.st-held { background: #b98a2b; border-color: #d6a94a; color: #fff; }
+.table.st-allergy { background: #b0416f; border-color: #d666a0; color: #fff; }
+.table.locked { opacity: .35; cursor: default; }
+.table:not(.locked):hover { filter: brightness(1.15); }
+
 /* Pay button in the check panel */
 .cpay { padding: 13px; border: none; border-radius: 10px; background: var(--accent); color: #fff; font-weight: 800; font-size: 15px; cursor: pointer; }
 .cpay:disabled { background: #2a3040; color: var(--ink-dim); cursor: default; }

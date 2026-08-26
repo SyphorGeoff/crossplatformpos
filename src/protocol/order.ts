@@ -82,7 +82,7 @@ function xmlLineItem(line: CheckLine, lineNumber: number, trayNumber: number, pa
   parts.push(el("Quantity", line.quantity));
   parts.push(el("Line_Number", lineNumber));
   parts.push(el("MenuItem_POS_ID", line.menuItemId));
-  parts.push(el("Line_Amount", line.amount.toFixed(2)));
+  parts.push(el("Line_Amount", (line.amount * line.quantity).toFixed(2))); // extended, like the iPad's Amount
   return `<LineItem ${attrs}>${parts.join("")}</LineItem>`;
 }
 
@@ -154,6 +154,7 @@ export function buildFinancialCheck(check: Check, ctx: SendContext, opts: { sett
   header.push(el("Employee_POS_ID", ctx.employeePosId));
   header.push(el("check_key", check.id)); // stable idempotency key for this check
   header.push(el("is_Mobile", "0"));
+  if (check.diningTableId) header.push(el("DiningTable_POS_ID", check.diningTableId));
   header.push(el("RevenueCenter_POS_ID", check.revenueCenterId));
   header.push(el("Opened_On", dateTime(new Date(check.openedAt))));
   if (ctx.isToGo) header.push(el("order_type", "1"));

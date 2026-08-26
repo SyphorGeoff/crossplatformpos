@@ -261,6 +261,40 @@ Chain: `Menu_Item.Menu_Item_Tax_Group_POS_ID` → `Menu_Item_Tax_Group`
 
 ---
 
+## Chapter 5 — Table service & floorplan  *(M4)*
+
+Verified live against enox (2026-08-26): floorplan with live `Open_Checks`
+occupancy; open a table → order → hold; resume an occupied table via lock+read;
+tax on resumed checks.
+
+### 5.1 Floorplan (`src/views/Floorplan.tsx`)
+- `Dining_Room` (rooms) + `DiningTable` (`X_Coordinate`/`Y_Coordinate`,
+  `Dining_Room_POS_ID`, `Name`, `seat_count`, `unselectable`) — tables placed on
+  a 768-wide canvas by coordinate (SectionView.m). Catalog accessors in
+  `catalog.ts` (`diningRooms`/`diningTables`/`empDiningRooms`).
+- Occupancy is **derived from `Open_Checks`**, not a table field. Status order
+  matches the iPad: allergy → held → printed → occupied → open.
+
+### 5.2 Open checks & resume (`src/protocol/tables.ts`)
+- **List** (`fetchOpenChecks`): `Transactional_Request Trans_Type="Open_Checks"`
+  → `/Open_Checks/Open_Check[]` (Table_POS_ID, Check_Number, check_key,
+  Emp_POS_ID, Held_Item, Print_Count, Is_Allergy, Last_Modified_Time).
+- **Resume** an occupied table: `lockCheck` (`Set_Check_Lock Lock="1"`, its own
+  DTD; 100=ok, 200=already locked) → `readCheck`
+  (`Trans_Type="FinancialCheck"` → `<FinancialChecks>`), parsed back into a
+  `Check` (items+modifiers by Parent_LineItem_ID/Tray, tenders by Type="T"),
+  preserving `check_key` so edits update the same check. `unlockCheck` on leave.
+- **Bind & hold**: a table check carries `DiningTable_POS_ID`
+  (order.ts emits it); Send/hold is the ordinary `<FinancialCheck>` POST with
+  `Is_Closed="0"` — any such check keeps the table occupied (no dedicated hold
+  message). Settle closes it and returns to the floor. `Line_Amount` is now the
+  extended amount (unit × qty), matching the iPad.
+
+Implemented: `src/protocol/tables.ts`, `src/views/Floorplan.tsx`; `Menu.tsx`
+floor/order switch, `useCheck.loadCheck`. Splits & transfers: next.
+
+---
+
 ## Later chapters (planned, per milestone)
 M1 store/terminal pick + assignment + menu browse ✓ · M2 order entry + send to
 kitchen (closes the loop with the shipped KDS) ✓ · M3 payments (cash + room

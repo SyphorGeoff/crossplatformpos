@@ -58,6 +58,15 @@ describe("buildFinancialCheck", () => {
     expect(xml).toContain('Type="M"');
     expect(xml).toContain("<Line_Number>1</Line_Number><MenuItem_POS_ID>100</MenuItem_POS_ID><Line_Amount>18.00</Line_Amount>");
   });
+  it("Line_Amount is extended (unit × quantity)", () => {
+    const c: Check = { ...check, lines: [{ key: "q", menuItemId: "9", description: "x", quantity: 3, amount: 5, kind: "M", indentLevel: 0 }] };
+    expect(buildFinancialCheck(c, ctx)).toContain("<Quantity>3</Quantity><Line_Number>1</Line_Number><MenuItem_POS_ID>9</MenuItem_POS_ID><Line_Amount>15.00</Line_Amount>");
+  });
+  it("emits DiningTable_POS_ID only when the check is table-bound", () => {
+    expect(xml).not.toContain("DiningTable_POS_ID");
+    const c: Check = { ...check, diningTableId: "28" };
+    expect(buildFinancialCheck(c, ctx)).toContain("<DiningTable_POS_ID>28</DiningTable_POS_ID>");
+  });
   it("links the modifier to its parent's Line_Number and Tray", () => {
     // modifier b is line 2, parent a is line 1, tray 1
     expect(xml).toContain("<Parent_LineItem_ID>1</Parent_LineItem_ID><Parent_Tray_Number>1</Parent_Tray_Number>");

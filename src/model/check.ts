@@ -43,9 +43,10 @@ export interface TenderLine {
 }
 
 export interface Check {
-  id: string;               // local check id (uuid-ish)
+  id: string;               // local check id / check_key (uuid-ish)
   revenueCenterId: string;
-  tableName: string;
+  tableName: string;        // Check_Name / table label
+  diningTableId?: string;   // DiningTable_POS_ID (table-service checks)
   guestCount: number;
   lines: CheckLine[];
   tenders: TenderLine[];
@@ -60,8 +61,8 @@ let seq = 0;
  *  reference the new line before the state updater has run. */
 export const mintLineKey = (): string => `L${Date.now().toString(36)}${(seq++).toString(36)}`;
 
-export function newCheck(revenueCenterId: string, tableName = "", guestCount = 1): Check {
-  return { id: mintLineKey(), revenueCenterId, tableName, guestCount, lines: [], tenders: [], traysSent: 0, openedAt: Date.now() };
+export function newCheck(revenueCenterId: string, tableName = "", guestCount = 1, diningTableId?: string): Check {
+  return { id: mintLineKey(), revenueCenterId, tableName, diningTableId, guestCount, lines: [], tenders: [], traysSent: 0, openedAt: Date.now() };
 }
 
 /** Append a menu item as a new order line (quantity 1) with the caller's key. */

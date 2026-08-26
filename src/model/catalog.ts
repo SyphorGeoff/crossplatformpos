@@ -183,6 +183,48 @@ export function rcScreenGroups(): RcScreenGroup[] {
   }));
 }
 
+export interface DiningRoom {
+  id: string;               // POS_ID
+  name: string;
+  sort: number;
+  imageId: string;          // background image (not synced here)
+  _raw: DefRow;
+}
+export interface DiningTable {
+  id: string;               // POS_ID
+  name: string;             // table number/label
+  roomId: string;           // Dining_Room_POS_ID
+  revenueCenterId: string;  // RevenueCenter_POS_ID
+  x: number;                // X_Coordinate (absolute layout px)
+  y: number;                // Y_Coordinate
+  seats: number;            // seat_count
+  tableType: string;        // Table_Type (shape/kind code)
+  selectable: boolean;      // !unselectable
+  _raw: DefRow;
+}
+export interface EmpDiningRoom { empId: string; roomId: string; }
+
+export function diningRooms(): DiningRoom[] {
+  return loadDefRows("Dining_Room").filter(alive).map((r) => ({
+    id: s(r, "POS_ID"), name: s(r, "Name").trim(),
+    sort: Number(s(r, "sort_Order")) || 0, imageId: s(r, "Image_ID"), _raw: r,
+  }));
+}
+export function diningTables(): DiningTable[] {
+  return loadDefRows("DiningTable").filter(alive).map((r) => ({
+    id: s(r, "POS_ID"), name: s(r, "Name").trim(), roomId: s(r, "Dining_Room_POS_ID"),
+    revenueCenterId: s(r, "RevenueCenter_POS_ID"),
+    x: Number(s(r, "X_Coordinate")) || 0, y: Number(s(r, "Y_Coordinate")) || 0,
+    seats: Number(s(r, "seat_count")) || 0, tableType: s(r, "Table_Type"),
+    selectable: s(r, "unselectable") !== "1", _raw: r,
+  })).filter((t) => t.id);
+}
+export function empDiningRooms(): EmpDiningRoom[] {
+  return loadDefRows("Emp_DiningRoom").filter(alive).map((r) => ({
+    empId: s(r, "Emp_POS_ID"), roomId: s(r, "DiningRoom_POS_ID"),
+  }));
+}
+
 /** One tax definition within a Tax_Pack (up to 5: Tax_Def1..5). */
 export interface TaxDef {
   name: string;

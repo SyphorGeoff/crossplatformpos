@@ -51,10 +51,13 @@ export function useCheck(defaultRcId: string) {
    *  tray counter, and optionally flag the check closed (settled). */
   const markSent = useCallback((closed = false) => mutate((c) => markRoundSent(c, closed)), [mutate]);
 
-  /** Start a fresh check (e.g. after settling / clearing). */
-  const reset = useCallback((rcId: string, tableName = "", guestCount = 1) => {
-    const next = newCheck(rcId, tableName, guestCount); persist(next); setCheck(next);
+  /** Start a fresh check (e.g. after settling / clearing), optionally table-bound. */
+  const reset = useCallback((rcId: string, tableName = "", guestCount = 1, diningTableId?: string) => {
+    const next = newCheck(rcId, tableName, guestCount, diningTableId); persist(next); setCheck(next);
   }, []);
 
-  return { check, addItem, addModifier, remove: remove_, setQty, setTable, setGuests, setRevenueCenter, setCheckNumber, applyTender, voidTender, markSent, reset };
+  /** Replace the current check with one pulled from the server (resume a table). */
+  const loadCheck = useCallback((c: Check) => { persist(c); setCheck(c); }, []);
+
+  return { check, addItem, addModifier, remove: remove_, setQty, setTable, setGuests, setRevenueCenter, setCheckNumber, applyTender, voidTender, markSent, reset, loadCheck };
 }
