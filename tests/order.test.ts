@@ -86,6 +86,30 @@ describe("buildFinancialCheck", () => {
   });
 });
 
+describe("buildFinancialCheck adjustments / voids / cancel", () => {
+  it("emits an adjustment as Type=A with Adjustment_POS_ID + authorizing employee + negative amount", () => {
+    const c: Check = { ...check, lines: [{ key: "d", menuItemId: "", description: "Comp", quantity: 1, amount: -5, kind: "A", indentLevel: 0, adjustmentId: "4", authEmpId: "1" }] };
+    const xml = buildFinancialCheck(c, ctx);
+    expect(xml).toContain('Type="A"');
+    expect(xml).toContain("<AuthorizingEmployee_ID>1</AuthorizingEmployee_ID>");
+    expect(xml).toContain("<Adjustment_POS_ID>4</Adjustment_POS_ID>");
+    expect(xml).toContain("<Line_Amount>-5.00</Line_Amount>");
+  });
+  it("emits a void reversal with Is_Void, Void_POS_ID and the authorizer", () => {
+    const c: Check = { ...check, lines: [{ key: "v", menuItemId: "100", description: "T-Bone", quantity: 1, amount: -18, kind: "M", indentLevel: 0, isVoid: true, voidPosId: "5", authEmpId: "1" }] };
+    const xml = buildFinancialCheck(c, ctx);
+    expect(xml).toContain('Is_Void="1"');
+    expect(xml).toContain("<Void_POS_ID>5</Void_POS_ID>");
+    expect(xml).toContain("<AuthorizingEmployee_ID>1</AuthorizingEmployee_ID>");
+    expect(xml).toContain("<Line_Amount>-18.00</Line_Amount>");
+  });
+  it("cancel flips Is_Cancelled and Is_Closed to 1", () => {
+    const xml = buildFinancialCheck(check, ctx, { cancel: true });
+    expect(xml).toContain('Is_Cancelled="1"');
+    expect(xml).toContain('Is_Closed="1"');
+  });
+});
+
 describe("buildFinancialCheck settle", () => {
   const settled: Check = {
     ...check, traysSent: 1, // items already fired in tray 1

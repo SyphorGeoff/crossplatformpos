@@ -313,10 +313,58 @@ check 200008 created (both Status_Code 100). Tests: `tests/check.test.ts`.
 
 ---
 
+## Chapter 6 — Manager functions, timeclock & cash  *(M5)*
+
+Verified live against enox (2026-08-26): clock-in (Status 100); manager PIN
+authorization (a server without the permission is gated, a manager's PIN
+authorizes); discount/comp applied (affecting tax) and posted (Status 100).
+
+### 6.1 Permissions (`src/model/permissions.ts`, LoginManager canEmployee*:)
+An employee's permission = OR across their jobs (`Employee_Job` → `Job` flags:
+`Auth_Voids`, `Auth_Adjustments`, `Auth_Pullbacks`, `Override_Price`,
+`Auth_Tax_Exemptions`, `Approve_Transfer`, `allow_no_sale`/`No_Sale`, `Mgr_Menu`).
+A restricted action the signed-in server lacks prompts a **manager PIN**
+(`findAuthorizer` — local: the entered PIN's employee must hold the permission;
+`ManagerAuthViewController`). The authorizer rides as `AuthorizingEmployee_ID`.
+
+### 6.2 Timeclock (`src/protocol/timeclock.ts`, AITransactionManager.m)
+`<Time_Card_Post>` (own root/DTD) to /ISISPOS/HBroker. Clock-in carries
+Emp_POS_ID, Job_POS_ID, Rate, `Is_Clock_Out=0`, `Clock_In_Date_Time`
+("yyyy-MM-dd HH:mm"); clock-out sends `Is_Clock_Out=1` + `Sequence` from the
+open card. Job/rate from `Employee_Job` (Override_Default_Rates ? emp rate :
+job default). Success = Status_Code 100. (Breaks: builders noted, not wired.)
+
+### 6.3 Cash management
+- **No-sale**: permission-gated (`allow_no_sale`); opens the drawer (hardware
+  no-op on web). The server no-sale reference record is deferred.
+- **Pay-in/out**: a `<FinancialCheck>` with a `Type="P"` line (PayInOut_POS_ID)
+  — store 3 has **no PayInOut reasons configured**, so no UI is surfaced.
+
+### 6.4 Manager functions (all on the `<FinancialCheck>` POST)
+- **Discount / comp / service charge** — a `Type="A"` LineItem
+  (`Adjustment_POS_ID` + `AuthorizingEmployee_ID`); percent/fixed/open computed
+  to a signed `$` client-side (discounts negative, charges positive); tax-
+  affecting adjustments reduce the taxable base via their own `Tax_Pack`
+  (model/tax.ts). Manager auth when `Adjustment.Requires_Auth` or the server
+  lacks `Auth_Adjustments`.
+- **Void** — an unsent line is dropped; a sent line is struck and gets a
+  reversing negative `Is_Void="1"` line (`Void_POS_ID` reason,
+  `AuthorizingEmployee_ID`), posted to cancel it server-side (recon C7).
+- **Cancel check** — re-POST with `Is_Cancelled="1"`/`Is_Closed="1"` (manager auth).
+
+Implemented: `model/permissions.ts`, `protocol/timeclock.ts`,
+`views/{ManagerPanel,ManagerAuth}.tsx`; extended catalog (Job/Employee_Job/Void/
+Adjustment + Employee.pin), check.ts (`Type="A"` + void), order.ts, tax.ts,
+CheckPanel (Split/Void select mode), Menu. Tests: order/tax/check.
+Deferred: breaks, pay-in/out UI (no reasons in store 3), reopen/return,
+per-line price override.
+
+---
+
 ## Later chapters (planned, per milestone)
 M1 store/terminal pick + assignment + menu browse ✓ · M2 order entry + send to
 kitchen (closes the loop with the shipped KDS) ✓ · M3 payments (cash + room
 charge + native Aireus gift/loyalty; CC seam stubbed) ✓ · M4 table service /
-splits / transfers / floorplan ✓ · M5 manager functions / timeclock / cash mgmt.
+splits / transfers / floorplan ✓ · M5 manager functions / timeclock / cash mgmt ✓
 Each ends with an enox side-by-side against the iPad. M1–M2 run entirely on the
 existing XML API — no dependency on the server rewrite.

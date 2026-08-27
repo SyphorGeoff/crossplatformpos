@@ -23,6 +23,7 @@ export interface CheckPanelProps {
   onSend: () => void;
   onPay: () => void;
   onSplit: (keys: Set<string>) => void;
+  onVoid: (keys: Set<string>) => void;
   onNewCheck: () => void;
   sending?: boolean;
   sendError?: string;
@@ -46,7 +47,7 @@ function LineRow({ line, selecting, checked, onToggle, onQty, onRemove }: {
         <span className="clname">{line.description}</span>
         <span className="clamt">{line.amount ? fmt(lineExtended(line)) : ""}</span>
       </div>
-      {!selecting && !line.sent && !isMod && (
+      {!selecting && !line.sent && line.kind === "M" && (
         <div className="clctl">
           <button onClick={() => onQty(line.key, line.quantity - 1)}>–</button>
           <span>{line.quantity}</span>
@@ -66,11 +67,12 @@ export default function CheckPanel(p: CheckPanelProps) {
   const [selecting, setSelecting] = useState(false);
   const [sel, setSel] = useState<Set<string>>(new Set());
 
-  const shown = check.lines.filter((l) => !l.transferOut); // hide void-off lines
+  const shown = check.lines.filter((l) => !l.transferOut && !(l.isVoid && l.amount < 0)); // hide void-off/reversal lines
   const itemCount = shown.filter((l) => l.kind === "M").length;
   const toggle = (k: string) => setSel((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
   const exitSplit = () => { setSelecting(false); setSel(new Set()); };
   const doSplit = () => { if (sel.size) p.onSplit(new Set(sel)); exitSplit(); };
+  const doVoid = () => { if (sel.size) p.onVoid(new Set(sel)); exitSplit(); };
 
   return (
     <aside className="checkpanel">
@@ -93,10 +95,13 @@ export default function CheckPanel(p: CheckPanelProps) {
 
       <div className="cfoot">
         {selecting ? (
-          <div className="cactions">
-            <button className="cnew" onClick={exitSplit}>Cancel</button>
-            <button className="csend" onClick={doSplit} disabled={p.sending || sel.size === 0}>Move {sel.size || ""} to new check</button>
-          </div>
+          <>
+            <div className="cactions">
+              <button className="cnew" onClick={exitSplit}>Cancel</button>
+              <button className="csend" onClick={doSplit} disabled={p.sending || sel.size === 0}>Move {sel.size || ""} to new check</button>
+            </div>
+            <button className="cnew wide" onClick={doVoid} disabled={p.sending || sel.size === 0}>Void {sel.size || ""} selected</button>
+          </>
         ) : (
           <>
             <div className="csubline"><span>Subtotal</span><span>{fmt(subtotal)}</span></div>
@@ -111,7 +116,7 @@ export default function CheckPanel(p: CheckPanelProps) {
               </button>
             </div>
             <div className="cactions">
-              {itemCount > 1 && <button className="cnew wide" onClick={() => setSelecting(true)} disabled={p.sending}>Split</button>}
+              {itemCount >= 1 && <button className="cnew wide" onClick={() => setSelecting(true)} disabled={p.sending}>Split / Void</button>}
               <button className="cpay" onClick={p.onPay} disabled={p.sending || check.lines.length === 0}>Pay</button>
             </div>
           </>

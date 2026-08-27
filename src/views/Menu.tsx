@@ -15,21 +15,26 @@ import CheckPanel from "./CheckPanel";
 import ModifierFlow, { type ChosenModifier } from "./ModifierFlow";
 import PaymentView from "./PaymentView";
 import Floorplan from "./Floorplan";
+import ManagerPanel, { type ClockState } from "./ManagerPanel";
+import ManagerAuth from "./ManagerAuth";
 import {
   childScreenGroups, initialSelection, itemsInScreenGroup, loadCatalog, modifierSteps,
   rootScreenGroups, searchItems, type Catalog, type ModifierStep,
 } from "@/model/menu";
 import {
-  diningRooms, diningTables, employees, isNativeGift, isNativeLoyalty, storeConfig, tenders as loadTenders,
+  adjustments as loadAdjustments, diningRooms, diningTables, employees, isNativeGift, isNativeLoyalty,
+  storeConfig, tenders as loadTenders, voidReasons,
 } from "@/model/catalog";
-import type { DiningTable, MenuItem, ScreenGroup } from "@/model/catalog";
+import type { Adjustment, DiningTable, Job, MenuItem, ScreenGroup } from "@/model/catalog";
+import { can, jobsForEmployee, permsForEmployee, type AuthAction, type Authorizer } from "@/model/permissions";
+import { clockIn, clockOut } from "@/protocol/timeclock";
 import {
   fetchHighestCheck, nextCheckNo, resolveBusinessDate, sendCheck,
   type SendContext, type SessionConfig,
 } from "@/protocol/order";
 import { sendPayment, type GiftType, type LoyaltyType, type PaymentContext, type PaymentResult } from "@/protocol/payment";
 import { fetchOpenChecks, lockCheck, readCheck, unlockCheck, type OpenCheck } from "@/protocol/tables";
-import { markRoundSent, splitToNewCheck, unsentLines } from "@/model/check";
+import { checkSubtotal, markRoundSent, splitToNewCheck, unsentLines } from "@/model/check";
 import { computeCheckTax, taxGroupsForWire } from "@/model/tax";
 
 const TILE_COLORS = ["#26303f", "#2f6fb0", "#b0472f", "#2f8f5f", "#b98a2b", "#7a55c0", "#2f8fae", "#b0416f"];
@@ -82,11 +87,21 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
   const [floorLoading, setFloorLoading] = useState(false);
   const [floorStatus, setFloorStatus] = useState("");
   const [lockedCheck, setLockedCheck] = useState<{ checkNo: string; checkKey: string; bd: string } | null>(null);
+  const [showManager, setShowManager] = useState(false);
+  const [clocked, setClocked] = useState<ClockState | null>(null);
+  const [mgrStatus, setMgrStatus] = useState("");
+  const [mgrBusy, setMgrBusy] = useState(false);
+  const [pendingAuth, setPendingAuth] = useState<{ title: string; action: AuthAction; onOk: (a: Authorizer) => void } | null>(null);
+  const [voidReason, setVoidReason] = useState<{ keys: string[]; auth: Authorizer } | null>(null);
 
   const ck = useCheck(init.rcId);
   const payTenders = useMemo(() => loadTenders().filter((t) => t.appliesToCheck && !t.hidden).sort((a, b) => a.sort - b.sort), []);
   const store = useMemo(() => storeConfig(), []);
   const tax = useMemo(() => computeCheckTax(cat, ck.check), [cat, ck.check]);
+  const empJobs = useMemo(() => (employee ? jobsForEmployee(employee.id) : []), [employee]);
+  const perms = useMemo(() => (employee ? permsForEmployee(employee.id) : null), [employee]);
+  const adjustmentDefs = useMemo(() => loadAdjustments(), []);
+  const voidDefs = useMemo(() => voidReasons(), []);
   const rooms = useMemo(() => diningRooms(), []);
   const tables = useMemo(() => diningTables(), []);
   const occupancy = useMemo(() => {
@@ -309,6 +324,89 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
     } catch (e) { return { ok: false, status: "ERROR", message: String((e as Error).message ?? e), fields: {} }; }
   };
 
+  /** Run `onOk` directly if the signed-in employee holds `action`, else prompt
+   *  for a manager PIN (the authorizer must hold the permission). */
+  const requireAuth = (needed: boolean, title: string, action: AuthAction, onOk: (a: Authorizer) => void) => {
+    if (!needed || (employee && can(employee.id, action))) { onOk({ id: employee!.id, name: employee!.name }); return; }
+    setPendingAuth({ title, action, onOk });
+  };
+
+  const doClockIn = async (job: Job) => {
+    setMgrBusy(true); setMgrStatus("Clocking in…");
+    try {
+      const bd = await ensureBd();
+      const r = await clockIn(sessionCfg(), { businessDateId: bd, empPosId: employee!.id, jobPosId: job.id, rate: job.regularRate });
+      if (r.ok) { setClocked({ jobId: job.id, jobName: job.name, sequence: r.sequence }); setMgrStatus(`Clocked in as ${job.name}`); }
+      else setMgrStatus(r.message);
+    } catch (e) { setMgrStatus(String((e as Error).message ?? e)); }
+    setMgrBusy(false);
+  };
+  const doClockOut = async () => {
+    if (!clocked) return;
+    setMgrBusy(true); setMgrStatus("Clocking out…");
+    try {
+      const bd = await ensureBd();
+      const r = await clockOut(sessionCfg(), { businessDateId: bd, empPosId: employee!.id, sequence: clocked.sequence });
+      if (r.ok) { setClocked(null); setMgrStatus("Clocked out"); } else setMgrStatus(r.message);
+    } catch (e) { setMgrStatus(String((e as Error).message ?? e)); }
+    setMgrBusy(false);
+  };
+
+  const doNoSale = () => {
+    requireAuth(!(perms?.noSale), "Authorize no-sale", "noSale", () => setMgrStatus("Drawer opened (no sale)"));
+  };
+
+  const doCancelCheck = () => {
+    requireAuth(!(perms?.manager), "Authorize cancel check", "manager", async () => {
+      setMgrBusy(true); setMgrStatus("Cancelling…");
+      try {
+        const { bd, checkNo } = await ensureSession();
+        const res = await sendCheck(settings.enterpriseServerUrl, { ...ck.check, checkNumber: checkNo }, buildCtx(bd, checkNo), { cancel: true, taxGroups: taxGroupsForWire(tax) });
+        if (res.ok) { await releaseLock(); ck.reset(rcId); setShowManager(false); setMgrStatus("Check cancelled"); }
+        else setMgrStatus(res.message);
+      } catch (e) { setMgrStatus(String((e as Error).message ?? e)); }
+      setMgrBusy(false);
+    });
+  };
+
+  const doDiscount = (adj: Adjustment) => {
+    const needed = adj.requiresAuth || !(perms?.adjust);
+    requireAuth(needed, `Authorize ${adj.name}`, "adjust", (auth) => {
+      const base = checkSubtotal(ck.check);
+      let magnitude = adj.amount;
+      if (adj.isOpen) {
+        const entered = Number(window.prompt(`${adj.name} — enter ${adj.isPercentage ? "percent" : "amount"}:`, "") ?? "");
+        if (!entered || entered <= 0) return;
+        magnitude = entered;
+      }
+      let amount = adj.isPercentage ? -(base * magnitude / 100) : -magnitude;
+      amount = Math.round(amount * 100) / 100;
+      if (adj.isServiceCharge) amount = Math.abs(amount); // charge adds, discount subtracts
+      ck.applyAdjustment({ adjustmentId: adj.id, name: adj.name, amount, taxPackId: adj.affectsTaxes ? adj.taxPackId : undefined, authEmpId: auth.id });
+      setShowManager(false); setSendError(`Applied ${adj.name}`);
+    });
+  };
+
+  // Void selected lines (from the check-panel select mode). Sent lines need a
+  // manager auth + reason; unsent lines are just removed.
+  const voidSelected = (keys: Set<string>) => {
+    const sentKeys = [...keys].filter((k) => ck.check.lines.find((l) => l.key === k)?.sent);
+    if (sentKeys.length === 0) { keys.forEach((k) => ck.remove(k)); return; }
+    requireAuth(!(perms?.void), "Authorize void", "void", (auth) => setVoidReason({ keys: [...keys], auth }));
+  };
+  const applyVoid = async (reasonId: string) => {
+    if (!voidReason) return;
+    const { keys, auth } = voidReason; setVoidReason(null);
+    for (const k of keys) {
+      const line = ck.check.lines.find((l) => l.key === k);
+      if (line?.sent) ck.voidItem(k, reasonId, auth.id); else ck.remove(k);
+    }
+    setSending(true);
+    const r = await postCheck(false); // fire the void reversals
+    setSending(false);
+    setSendError(r.ok ? "Void sent" : `Void failed: ${r.message}`);
+  };
+
   if (!employee) return <EmployeePicker onPick={signIn} />;
 
   if (mode === "floor") {
@@ -344,6 +442,7 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
           <input className="search" placeholder="Search items…" value={query} onChange={(e) => setQuery(e.target.value)} />
           {query && <button className="clr" onClick={() => setQuery("")}>✕</button>}
           {ck.check.diningTableId && <button className="station" onClick={startTransfer} disabled={sending}>Move</button>}
+          <button className="station" onClick={() => { setMgrStatus(""); setShowManager(true); }} disabled={sending}>Functions</button>
           <button className="station" onClick={goToFloor} disabled={sending}>Tables</button>
           <button className="station" onClick={signOut}>Sign out</button>
           <button className="station" onClick={onChangeStation}>Station</button>
@@ -402,6 +501,7 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
           onSend={doSend}
           onPay={() => setShowPay(true)}
           onSplit={splitSelected}
+          onVoid={voidSelected}
           onNewCheck={() => { ck.reset(rcId); setSendError(""); }}
           sending={sending}
           sendError={sendError}
@@ -410,6 +510,35 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
 
       {pending && (
         <ModifierFlow itemName={pending.item.name} steps={pending.steps} onDone={finishMods} onCancel={() => setPending(null)} />
+      )}
+
+      {showManager && perms && (
+        <ManagerPanel
+          employee={employee} perms={perms} clocked={clocked} jobs={empJobs} adjustments={adjustmentDefs}
+          hasCheck={ck.check.lines.length > 0} busy={mgrBusy} status={mgrStatus}
+          onClockIn={doClockIn} onClockOut={doClockOut} onNoSale={doNoSale} onCancelCheck={doCancelCheck}
+          onDiscount={doDiscount} onClose={() => setShowManager(false)}
+        />
+      )}
+
+      {pendingAuth && (
+        <ManagerAuth
+          title={pendingAuth.title} action={pendingAuth.action}
+          onAuthorized={(a) => { const cb = pendingAuth.onOk; setPendingAuth(null); cb(a); }}
+          onCancel={() => setPendingAuth(null)}
+        />
+      )}
+
+      {voidReason && (
+        <div className="backdrop" onClick={() => setVoidReason(null)}>
+          <div className="authbox" onClick={(e) => e.stopPropagation()}>
+            <div className="authtitle">Void reason</div>
+            <div className="mgrlist">
+              {voidDefs.map((v) => <button key={v.id} className="mgrrow" onClick={() => applyVoid(v.id)}>{v.name}</button>)}
+            </div>
+            <button className="mfbtn ghost" onClick={() => setVoidReason(null)}>Cancel</button>
+          </div>
+        </div>
       )}
 
       {showPay && (

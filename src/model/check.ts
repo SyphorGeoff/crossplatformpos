@@ -12,19 +12,23 @@
 
 import type { MenuItem } from "./catalog";
 
-export type LineKind = "M" | "Mo" | "Co"; // menu item · modifier · course marker
+export type LineKind = "M" | "Mo" | "Co" | "A"; // menu item · modifier · course marker · adjustment
 
 export interface CheckLine {
   key: string;              // local unique key
-  menuItemId: string;       // "" for course markers
+  menuItemId: string;       // "" for course markers / adjustments
   description: string;
   quantity: number;
-  amount: number;           // unit price (menu item or upcharge modifier)
+  amount: number;           // unit price (menu item / upcharge modifier); signed for adjustments
   kind: LineKind;
   indentLevel: number;      // 0 = item, 1+ = modifier under an item
   parentKey?: string;       // modifier → the item line it belongs to
   guestNumber?: number;     // seat/guest this line is for
   modChainId?: string;      // item's forced-modifier chain (Screen_Chain_POS_ID)
+  adjustmentId?: string;    // Adjustment_POS_ID (kind "A")
+  taxPackId?: string;       // tax pack for a tax-affecting adjustment (kind "A")
+  authEmpId?: string;       // AuthorizingEmployee_ID (void / restricted adjustment)
+  voidPosId?: string;       // Void_POS_ID (void reason)
   isVoid?: boolean;
   transferOut?: boolean;    // a negative void-off line moving an item off this check (split/transfer)
   sent?: boolean;           // already fired to the kitchen in a prior round
@@ -107,9 +111,36 @@ export function setQuantity(check: Check, key: string, quantity: number): Check 
 /** A line's extended price (unit × qty). Modifiers may carry an upcharge. */
 export const lineExtended = (l: CheckLine): number => (l.isVoid ? 0 : l.amount * l.quantity);
 
-/** Running subtotal across current lines (excludes void-off/transfer lines). */
+/** Running subtotal across current lines — items + adjustments (discounts are
+ *  negative), excluding void/void-off lines. */
 export const checkSubtotal = (check: Check): number =>
-  check.lines.reduce((sum, l) => sum + (l.transferOut ? 0 : lineExtended(l)), 0);
+  check.lines.reduce((sum, l) => sum + (l.transferOut || l.isVoid ? 0 : lineExtended(l)), 0);
+
+/** Append an adjustment (discount/comp/service charge) as a Type="A" line.
+ *  `amount` is the signed extended dollar amount (discounts negative). */
+export function addAdjustmentLine(check: Check, a: {
+  adjustmentId: string; name: string; amount: number; taxPackId?: string; authEmpId?: string;
+}): Check {
+  const line: CheckLine = {
+    key: mintLineKey(), menuItemId: "", description: a.name, quantity: 1, amount: a.amount,
+    kind: "A", indentLevel: 0, adjustmentId: a.adjustmentId, taxPackId: a.taxPackId, authEmpId: a.authEmpId,
+  };
+  return { ...check, lines: [...check.lines, line] };
+}
+
+/** Void a line. An unsent line is dropped; a sent line is struck and gets a
+ *  reversing negative Is_Void line to cancel it server-side (recon C7). */
+export function voidLine(check: Check, key: string, voidPosId: string, authEmpId: string): Check {
+  const line = check.lines.find((l) => l.key === key);
+  if (!line) return check;
+  if (!line.sent) return removeLine(check, key);
+  const reversal: CheckLine = {
+    ...line, key: mintLineKey(), amount: -Math.abs(line.amount), isVoid: true, sent: false,
+    voidPosId, authEmpId, parentKey: undefined,
+  };
+  const lines = check.lines.map((l) => (l.key === key ? { ...l, isVoid: true } : l));
+  return { ...check, lines: [...lines, reversal] };
+}
 
 /** Total applied by tenders so far (change is not applied; it's returned cash). */
 export const tenderApplied = (check: Check): number =>

@@ -356,6 +356,7 @@ export function tenders(): Tender[] {
 export interface Employee {
   id: string;               // Emp_POS_ID
   name: string;             // First Last
+  pin: string;              // Pin (manager auth / sign-in)
   inTraining: boolean;
   _raw: DefRow;
 }
@@ -364,9 +365,102 @@ export function employees(): Employee[] {
   return loadDefRows("Employee").filter(alive).map((r) => ({
     id: s(r, "Emp_POS_ID"),
     name: `${s(r, "First_Name")} ${s(r, "Last_Name")}`.trim() || s(r, "Emp_POS_ID"),
+    pin: s(r, "Pin"),
     inTraining: s(r, "In_Training") === "1",
     _raw: r,
   })).filter((e) => e.id);
+}
+
+/** A job with its permission flags (Job.h). The named flags gate restricted
+ *  actions; an employee inherits the union of their jobs' permissions. */
+export interface Job {
+  id: string;               // POS_ID
+  name: string;
+  regularRate: number;
+  overtimeRate: number;
+  authVoids: boolean;       // Auth_Voids
+  authAdjustments: boolean; // Auth_Adjustments (discounts/comps)
+  authPullbacks: boolean;   // Auth_Pullbacks (reopen/recall)
+  authTaxExemptions: boolean;
+  overridePrice: boolean;   // Override_Price
+  applyTender: boolean;     // Apply_Tender (take payment)
+  approvePayment: boolean;
+  approveTransfer: boolean;
+  noSale: boolean;          // No_Sale / allow_no_sale
+  openDrawer: boolean;      // Open_Drawer
+  mgrMenu: boolean;         // Mgr_Menu (manager menu access)
+  modifyTimeClock: boolean; // Modify_Time_Clock (edit others' time)
+  timeclockOnly: boolean;   // Timeclock_Only (cannot ring sales)
+  seeAllChecks: boolean;
+  enableBreak: boolean;
+  breakLength: number;
+  _raw: DefRow;
+}
+export function jobs(): Job[] {
+  return loadDefRows("Job").filter(alive).map((r) => ({
+    id: s(r, "POS_ID"), name: s(r, "Name").trim(),
+    regularRate: Number(s(r, "Regular_Rate")) || 0, overtimeRate: Number(s(r, "Overtime_Rate")) || 0,
+    authVoids: s(r, "Auth_Voids") === "1",
+    authAdjustments: s(r, "Auth_Adjustments") === "1",
+    authPullbacks: s(r, "Auth_Pullbacks") === "1",
+    authTaxExemptions: s(r, "Auth_Tax_Exemptions") === "1",
+    overridePrice: s(r, "Override_Price") === "1",
+    applyTender: s(r, "Apply_Tender") === "1",
+    approvePayment: s(r, "approve_Payment") === "1",
+    approveTransfer: s(r, "Approve_Transfer") === "1",
+    noSale: s(r, "No_Sale") === "1" || s(r, "allow_no_sale") === "1",
+    openDrawer: s(r, "Open_Drawer") === "1",
+    mgrMenu: s(r, "Mgr_Menu") === "1",
+    modifyTimeClock: s(r, "Modify_Time_Clock") === "1",
+    timeclockOnly: s(r, "Timeclock_Only") === "1",
+    seeAllChecks: s(r, "see_All_Checks") === "1",
+    enableBreak: s(r, "enable_Break") === "1",
+    breakLength: Number(s(r, "break_Length")) || 0,
+    _raw: r,
+  }));
+}
+
+export interface EmployeeJob { empId: string; jobId: string; }
+export function employeeJobs(): EmployeeJob[] {
+  return loadDefRows("Employee_Job").filter(alive).map((r) => ({ empId: s(r, "Emp_POS_ID"), jobId: s(r, "Job_POS_ID") }));
+}
+
+export interface VoidReason { id: string; name: string; _raw: DefRow; }
+export function voidReasons(): VoidReason[] {
+  return loadDefRows("Void").filter(alive).map((r) => ({ id: s(r, "POS_ID"), name: s(r, "Name").trim(), _raw: r }));
+}
+
+export interface Adjustment {
+  id: string;               // POS_ID
+  name: string;
+  amount: number;           // percent (if isPercentage) or dollar amount
+  maxAmount: number;
+  taxPackId: string;
+  requiresAuth: boolean;    // Requires_Auth → manager approval
+  isPercentage: boolean;    // Is_Percentage
+  isOpen: boolean;          // Is_Open (operator enters the amount)
+  isServiceCharge: boolean; // Is_Service_Charge
+  isAutomatic: boolean;
+  affectsTaxes: boolean;    // Affects_Taxes (reduces taxable base)
+  askForReference: boolean;
+  showOnPayment: boolean;   // show_On_Payment_Screen
+  _raw: DefRow;
+}
+export function adjustments(): Adjustment[] {
+  return loadDefRows("Adjustment").filter(alive).map((r) => ({
+    id: s(r, "POS_ID"), name: s(r, "Name").trim(),
+    amount: Number(s(r, "Amount")) || 0, maxAmount: Number(s(r, "Max_Amount")) || 0,
+    taxPackId: s(r, "Tax_Pack_POS_ID"),
+    requiresAuth: s(r, "Requires_Auth") === "1",
+    isPercentage: s(r, "Is_Percentage") === "1",
+    isOpen: s(r, "Is_Open") === "1",
+    isServiceCharge: s(r, "Is_Service_Charge") === "1",
+    isAutomatic: s(r, "Is_Automatic") === "1",
+    affectsTaxes: s(r, "Affects_Taxes") === "1",
+    askForReference: s(r, "Ask_For_Reference") === "1",
+    showOnPayment: s(r, "show_On_Payment_Screen") === "1",
+    _raw: r,
+  }));
 }
 
 export function chains(): Chain[] {

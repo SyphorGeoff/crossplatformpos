@@ -59,15 +59,17 @@ export interface SendContext {
 
 const el = (name: string, value: string | number): string => `<${name}>${escapeXml(String(value))}</${name}>`;
 
-/** One <LineItem …>. `lineNumber` map lets modifiers point at their parent. */
+/** One <LineItem …>. `lineNumber` map lets modifiers point at their parent.
+ *  Emits Type="M" (menu/modifier), or Type="A" for adjustment lines. */
 function xmlLineItem(line: CheckLine, lineNumber: number, trayNumber: number, parentLineNumber?: number): string {
+  const type = line.kind === "A" ? "A" : "M";
   const attrs = [
     `Is_Held="0"`,
     `Is_Void="${line.isVoid ? "1" : "0"}"`,
     `Transfered_Out="${line.transferOut ? "1" : "0"}"`,
     `Print_On_Check="1"`,
     `Show_On_Display="1"`,
-    `Type="M"`,
+    `Type="${type}"`,
     `Finalized="0"`,
     `Is_Split="0"`,
     `lineitemkey="${escapeXml(line.key)}"`,
@@ -79,9 +81,12 @@ function xmlLineItem(line: CheckLine, lineNumber: number, trayNumber: number, pa
     parts.push(el("Parent_LineItem_ID", parentLineNumber));
     parts.push(el("Parent_Tray_Number", trayNumber));
   }
+  if (line.authEmpId) parts.push(el("AuthorizingEmployee_ID", line.authEmpId));
   parts.push(el("Quantity", line.quantity));
   parts.push(el("Line_Number", lineNumber));
-  parts.push(el("MenuItem_POS_ID", line.menuItemId));
+  if (type === "A") parts.push(el("Adjustment_POS_ID", line.adjustmentId ?? ""));
+  else parts.push(el("MenuItem_POS_ID", line.menuItemId));
+  if (line.voidPosId) parts.push(el("Void_POS_ID", line.voidPosId));
   parts.push(el("Line_Amount", (line.amount * line.quantity).toFixed(2))); // extended, like the iPad's Amount
   return `<LineItem ${attrs}>${parts.join("")}</LineItem>`;
 }
@@ -113,8 +118,9 @@ export interface WireTaxGroup { reportGroupId: string; amount: string; isExempt:
  *  Is_Settled (settle is the same POST re-sent, not a separate message —
  *  FinancialCheckManager.m:13824/23664/7953). `taxGroups` emit the tax
  *  breakdown (FinancialCheckManager.m:8274-8298). */
-export function buildFinancialCheck(check: Check, ctx: SendContext, opts: { settle?: boolean; taxGroups?: WireTaxGroup[] } = {}, now = new Date()): string {
+export function buildFinancialCheck(check: Check, ctx: SendContext, opts: { settle?: boolean; cancel?: boolean; taxGroups?: WireTaxGroup[] } = {}, now = new Date()): string {
   const settle = opts.settle ?? false;
+  const cancel = opts.cancel ?? false;
   const trayNumber = check.traysSent + 1;
   const stamp = dateTime(now);
 
@@ -137,9 +143,9 @@ export function buildFinancialCheck(check: Check, ctx: SendContext, opts: { sett
 
   const flag = (b: boolean) => (b ? "1" : "0");
   const checkAttrs = [
-    `Is_Cancelled="0"`, `Is_Return="0"`, `Print_Count="0"`, `Is_Transferred="0"`,
+    `Is_Cancelled="${flag(cancel)}"`, `Is_Return="0"`, `Print_Count="0"`, `Is_Transferred="0"`,
     `is_FutureOrder="0"`, `Is_Split="0"`, `Is_Tax_Exempt="0"`,
-    `Guest_Count="${check.guestCount}"`, `Is_Closed="${flag(settle)}"`, `Is_Reopen="0"`,
+    `Guest_Count="${check.guestCount}"`, `Is_Closed="${flag(settle || cancel)}"`, `Is_Reopen="0"`,
     // is_Settled (lowercase) is always empty on the wire; Is_Settled carries the flag.
     `is_Settled=""`, `Is_Settled="${flag(settle)}"`,
     `Check_Name="${escapeXml(check.tableName || "")}"`, `Is_New="${flag(check.traysSent === 0)}"`,
@@ -221,7 +227,7 @@ export interface SendResult { ok: boolean; statusCode: string; message: string; 
 
 /** Fire the check to the kitchen (or settle it with `settle:true`).
  *  Success = Message_Status Status_Code=="100". */
-export async function sendCheck(enterpriseServerUrl: string, check: Check, ctx: SendContext, opts: { settle?: boolean; taxGroups?: WireTaxGroup[] } = {}): Promise<SendResult> {
+export async function sendCheck(enterpriseServerUrl: string, check: Check, ctx: SendContext, opts: { settle?: boolean; cancel?: boolean; taxGroups?: WireTaxGroup[] } = {}): Promise<SendResult> {
   const xml = buildFinancialCheck(check, ctx, opts);
   try {
     const parsed = parseXmlResponse(await postXml(apiServerAddress(enterpriseServerUrl), xml));

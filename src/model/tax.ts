@@ -50,10 +50,19 @@ export function computeCheckTax(cat: Catalog, check: Check, exempt: Set<string> 
 
   for (const line of check.lines) {
     if (line.isVoid || line.transferOut || line.kind === "Co") continue;
-    const item = cat.miById.get(line.menuItemId);
-    const group = item?.taxGroupId ? cat.taxGroupById.get(item.taxGroupId) : undefined;
-    const pack = group ? cat.taxPackById.get(group.taxPackId) : undefined;
-    if (!group || !pack || pack.defs.length === 0) continue;
+    // Adjustments (Type="A") tax against their own pack when they affect taxes
+    // (a discount's negative amount reduces net tax); items via their tax group.
+    let pack, roundDown = false;
+    if (line.kind === "A") {
+      if (!line.taxPackId) continue;
+      pack = cat.taxPackById.get(line.taxPackId);
+    } else {
+      const item = cat.miById.get(line.menuItemId);
+      const group = item?.taxGroupId ? cat.taxGroupById.get(item.taxGroupId) : undefined;
+      pack = group ? cat.taxPackById.get(group.taxPackId) : undefined;
+      roundDown = group?.roundDown ?? false;
+    }
+    if (!pack || pack.defs.length === 0) continue;
 
     let base = lineExtended(line); // extended, discount-inclusive amount
     let prevTax = 0;
@@ -64,7 +73,7 @@ export function computeCheckTax(cat: Catalog, check: Check, exempt: Set<string> 
       let tax: number;
       if (trg.isInclusive) {
         tax = base - base / (1 + def.rate / 100);
-      } else if (group.roundDown) {
+      } else if (roundDown) {
         tax = r4down(r4down(base * def.rate) * 0.01);
       } else {
         tax = r4(r4(base * def.rate) * 0.01);

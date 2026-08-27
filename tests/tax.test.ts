@@ -101,6 +101,24 @@ describe("computeCheckTax — compound", () => {
   });
 });
 
+describe("adjustments", () => {
+  it("a tax-affecting discount reduces the tax (its pack, negative amount)", () => {
+    const c = check([
+      line("sales", 10),
+      { key: "d", menuItemId: "", description: "Comp", quantity: 1, amount: -5, kind: "A", indentLevel: 0, taxPackId: "1" },
+    ]);
+    const t = computeCheckTax(storeCat, c);
+    expect(t.taxTotal).toBe(0.5); // (10 − 5) × 10%
+  });
+  it("a non-tax discount (no taxPackId) leaves tax on the full item", () => {
+    const c = check([
+      line("sales", 10),
+      { key: "d", menuItemId: "", description: "Comp", quantity: 1, amount: -5, kind: "A", indentLevel: 0 },
+    ]);
+    expect(computeCheckTax(storeCat, c).taxTotal).toBe(1); // 10 × 10%, discount doesn't affect tax
+  });
+});
+
 describe("balance & wire", () => {
   it("balance due includes tax minus tenders", () => {
     const t = computeCheckTax(storeCat, check([line("sales", 10)]));

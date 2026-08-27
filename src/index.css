@@ -192,6 +192,31 @@ body { background: var(--bg); color: var(--ink); font-family: system-ui, -apple-
 .roompad label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--ink-dim); }
 .roompad input { background: #0e1116; border: 1px solid var(--edge); border-radius: 10px; padding: 12px; color: var(--ink); font-size: 18px; }
 
+/* Manager / functions panel */
+.mgrpanel { width: min(460px, 94vw); max-height: 90vh; overflow-y: auto; background: var(--card); border: 1px solid var(--edge); border-radius: 16px; padding: 18px; }
+.mgrhead { display: flex; justify-content: space-between; align-items: flex-start; }
+.mgrtitle { font-size: 19px; font-weight: 800; }
+.mgrsub { font-size: 12px; color: var(--ink-dim); margin-top: 2px; }
+.mgrstatus { margin: 12px 0; padding: 8px 10px; background: #1c2333; border-radius: 8px; font-size: 13px; }
+.mgrgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+.mgrbtn { padding: 20px 14px; border: 1px solid var(--edge); background: #26303f; color: var(--ink); border-radius: 12px; font-size: 16px; font-weight: 700; cursor: pointer; display: flex; flex-direction: column; gap: 3px; align-items: center; }
+.mgrbtn small { font-size: 11px; color: var(--ink-dim); font-weight: 400; }
+.mgrbtn:disabled { opacity: .4; cursor: default; }
+.mgrbtn.danger { background: #3a2030; border-color: #7a3050; }
+.mgrlist { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+.mgrlabel { font-size: 12px; color: var(--ink-dim); text-transform: uppercase; letter-spacing: .05em; }
+.mgrrow { display: flex; justify-content: space-between; align-items: center; padding: 14px; border: 1px solid var(--edge); background: #0e1116; color: var(--ink); border-radius: 10px; font-size: 15px; font-weight: 600; cursor: pointer; }
+.mgrrow span { font-size: 12px; color: var(--ink-dim); font-weight: 400; }
+.mgrrow:hover { border-color: var(--accent); }
+
+/* Manager auth PIN box */
+.authbox { width: min(320px, 92vw); background: var(--card); border: 1px solid var(--edge); border-radius: 16px; padding: 20px; text-align: center; }
+.authtitle { font-size: 17px; font-weight: 800; }
+.authsub { font-size: 12px; color: var(--ink-dim); margin-top: 2px; }
+.authpin { font-size: 26px; letter-spacing: 6px; min-height: 34px; margin: 12px 0; }
+.autherr { color: #ff8a8a; font-size: 13px; margin-bottom: 8px; }
+.authbox .keypad { margin-bottom: 12px; }
+
 /* Item detail sheet */
 .backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 20; }
 .sheet { width: min(400px, 92vw); background: var(--card); border: 1px solid var(--edge); border-radius: 16px; padding: 20px; }

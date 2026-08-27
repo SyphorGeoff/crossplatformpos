@@ -8,8 +8,8 @@
 import { useCallback, useState } from "react";
 import { loadJSON, remove, saveJSON } from "@/platform/storage";
 import {
-  addItemLine, addModifierLine, addTender, markRoundSent, mintLineKey, newCheck, removeLine,
-  removeTender, setQuantity, type Check, type TenderLine,
+  addAdjustmentLine, addItemLine, addModifierLine, addTender, markRoundSent, mintLineKey, newCheck, removeLine,
+  removeTender, setQuantity, voidLine, type Check, type TenderLine,
 } from "@/model/check";
 import type { MenuItem } from "@/model/catalog";
 
@@ -47,6 +47,10 @@ export function useCheck(defaultRcId: string) {
 
   const applyTender = useCallback((t: Omit<TenderLine, "key">) => mutate((c) => addTender(c, t)), [mutate]);
   const voidTender = useCallback((key: string) => mutate((c) => removeTender(c, key)), [mutate]);
+  const applyAdjustment = useCallback((a: { adjustmentId: string; name: string; amount: number; taxPackId?: string; authEmpId?: string }) =>
+    mutate((c) => addAdjustmentLine(c, a)), [mutate]);
+  const voidItem = useCallback((key: string, voidPosId: string, authEmpId: string) =>
+    mutate((c) => voidLine(c, key, voidPosId, authEmpId)), [mutate]);
 
   /** After a successful POST: mark the round (items + tenders) sent, advance the
    *  tray counter, and optionally flag the check closed (settled). */
@@ -60,5 +64,5 @@ export function useCheck(defaultRcId: string) {
   /** Replace the current check with one pulled from the server (resume a table). */
   const loadCheck = useCallback((c: Check) => { persist(c); setCheck(c); }, []);
 
-  return { check, addItem, addModifier, remove: remove_, setQty, setTable, setGuests, setRevenueCenter, setDiningTable, setCheckNumber, applyTender, voidTender, markSent, reset, loadCheck };
+  return { check, addItem, addModifier, remove: remove_, setQty, setTable, setGuests, setRevenueCenter, setDiningTable, setCheckNumber, applyTender, voidTender, applyAdjustment, voidItem, markSent, reset, loadCheck };
 }
