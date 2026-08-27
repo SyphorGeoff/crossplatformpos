@@ -16,8 +16,9 @@ import ModifierFlow, { type ChosenModifier } from "./ModifierFlow";
 import PaymentView from "./PaymentView";
 import Floorplan from "./Floorplan";
 import Login from "./Login";
-import ManagerPanel, { type ClockState } from "./ManagerPanel";
+import ManagerPanel from "./ManagerPanel";
 import ManagerAuth from "./ManagerAuth";
+import ClockInGate from "./ClockInGate";
 import {
   childScreenGroups, initialSelection, itemsInScreenGroup, loadCatalog, modifierSteps,
   rootScreenGroups, searchItems, type Catalog, type ModifierStep,
@@ -55,7 +56,7 @@ const money = (price: string, askForPrice: boolean): string => {
 export default function Menu({ settings, onChangeStation }: { settings: Settings; onChangeStation: () => void }) {
   const cat = useMemo<Catalog>(() => loadCatalog(), []);
   const init = useMemo(() => initialSelection(cat, settings.terminalPosId), [cat, settings.terminalPosId]);
-  const { employee, signIn, signOut } = useEmployee();
+  const { employee, clock, signIn, signOut, setClock, clockOut: endShift } = useEmployee();
 
   const [rcId, setRcId] = useState<string>(init.rcId);
   const [stack, setStack] = useState<ScreenGroup[]>(() => (init.screenGroup ? [init.screenGroup] : []));
@@ -72,7 +73,6 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
   const [floorStatus, setFloorStatus] = useState("");
   const [lockedCheck, setLockedCheck] = useState<{ checkNo: string; checkKey: string; bd: string } | null>(null);
   const [showManager, setShowManager] = useState(false);
-  const [clocked, setClocked] = useState<ClockState | null>(null);
   const [mgrStatus, setMgrStatus] = useState("");
   const [mgrBusy, setMgrBusy] = useState(false);
   const [pendingAuth, setPendingAuth] = useState<{ title: string; action: AuthAction; onOk: (a: Authorizer) => void } | null>(null);
@@ -316,25 +316,28 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
     setPendingAuth({ title, action, onOk });
   };
 
-  const doClockIn = async (job: Job) => {
-    setMgrBusy(true); setMgrStatus("Clocking in…");
+  /** Clock in to a job (Time_Card post) and record the shift. Used by the
+   *  post-login gate; ordering is blocked until this succeeds. */
+  const clockInPost = async (job: Job): Promise<{ ok: boolean; sequence: string; message: string }> => {
+    if (!employee) return { ok: false, sequence: "", message: "No employee" };
     try {
       const bd = await ensureBd();
-      const r = await clockIn(sessionCfg(), { businessDateId: bd, empPosId: employee!.id, jobPosId: job.id, rate: job.regularRate });
-      if (r.ok) { setClocked({ jobId: job.id, jobName: job.name, sequence: r.sequence }); setMgrStatus(`Clocked in as ${job.name}`); }
-      else setMgrStatus(r.message);
-    } catch (e) { setMgrStatus(String((e as Error).message ?? e)); }
-    setMgrBusy(false);
+      const r = await clockIn(sessionCfg(), { businessDateId: bd, empPosId: employee.id, jobPosId: job.id, rate: job.regularRate });
+      return { ok: r.ok, sequence: r.sequence, message: r.message };
+    } catch (e) { return { ok: false, sequence: "", message: String((e as Error).message ?? e) }; }
+  };
+  /** Finalize the shift (after clock-in + optional default-room pick) → opens ordering. */
+  const commitShift = (c: { jobId: string; jobName: string; sequence: string; defaultRoomId: string }) => {
+    if (!employee) return;
+    setClock({ empId: employee.id, ...c });
+    setMode(c.defaultRoomId ? "floor" : "order"); // table-service job lands on the floor
   };
   const doClockOut = async () => {
-    if (!clocked) return;
     setMgrBusy(true); setMgrStatus("Clocking out…");
     try {
-      const bd = await ensureBd();
-      const r = await clockOut(sessionCfg(), { businessDateId: bd, empPosId: employee!.id, sequence: clocked.sequence });
-      if (r.ok) { setClocked(null); setMgrStatus("Clocked out"); } else setMgrStatus(r.message);
-    } catch (e) { setMgrStatus(String((e as Error).message ?? e)); }
-    setMgrBusy(false);
+      if (clock && employee) { const bd = await ensureBd(); await clockOut(sessionCfg(), { businessDateId: bd, empPosId: employee.id, sequence: clock.sequence }); }
+    } catch { /* clock out locally regardless of the server result */ }
+    setMgrBusy(false); setShowManager(false); endShift();
   };
 
   const doNoSale = () => {
@@ -401,6 +404,11 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
     />
   );
 
+  // Gate ordering on clock-in (job → clock-in → default dining room).
+  if (!clock) return (
+    <ClockInGate employee={employee} jobs={empJobs} rooms={rooms} onClockIn={clockInPost} onCommit={commitShift} onCancel={signOut} />
+  );
+
   if (mode === "floor") {
     return (
       <Floorplan
@@ -417,6 +425,7 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
         status={floorStatus}
         transferMode={transferMode}
         onCancelTransfer={() => { setTransferMode(false); setMode("order"); }}
+        initialRoomId={clock?.defaultRoomId}
       />
     );
   }
@@ -506,9 +515,10 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
 
       {showManager && perms && (
         <ManagerPanel
-          employee={employee} perms={perms} clocked={clocked} jobs={empJobs} adjustments={adjustmentDefs}
+          employee={employee} perms={perms} clocked={clock} jobs={empJobs} adjustments={adjustmentDefs}
           hasCheck={ck.check.lines.length > 0} busy={mgrBusy} status={mgrStatus}
-          onClockIn={doClockIn} onClockOut={doClockOut} onNoSale={doNoSale} onCancelCheck={doCancelCheck}
+          onClockIn={(j) => { void clockInPost(j).then((r) => { if (r.ok) commitShift({ jobId: j.id, jobName: j.name, sequence: r.sequence, defaultRoomId: "" }); }); }}
+          onClockOut={doClockOut} onNoSale={doNoSale} onCancelCheck={doCancelCheck}
           onDiscount={doDiscount} onClose={() => setShowManager(false)}
         />
       )}

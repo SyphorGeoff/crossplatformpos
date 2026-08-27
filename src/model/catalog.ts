@@ -393,6 +393,8 @@ export interface Job {
   mgrMenu: boolean;         // Mgr_Menu (manager menu access)
   modifyTimeClock: boolean; // Modify_Time_Clock (edit others' time)
   timeclockOnly: boolean;   // Timeclock_Only (cannot ring sales)
+  skipTable: boolean;       // Skip_Table (counter/quick job — no default dining room)
+  stopClockInChit: boolean; // isStopClockInChit — suppress the clock-in chit print
   seeAllChecks: boolean;
   enableBreak: boolean;
   breakLength: number;
@@ -415,6 +417,8 @@ export function jobs(): Job[] {
     mgrMenu: s(r, "Mgr_Menu") === "1",
     modifyTimeClock: s(r, "Modify_Time_Clock") === "1",
     timeclockOnly: s(r, "Timeclock_Only") === "1",
+    skipTable: s(r, "Skip_Table") === "1",
+    stopClockInChit: s(r, "job_backup6") === "1",  // isStopClockInChit — suppress the clock-in chit
     seeAllChecks: s(r, "see_All_Checks") === "1",
     enableBreak: s(r, "enable_Break") === "1",
     breakLength: Number(s(r, "break_Length")) || 0,

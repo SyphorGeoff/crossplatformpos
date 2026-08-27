@@ -143,21 +143,38 @@ body { background: var(--cream); color: var(--ink); font-family: "Helvetica Neue
   .checkpanel { width: auto; flex: 0 0 auto; max-height: 44vh; border-left: none; border-top: 1px solid var(--line); }
 }
 
-/* Employee PIN login — dark sign-in keypad (faithful to the iOS login art) */
-.login { position: fixed; inset: 0; background: #0a0a12; color: #b9b7d0; display: flex; flex-direction: column; align-items: center; padding: 28px 16px; }
-.loginhead { letter-spacing: .5em; font-size: 15px; color: #7c7a99; margin-top: 8px; padding-left: .5em; }
+/* Employee PIN login — cream sign-in keypad */
+.login { position: fixed; inset: 0; background: var(--cream); color: var(--ink-soft); display: flex; flex-direction: column; align-items: center; padding: 28px 16px; }
+.loginhead { letter-spacing: .5em; font-size: 15px; color: var(--ink-dim); margin-top: 8px; padding-left: .5em; }
 .loginpad { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; width: min(420px, 92vw); }
-.loginentry { height: 30px; font-size: 24px; letter-spacing: 8px; color: #cbc9e6; }
+.loginentry { height: 30px; font-size: 24px; letter-spacing: 8px; color: var(--ink); }
 .loginkeys { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px 40px; width: 100%; }
-.lkey { background: none; border: none; color: #a6a4c4; font-size: 42px; font-weight: 200; padding: 14px 0; cursor: pointer; line-height: 1; }
-.lkey.word { font-size: 24px; font-weight: 300; }
-.lkey:hover { color: #e6e4ff; }
-.lkey:active { color: #fff; }
-.loginprompt { margin-top: 18px; font-size: 15px; color: #6f6d8c; text-align: center; max-width: 240px; }
-.loginerr { margin-top: 8px; color: #e0708a; font-size: 14px; }
-.loginfoot { width: 100%; display: flex; justify-content: space-between; align-items: flex-end; font-size: 12px; color: #4f4d66; padding: 0 6px; }
-.loginfoot .ltag { color: #5a5878; text-align: center; flex: 1; }
-.loginfoot .lver, .loginfoot .lterm { color: #56547a; }
+.lkey { background: none; border: none; color: var(--ink); font-size: 42px; font-weight: 200; padding: 14px 0; cursor: pointer; line-height: 1; }
+.lkey.word { font-size: 24px; font-weight: 300; color: var(--ink-soft); }
+.lkey:hover { color: var(--gold); }
+.lkey:active { color: var(--terra); }
+.loginprompt { margin-top: 18px; font-size: 15px; color: var(--ink-dim); text-align: center; max-width: 240px; }
+.loginerr { margin-top: 8px; color: var(--red); font-size: 14px; }
+.loginfoot { width: 100%; display: flex; justify-content: space-between; align-items: flex-end; font-size: 12px; color: var(--ink-dim); padding: 0 6px; }
+.loginfoot .ltag { color: var(--ink-dim); text-align: center; flex: 1; }
+.loginfoot .lver, .loginfoot .lterm { color: var(--ink-dim); }
+
+/* Clock-in gate (post-login confirm → job → default dining room) */
+.cinbox { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; width: min(460px, 92vw); }
+.cinname { font-family: var(--serif); font-size: 52px; font-weight: 300; color: var(--ink); text-align: center; line-height: 1.05; }
+.cinname.sm { font-size: 30px; }
+.cinprompt { font-size: 15px; color: var(--ink-dim); text-align: center; }
+.cinwelcome { font-size: 16px; color: var(--ink-dim); margin-top: 8px; letter-spacing: .04em; }
+.cinactions { display: flex; gap: 16px; }
+.cinbtn { min-width: 150px; padding: 16px; border: 1px solid var(--line-hard); background: var(--card); color: var(--ink); border-radius: 12px; font-size: 17px; cursor: pointer; }
+.cinbtn.ok { background: var(--ink); color: var(--cream); border-color: var(--ink); }
+.cinbtn:hover { border-color: var(--gold); }
+.cinlist { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+.cinrow { display: flex; justify-content: space-between; align-items: center; padding: 16px 18px; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 12px; font-size: 17px; font-weight: 600; cursor: pointer; }
+.cinrow span { font-size: 13px; color: var(--ink-dim); font-weight: 400; }
+.cinrow:hover { border-color: var(--gold); }
+.cinrow:disabled { opacity: .45; cursor: default; }
+.cinback { background: none; border: none; color: var(--ink-dim); font-size: 14px; cursor: pointer; }
 
 /* Modifier flow */
 .modflow { width: min(720px, 94vw); max-height: 88vh; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; box-shadow: 0 20px 60px rgba(26,26,26,.25); }

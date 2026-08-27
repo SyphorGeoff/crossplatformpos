@@ -27,6 +27,7 @@ export interface FloorplanProps {
   status?: string;
   transferMode?: boolean;
   onCancelTransfer?: () => void;
+  initialRoomId?: string;
 }
 
 type Status = "open" | "occupied" | "allergy" | "held" | "printed";
@@ -40,7 +41,7 @@ function tableStatus(occ?: OpenCheck): Status {
 
 export default function Floorplan(p: FloorplanProps) {
   const rooms = useMemo(() => [...p.rooms].sort((a, b) => a.sort - b.sort), [p.rooms]);
-  const [roomId, setRoomId] = useState<string>(() => rooms[0]?.id ?? "");
+  const [roomId, setRoomId] = useState<string>(() => (p.initialRoomId && rooms.some((r) => r.id === p.initialRoomId) ? p.initialRoomId : rooms[0]?.id ?? ""));
 
   const roomTables = useMemo(() => p.tables.filter((t) => t.roomId === roomId), [p.tables, roomId]);
   // Canvas height from the tables' extent (kept in the 768-wide design space).
