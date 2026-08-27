@@ -7,7 +7,7 @@
  * the server exactly as the iPad does.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ISIS_VER, type Settings } from "@/state/useSettings";
 import { useCheck } from "@/state/useCheck";
 import { useEmployee } from "@/state/useEmployee";
@@ -29,7 +29,7 @@ import {
 } from "@/model/catalog";
 import type { Adjustment, DiningTable, Job, MenuItem, ScreenGroup } from "@/model/catalog";
 import { can, jobsForEmployee, permsForEmployee, type AuthAction, type Authorizer } from "@/model/permissions";
-import { clockIn, clockOut } from "@/protocol/timeclock";
+import { clockIn, clockOut, fetchClockedInEmp } from "@/protocol/timeclock";
 import {
   fetchHighestCheck, nextCheckNo, resolveBusinessDate, sendCheck,
   type SendContext, type SessionConfig,
@@ -77,6 +77,8 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
   const [mgrBusy, setMgrBusy] = useState(false);
   const [pendingAuth, setPendingAuth] = useState<{ title: string; action: AuthAction; onOk: (a: Authorizer) => void } | null>(null);
   const [voidReason, setVoidReason] = useState<{ keys: string[]; auth: Authorizer } | null>(null);
+  const [signingIn, setSigningIn] = useState(false);
+  const clockCheckRef = useRef("");
 
   const ck = useCheck(init.rcId);
   const payTenders = useMemo(() => loadTenders().filter((t) => t.appliesToCheck && !t.hidden).sort((a, b) => a.sort - b.sort), []);
@@ -142,6 +144,29 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
     if (!bd) throw new Error("No open business date on the server");
     return bd;
   };
+
+  // At login, check the server for an existing shift (Clocked_In_Emps). If the
+  // employee is already clocked in, go straight in using their current job /
+  // default room / sequence — no clock-in gate (LoginViewController loginLoading).
+  useEffect(() => {
+    if (!employee) { clockCheckRef.current = ""; setSigningIn(false); return; }
+    if (clock || clockCheckRef.current === employee.id) return;
+    clockCheckRef.current = employee.id;
+    let cancelled = false;
+    setSigningIn(true);
+    void (async () => {
+      try {
+        const emp = await fetchClockedInEmp(sessionCfg(), employee.id);
+        if (cancelled) return;
+        if (emp) {
+          const jobName = empJobs.find((j) => j.id === emp.jobId)?.name ?? "";
+          setClock({ empId: employee.id, jobId: emp.jobId, jobName, sequence: emp.sequence, defaultRoomId: emp.defaultRoomId });
+          setMode(emp.defaultRoomId ? "floor" : "order");
+        } else setSigningIn(false); // not clocked in → the gate handles clock-in
+      } catch { if (!cancelled) setSigningIn(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [employee, clock]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Resolve BusinessDate_ID and a check number, assigning the number once. */
   const ensureSession = async (): Promise<{ bd: string; checkNo: string }> => {
@@ -323,7 +348,8 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
     try {
       const bd = await ensureBd();
       const r = await clockIn(sessionCfg(), { businessDateId: bd, empPosId: employee.id, jobPosId: job.id, rate: job.regularRate });
-      return { ok: r.ok, sequence: r.sequence, message: r.message };
+      // Already-clocked-in means the employee is on the clock — proceed as success.
+      return { ok: r.ok || r.alreadyClockedIn, sequence: r.sequence, message: r.message };
     } catch (e) { return { ok: false, sequence: "", message: String((e as Error).message ?? e) }; }
   };
   /** Finalize the shift (after clock-in + optional default-room pick) → opens ordering. */
@@ -404,6 +430,10 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
     />
   );
 
+  // While checking the server for an existing shift.
+  if (!clock && signingIn) return (
+    <div className="login"><div className="loginpad"><div className="loginprompt">Signing in…</div></div></div>
+  );
   // Gate ordering on clock-in (job → clock-in → default dining room).
   if (!clock) return (
     <ClockInGate employee={employee} jobs={empJobs} rooms={rooms} onClockIn={clockInPost} onCommit={commitShift} onCancel={signOut} />
