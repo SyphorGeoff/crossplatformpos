@@ -120,6 +120,22 @@ body { background: var(--bg); color: var(--ink); font-family: system-ui, -apple-
   .checkpanel { width: auto; flex: 0 0 auto; max-height: 44vh; border-left: none; border-top: 1px solid var(--edge); }
 }
 
+/* Employee PIN login (iOS-parity keypad) */
+.login { position: fixed; inset: 0; background: #0a0a12; color: #b9b7d0; display: flex; flex-direction: column; align-items: center; padding: 28px 16px; }
+.loginhead { letter-spacing: .5em; font-size: 15px; color: #7c7a99; margin-top: 8px; padding-left: .5em; }
+.loginpad { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; width: min(420px, 92vw); }
+.loginentry { height: 30px; font-size: 24px; letter-spacing: 8px; color: #cbc9e6; }
+.loginkeys { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px 40px; width: 100%; }
+.lkey { background: none; border: none; color: #a6a4c4; font-size: 42px; font-weight: 200; padding: 14px 0; cursor: pointer; line-height: 1; }
+.lkey.word { font-size: 24px; font-weight: 300; }
+.lkey:hover { color: #e6e4ff; }
+.lkey:active { color: #fff; }
+.loginprompt { margin-top: 18px; font-size: 15px; color: #6f6d8c; text-align: center; max-width: 220px; }
+.loginerr { margin-top: 8px; color: #e0708a; font-size: 14px; }
+.loginfoot { width: 100%; display: flex; justify-content: space-between; align-items: flex-end; font-size: 12px; color: #4f4d66; padding: 0 6px; }
+.loginfoot .ltag { color: #5a5878; text-align: center; flex: 1; }
+.loginfoot .lver, .loginfoot .lterm { color: #56547a; }
+
 /* Employee picker */
 .emplist { display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; }
 .card .empbtn { padding: 14px; border: 1px solid var(--edge); background: #0e1116; color: var(--ink); border-radius: 10px; font-size: 15px; font-weight: 600; cursor: pointer; text-align: left; }

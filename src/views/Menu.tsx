@@ -10,11 +10,12 @@
 import { useMemo, useState } from "react";
 import { ISIS_VER, type Settings } from "@/state/useSettings";
 import { useCheck } from "@/state/useCheck";
-import { useEmployee, type CurrentEmployee } from "@/state/useEmployee";
+import { useEmployee } from "@/state/useEmployee";
 import CheckPanel from "./CheckPanel";
 import ModifierFlow, { type ChosenModifier } from "./ModifierFlow";
 import PaymentView from "./PaymentView";
 import Floorplan from "./Floorplan";
+import Login from "./Login";
 import ManagerPanel, { type ClockState } from "./ManagerPanel";
 import ManagerAuth from "./ManagerAuth";
 import {
@@ -47,26 +48,6 @@ const money = (price: string, askForPrice: boolean): string => {
   const n = Number(price);
   return !price || !Number.isFinite(n) ? "" : `$${n.toFixed(2)}`;
 };
-
-function EmployeePicker({ onPick }: { onPick: (e: CurrentEmployee) => void }) {
-  const list = useMemo(() => employees().sort((a, b) => a.name.localeCompare(b.name)), []);
-  return (
-    <div className="setup">
-      <h1>Aireus POS</h1>
-      <div className="card">
-        <h2>Who's serving?</h2>
-        <div className="emplist">
-          {list.map((e) => (
-            <button key={e.id} className="empbtn" onClick={() => onPick({ id: e.id, name: e.name })}>
-              {e.name}{e.inTraining ? " (training)" : ""}
-            </button>
-          ))}
-          {list.length === 0 && <p className="hint">No employees in the synced catalog.</p>}
-        </div>
-      </div>
-    </div>
-  );
-}
 
 export default function Menu({ settings, onChangeStation }: { settings: Settings; onChangeStation: () => void }) {
   const cat = useMemo<Catalog>(() => loadCatalog(), []);
@@ -102,6 +83,7 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
   const perms = useMemo(() => (employee ? permsForEmployee(employee.id) : null), [employee]);
   const adjustmentDefs = useMemo(() => loadAdjustments(), []);
   const voidDefs = useMemo(() => voidReasons(), []);
+  const empList = useMemo(() => employees(), []);
   const rooms = useMemo(() => diningRooms(), []);
   const tables = useMemo(() => diningTables(), []);
   const occupancy = useMemo(() => {
@@ -407,7 +389,14 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
     setSendError(r.ok ? "Void sent" : `Void failed: ${r.message}`);
   };
 
-  if (!employee) return <EmployeePicker onPick={signIn} />;
+  if (!employee) return (
+    <Login
+      settings={settings}
+      usePin={store.usePin}
+      lookup={(id) => { const e = empList.find((x) => x.id === id); return e ? { id: e.id, name: e.name, pin: e.pin } : null; }}
+      onLogin={signIn}
+    />
+  );
 
   if (mode === "floor") {
     return (

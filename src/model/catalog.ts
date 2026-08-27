@@ -309,6 +309,7 @@ export interface Tender {
 
 /** Store-level payment config (processor selection + native merchant creds). */
 export interface StoreConfig {
+  usePin: boolean;            // Store.UsePin — require a PIN after the ID at login
   gcProcessor: string;        // GC_Processor ("ISISGiftCard"/"aireus…" = native)
   loyaltyProcessor: string;   // loyalty_Processor ("" or third-party name)
   gcMerchantId: string;
@@ -320,6 +321,7 @@ const nativeProcessor = (v: string) => /isis|aireus/i.test(v);
 export function storeConfig(): StoreConfig {
   const r = loadDefRows("Store")[0] ?? {};
   return {
+    usePin: s(r, "UsePin") === "1" || s(r, "Use_Pin") === "1" || s(r, "usePin") === "1",
     gcProcessor: s(r, "GC_Processor"),
     loyaltyProcessor: s(r, "loyalty_Processor"),
     gcMerchantId: s(r, "GC_Merchant_ID"),
