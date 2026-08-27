@@ -38,7 +38,10 @@ import { fetchOpenChecks, lockCheck, readCheck, unlockCheck, type OpenCheck } fr
 import { checkSubtotal, markRoundSent, splitToNewCheck, unsentLines } from "@/model/check";
 import { computeCheckTax, taxGroupsForWire } from "@/model/tax";
 
-const TILE_COLORS = ["#26303f", "#2f6fb0", "#b0472f", "#2f8f5f", "#b98a2b", "#7a55c0", "#2f8fae", "#b0416f"];
+/* Muted "food" tile tones (Sr_Simulator counter palette). Index 0/blank = the
+   default system tone; button_color picks a specific tone (the item>category>
+   screen-group>system cascade lands here). */
+const TILE_COLORS = ["#7A6A52", "#9B5E3B", "#6F5F38", "#4A4F38", "#3A323E", "#6F7559", "#857B8E", "#5B4A3A", "#4F5B52"];
 const tileColor = (idx: string): string => {
   const n = Number(idx);
   return Number.isFinite(n) && n > 0 ? TILE_COLORS[n % TILE_COLORS.length] : TILE_COLORS[0];
