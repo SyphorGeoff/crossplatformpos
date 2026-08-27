@@ -79,18 +79,30 @@ export default function Setup({ initial, onDone }: {
     finally { setBusy(false); }
   };
 
+  if (step === "login") {
+    return (
+      <div className="activate">
+        <div className="actbox">
+          <div className="actbrand">Aireus</div>
+          <div className="actrule" />
+          <div className="acttitle">Activate this terminal.</div>
+          <div className="actsub">Sign in with your enterprise credentials.</div>
+          <div className="actfields">
+            <label className="fld"><span>User name</span><input value={user} onChange={(e) => setUser(e.target.value)} autoFocus /></label>
+            <label className="fld"><span>Password</span><input type="password" value={pass} onChange={(e) => setPass(e.target.value)} /></label>
+            <label className="fld"><span>Enterprise</span><input value={code} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && code && user && !busy) void signIn(); }} /></label>
+          </div>
+          {code.trim() && <p className="hint">→ {url()}</p>}
+          <button className="actsignin" disabled={busy || !code || !user} onClick={() => void signIn()}>{busy ? "…" : "SIGN IN"}</button>
+          {err && <p className="status err">{err}</p>}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="setup">
-      <h1>Aireus POS</h1>
-      {step === "login" && (
-        <div className="card">
-          <label>Enterprise code<input value={code} onChange={(e) => setCode(e.target.value)} /></label>
-          {code.trim() && <p className="hint">→ {url()}</p>}
-          <label>Login<input value={user} onChange={(e) => setUser(e.target.value)} /></label>
-          <label>Password<input type="password" value={pass} onChange={(e) => setPass(e.target.value)} /></label>
-          <button disabled={busy || !code || !user} onClick={() => void signIn()}>{busy ? "…" : "Sign in"}</button>
-        </div>
-      )}
+      <h1>Aireus</h1>
       {step === "store" && (
         <div className="card">
           <h2>Choose store</h2>

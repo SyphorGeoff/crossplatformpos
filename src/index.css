@@ -31,6 +31,23 @@ body { background: var(--cream); color: var(--ink); font-family: "Helvetica Neue
 .status { font-size: 13px; color: var(--ink-soft); }
 .status.err { color: var(--red); }
 
+/* ---- Activation screen (Paul's aspirational design) ---- */
+.activate { min-height: 100vh; background: var(--cream); display: flex; justify-content: center; padding: 6vh 24px; }
+.actbox { width: min(900px, 100%); }
+.actbrand { font-size: 68px; font-weight: 200; letter-spacing: .01em; color: var(--ink); line-height: 1; }
+.actrule { width: 290px; max-width: 60%; height: 1px; background: var(--line-hard); margin: 22px 0 26px; }
+.acttitle { font-size: 22px; font-weight: 500; color: var(--ink); }
+.actsub { font-size: 14px; color: var(--ink-dim); margin-top: 6px; }
+.actfields { margin-top: 34px; border-top: 1px solid var(--line); padding-top: 30px; display: flex; flex-direction: column; gap: 30px; }
+.fld { display: flex; flex-direction: column; gap: 12px; }
+.fld span { font-size: 11px; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; color: var(--ink-dim); }
+.fld input { border: none; border-bottom: 1px solid var(--ink-soft); background: transparent; padding: 4px 2px 10px; font-size: 20px; color: var(--ink); outline: none; caret-color: #2E6FE0; }
+.fld input:focus { border-bottom-color: var(--ink); }
+.actsignin { width: 100%; margin-top: 40px; padding: 20px; border: none; border-radius: 999px; background: var(--ink); color: var(--cream); font-size: 15px; font-weight: 700; letter-spacing: .18em; cursor: pointer; }
+.actsignin:disabled { opacity: .4; cursor: default; }
+.activate .hint { margin-top: 10px; }
+.activate .status.err { margin-top: 14px; }
+
 /* ---- POS ordering screen ---- */
 .pos { display: flex; flex-direction: column; height: 100vh; background: var(--cream); }
 
