@@ -1,7 +1,7 @@
 node_modules/
 dist/
-android/
-ios/
+/android/
+/ios/
 .DS_Store
 *.local
 android-signing/
