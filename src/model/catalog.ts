@@ -28,9 +28,11 @@ export interface MenuItem {
   categoryId: string;
   taxGroupId: string;         // Menu_Item_Tax_Group_POS_ID
   printGroupId: string;
+  printGroupIds: string[];    // all routing print groups (primary + Secondary_/third_…tenth_)
   isModifier: boolean;        // Is_Modifier=="1" — a topping/mod, not a sellable tile
   modChainId: string;         // Screen_Chain_POS_ID — forces modifiers when added (M2)
   askForPrice: boolean;       // open-price item (Ask_For_Price=="1")
+  forceTabName: boolean;      // Menu_Item.enomatic_lookup — REPURPOSED: an unsent one forces a tab name (isForceTabName)
   nonRevenue: boolean;
   imageId: string;            // MenuItem_Image_ID || Image_ID
   _raw: DefRow;
@@ -52,6 +54,9 @@ export interface RevenueCenter {
   id: string;                 // POS_ID
   name: string;
   screenGroupFilter: boolean; // enable_screen_group_filter=="1"
+  alwaysAskForTab: boolean;   // Always_Ask_For_Tab — a tab name is required before send / pay / print
+  disableAutoGrat: boolean;   // rc_backup15 (isDisable_AutoGrat)
+  logoutAfterPayment: boolean; // logoutAfterPayment — back to the login keypad once the check closes
   _raw: DefRow;
 }
 
@@ -70,6 +75,7 @@ export interface Category {
   name: string;
   sort: number;
   color: string;
+  departmentId: string;     // Dept_POS_ID — the department adjustments are restricted by
   _raw: DefRow;
 }
 
@@ -127,9 +133,11 @@ function toMenuItem(r: DefRow): MenuItem {
     categoryId: s(r, "Category_POS_ID"),
     taxGroupId: s(r, "Menu_Item_Tax_Group_POS_ID"),
     printGroupId: s(r, "Print_Group_POS_ID"),
+    printGroupIds: ["Print_Group_POS_ID", "Secondary_Print_Group_POS_ID", "third_Print_Group_ID", "fourth_Print_Group_ID", "fifth_Print_Group_ID", "sixth_Print_Group_ID", "seventh_Print_Group_ID", "eighth_Print_Group_ID", "ninth_Print_Group_ID", "tenth_Print_Group_ID"].map((k) => s(r, k)).filter((v) => v && v !== "0"),
     isModifier: s(r, "Is_Modifier") === "1",
     modChainId: s(r, "Screen_Chain_POS_ID"),
     askForPrice: s(r, "Ask_For_Price") === "1",
+    forceTabName: s(r, "enomatic_lookup") === "1" || s(r, "Enomatic_Lookup") === "1" || s(r, "Is_Enomatic_Lookup") === "1",
     nonRevenue: s(r, "Non_Revenue") === "1",
     imageId: s(r, "MenuItem_Image_ID") || s(r, "Image_ID"),
     _raw: r,
@@ -163,6 +171,9 @@ export function revenueCenters(): RevenueCenter[] {
     id: s(r, "POS_ID"),
     name: s(r, "Name").trim(),
     screenGroupFilter: s(r, "enable_screen_group_filter") === "1",
+    alwaysAskForTab: s(r, "Always_Ask_For_Tab") === "1" || s(r, "always_Ask_For_Tab") === "1",
+    disableAutoGrat: s(r, "rc_backup15") === "1",
+    logoutAfterPayment: s(r, "logoutAfterPayment") === "1" || s(r, "Logout_After_Payment") === "1",
     _raw: r,
   }));
 }
@@ -301,6 +312,7 @@ export interface Tender {
   openCashDrawer: boolean;
   askForTip: boolean;
   overpayIsTip: boolean;
+  isOnline: boolean;        // Is_Online — processed by a payment gateway; offline card tenders are plain (dummy) records
   roundingAmount: string;   // when Enable_Rounding; e.g. "0.05"
   appliesToCheck: boolean;
   hidden: boolean;
@@ -310,18 +322,26 @@ export interface Tender {
 /** Store-level payment config (processor selection + native merchant creds). */
 export interface StoreConfig {
   usePin: boolean;            // Store.UsePin — require a PIN after the ID at login
+  enterpriseId: string;       // Store.Enterprise_ID
+  imageServerUrl: string;     // Store.ImageServerURL (web receipt / getcheckhtml host)
   gcProcessor: string;        // GC_Processor ("ISISGiftCard"/"aireus…" = native)
   loyaltyProcessor: string;   // loyalty_Processor ("" or third-party name)
   gcMerchantId: string;
   gcMerchantPassword: string;
   loyaltyMerchantId: string;
   loyaltyMerchantPassword: string;
+  allowRefire: boolean;       // Allow_Refire && !hide_Edit_Refire (CheckViewController.m:4516)
+  maxCheckAmount: number;     // max_check_amount (Store getMax_check_amount; 1,000,000 when unset)
 }
 const nativeProcessor = (v: string) => /isis|aireus/i.test(v);
 export function storeConfig(): StoreConfig {
   const r = loadDefRows("Store")[0] ?? {};
   return {
     usePin: s(r, "UsePin") === "1" || s(r, "Use_Pin") === "1" || s(r, "usePin") === "1",
+    allowRefire: s(r, "Allow_Refire") === "1" && s(r, "hide_Edit_Refire") !== "1",
+    maxCheckAmount: Number(s(r, "max_check_amount")) > 0 ? Number(s(r, "max_check_amount")) : 1_000_000,
+    enterpriseId: s(r, "Enterprise_ID"),
+    imageServerUrl: s(r, "ImageServerURL"),
     gcProcessor: s(r, "GC_Processor"),
     loyaltyProcessor: s(r, "loyalty_Processor"),
     gcMerchantId: s(r, "GC_Merchant_ID"),
@@ -348,6 +368,7 @@ export function tenders(): Tender[] {
     openCashDrawer: s(r, "Open_Cash_Drawer") === "1",
     askForTip: s(r, "Ask_For_Tip") === "1",
     overpayIsTip: s(r, "Overpay_Is_Tip") === "1",
+    isOnline: s(r, "Is_Online") === "1",
     roundingAmount: s(r, "Enable_Rounding") === "1" ? s(r, "RoundingAmount") : "",
     appliesToCheck: s(r, "Applies_To_Check") === "1",
     hidden: s(r, "isHide") === "1",
@@ -391,6 +412,7 @@ export interface Job {
   noSale: boolean;          // No_Sale / allow_no_sale
   openDrawer: boolean;      // Open_Drawer
   mgrMenu: boolean;         // Mgr_Menu (manager menu access)
+  managerServerMode: boolean; // managerServerMode — a manager who also serves: lands on the floor, not the Manager's Menu
   modifyTimeClock: boolean; // Modify_Time_Clock (edit others' time)
   timeclockOnly: boolean;   // Timeclock_Only (cannot ring sales)
   skipTable: boolean;       // Skip_Table (counter/quick job — no default dining room)
@@ -415,6 +437,7 @@ export function jobs(): Job[] {
     noSale: s(r, "No_Sale") === "1" || s(r, "allow_no_sale") === "1",
     openDrawer: s(r, "Open_Drawer") === "1",
     mgrMenu: s(r, "Mgr_Menu") === "1",
+    managerServerMode: s(r, "managerServerMode") === "1" || s(r, "Manager_Server_Mode") === "1",
     modifyTimeClock: s(r, "Modify_Time_Clock") === "1",
     timeclockOnly: s(r, "Timeclock_Only") === "1",
     skipTable: s(r, "Skip_Table") === "1",
@@ -450,6 +473,7 @@ export interface Adjustment {
   affectsTaxes: boolean;    // Affects_Taxes (reduces taxable base)
   askForReference: boolean;
   showOnPayment: boolean;   // show_On_Payment_Screen
+  partySize: number;        // Party_Size — automatic adjustments apply at this many guests or more
   _raw: DefRow;
 }
 export function adjustments(): Adjustment[] {
@@ -465,8 +489,22 @@ export function adjustments(): Adjustment[] {
     affectsTaxes: s(r, "Affects_Taxes") === "1",
     askForReference: s(r, "Ask_For_Reference") === "1",
     showOnPayment: s(r, "show_On_Payment_Screen") === "1",
+    partySize: Number(s(r, "Party_Size")) || 0,
     _raw: r,
   }));
+}
+
+/** Adjustment_Department rows → adjustment id → the department ids it may touch
+ *  (doesLineItemBelongToAdjustmentDepartment: item → Category.Dept_POS_ID → row). */
+export function adjustmentDepartments(): Map<string, Set<string>> {
+  const m = new Map<string, Set<string>>();
+  for (const r of loadDefRows("Adjustment_Department").filter(alive)) {
+    const a = s(r, "Adjustment_POS_ID"), d = s(r, "Department_POS_ID");
+    if (!a || !d) continue;
+    if (!m.has(a)) m.set(a, new Set());
+    m.get(a)!.add(d);
+  }
+  return m;
 }
 
 export function chains(): Chain[] {
@@ -505,6 +543,7 @@ export function categories(): Category[] {
     name: s(r, "Name").trim(),
     sort: Number(s(r, "Sort_Order")) || 0,
     color: s(r, "button_color"),
+    departmentId: s(r, "Dept_POS_ID"),
     _raw: r,
   }));
 }

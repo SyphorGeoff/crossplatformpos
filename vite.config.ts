@@ -1,5 +1,6 @@
 import { defineConfig, type Plugin } from "vite";
 import { fileURLToPath } from "node:url";
+import net from "node:net";
 import react from "@vitejs/plugin-react";
 
 /**
@@ -40,8 +41,44 @@ function devForwarder(): Plugin {
   };
 }
 
+/**
+ * Dev-only raw-TCP print relay: the browser can't open a socket, so in DEV the
+ * platform/print seam POSTs the base64 ESC/POS job to /__print?ip=…&port=… and
+ * this middleware opens a raw TCP connection to the printer (JetDirect 9100) and
+ * writes the bytes — exactly what the native TcpPrint plugin does on device. Lets
+ * real LAN printers be driven from the dev browser. Never used in production.
+ */
+function devPrintRelay(): Plugin {
+  return {
+    name: "pos-dev-print-relay",
+    configureServer(server) {
+      server.middlewares.use("/__print", (req, res) => {
+        if (req.method !== "POST") { res.statusCode = 405; res.end("post only"); return; }
+        const q = new URL(req.url ?? "", "http://x").searchParams;
+        const ip = q.get("ip") ?? "";
+        const port = Number(q.get("port")) || 9100;
+        if (!ip) { res.statusCode = 400; res.end("no ip"); return; }
+        const chunks: Buffer[] = [];
+        req.on("data", (c: Buffer) => chunks.push(c));
+        req.on("end", () => {
+          const data = Buffer.from(Buffer.concat(chunks).toString("utf8"), "base64"); // body is base64 job bytes
+          const sock = new net.Socket();
+          let done = false;
+          const finish = (code: number, msg: string) => { if (done) return; done = true; sock.destroy(); res.statusCode = code; res.end(msg); };
+          sock.setTimeout(5000, () => finish(504, "timeout"));
+          sock.on("error", (e) => finish(502, String(e)));
+          sock.connect(port, ip, () => {
+            sock.write(data, () => sock.end());
+          });
+          sock.on("close", () => finish(done ? 200 : 200, "ok"));
+        });
+      });
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react(), devForwarder()],
+  plugins: [react(), devForwarder(), devPrintRelay()],
   base: "./",
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
   test: { environment: "node", include: ["tests/**/*.test.ts"] },

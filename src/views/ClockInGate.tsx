@@ -17,30 +17,29 @@ export default function ClockInGate({ employee, jobs, rooms, onClockIn, onCommit
   employee: CurrentEmployee;
   jobs: Job[];
   rooms: DiningRoom[];
-  onClockIn: (job: Job) => Promise<{ ok: boolean; sequence: string; message: string }>;
+  onClockIn: (job: Job, defaultRoomId: string) => Promise<{ ok: boolean; sequence: string; message: string }>;
   onCommit: (c: ShiftCommit) => void;
   onCancel: () => void;
 }) {
   const [phase, setPhase] = useState<"confirm" | "job" | "room">("confirm");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [shift, setShift] = useState<{ job: Job; sequence: string } | null>(null);
+  const [shift, setShift] = useState<{ job: Job } | null>(null);
 
-  const pickJob = async (job: Job) => {
+  // iOS order (LoginManager clockIn): job → default room → ONE Time_Card_Post that
+  // carries Default_Dining_Room_POS_ID, so the shift keeps its room server-side.
+  const post = async (job: Job, roomId: string) => {
     setBusy(true); setError("");
-    const r = await onClockIn(job);
+    const r = await onClockIn(job, roomId);
     setBusy(false);
     if (!r.ok) { setError(r.message); return; }
-    if (job.skipTable || rooms.length === 0) {
-      onCommit({ jobId: job.id, jobName: job.name, sequence: r.sequence, defaultRoomId: "" });
-    } else {
-      setShift({ job, sequence: r.sequence }); setPhase("room");
-    }
+    onCommit({ jobId: job.id, jobName: job.name, sequence: r.sequence, defaultRoomId: roomId });
   };
-  const pickRoom = (roomId: string) => {
-    if (!shift) return;
-    onCommit({ jobId: shift.job.id, jobName: shift.job.name, sequence: shift.sequence, defaultRoomId: roomId });
+  const pickJob = async (job: Job) => {
+    if (job.skipTable || job.timeclockOnly || rooms.length === 0) { await post(job, ""); return; } // bar mode / clock-only: no room
+    setShift({ job }); setPhase("room");
   };
+  const pickRoom = (roomId: string) => { if (shift) void post(shift.job, roomId); };
 
   return (
     <div className="login">

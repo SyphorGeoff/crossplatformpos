@@ -7,7 +7,7 @@
  * existing one.
  */
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import type { DiningRoom, DiningTable } from "@/model/catalog";
 import type { OpenCheck } from "@/protocol/tables";
 
@@ -23,11 +23,13 @@ export interface FloorplanProps {
   onQuickSale: () => void;
   onRefresh: () => void;
   onSignOut: () => void;
+  onDashboard: () => void;         // iOS Dashboard (functions: clock in/out, no sale, …)
   loading: boolean;
   status?: string;
   transferMode?: boolean;
   onCancelTransfer?: () => void;
-  initialRoomId?: string;
+  roomId?: string;                 // the room to show (Menu remembers it across Send / Tables)
+  onRoomChange?: (roomId: string) => void;
 }
 
 type Status = "open" | "occupied" | "allergy" | "held" | "printed";
@@ -41,7 +43,10 @@ function tableStatus(occ?: OpenCheck): Status {
 
 export default function Floorplan(p: FloorplanProps) {
   const rooms = useMemo(() => [...p.rooms].sort((a, b) => a.sort - b.sort), [p.rooms]);
-  const [roomId, setRoomId] = useState<string>(() => (p.initialRoomId && rooms.some((r) => r.id === p.initialRoomId) ? p.initialRoomId : rooms[0]?.id ?? ""));
+  // Controlled by Menu: the clock-in default room first, then whatever room the
+  // server last switched to — so Send / Tables bring you back where you were.
+  const roomId = p.roomId && rooms.some((r) => r.id === p.roomId) ? p.roomId : rooms[0]?.id ?? "";
+  const setRoomId = (id: string) => p.onRoomChange?.(id);
 
   const roomTables = useMemo(() => p.tables.filter((t) => t.roomId === roomId), [p.tables, roomId]);
   // Canvas height from the tables' extent (kept in the 768-wide design space).
@@ -59,7 +64,8 @@ export default function Floorplan(p: FloorplanProps) {
         <div className="tools">
           <button className="station" onClick={p.onRefresh} disabled={p.loading}>{p.loading ? "…" : "Refresh"}</button>
           <button className="station" onClick={p.onQuickSale}>Quick sale</button>
-          <button className="station" onClick={p.onSignOut}>Sign out</button>
+          <button className="station" onClick={p.onDashboard}>Dashboard</button>
+          <button className="station" onClick={p.onSignOut}>Sign Out</button>
         </div>
       </header>
 

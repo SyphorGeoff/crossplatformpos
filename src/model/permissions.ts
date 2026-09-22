@@ -41,17 +41,28 @@ export function permsForEmployee(empId: string): Perms {
   return union(jobs().filter((j) => jobIds.has(j.id)));
 }
 
-export const can = (empId: string, action: AuthAction): boolean => permsForEmployee(empId)[action];
+/** Can this employee perform `action`? Holding the manager permission (Mgr_Menu)
+ *  is a master override — a manager may authorize any restricted action, even if
+ *  clocked in on a non-manager job (the permission is the union across ALL their
+ *  jobs, not just the one they clocked into). */
+export const can = (empId: string, action: AuthAction): boolean => {
+  const p = permsForEmployee(empId);
+  return p[action] || p.manager;
+};
 
 export interface Authorizer { id: string; name: string; }
-/** Resolve a manager PIN to an employee who may perform `action`, else null. */
-export function findAuthorizer(pin: string, action: AuthAction): Authorizer | null {
-  const p = pin.trim();
-  if (!p) return null;
-  for (const e of employees()) {
-    if (e.pin && e.pin === p && permsForEmployee(e.id)[action]) return { id: e.id, name: e.name };
-  }
-  return null;
+
+/** True if an employee with this ID exists (first step of manager auth: ID). */
+export const employeeExists = (id: string): boolean => employees().some((e) => e.id === id.trim());
+
+/** Authorize by ID + PIN (ManagerAuthViewController: enter ID, then PIN). The ID
+ *  must resolve to an employee, the PIN must match their Pin, and they must hold
+ *  `action` (or be a manager). Returns the authorizer, else null. */
+export function authorizeById(id: string, pin: string, action: AuthAction): Authorizer | null {
+  const e = employees().find((x) => x.id === id.trim());
+  if (!e) return null;
+  if ((e.pin ?? "") !== pin.trim()) return null;
+  return can(e.id, action) ? { id: e.id, name: e.name } : null;
 }
 
 /** Jobs an employee can clock into (Employee_Job → Job), for the timeclock. */

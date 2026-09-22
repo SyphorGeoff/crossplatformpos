@@ -15,7 +15,7 @@
  */
 
 import { apiServerAddress, asList, findKey, parseXmlResponse, postXml, textOf } from "./hbroker";
-import { unsentLines, unsentTenders, type Check, type CheckLine, type TenderLine } from "@/model/check";
+import { generateCheckKey, unsentLines, unsentTenders, type Check, type CheckLine, type TenderLine } from "@/model/check";
 
 export interface SessionConfig {
   enterpriseServerUrl: string;
@@ -40,11 +40,9 @@ export function dateTime(d = new Date()): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
-/** Client idempotency key (generateCheckKey analog) — GUID-ish, unique per key. */
-export function mintCheckKey(): string {
-  try { if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID(); } catch { /* fall through */ }
-  return `k-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e9).toString(36)}`;
-}
+/** traykey — a 7-digit NUMERIC key, exactly as the iOS app mints check/tray/line
+ *  keys (FinancialCheckManager.generateCheckKey). The server requires numeric keys. */
+export const mintCheckKey = generateCheckKey;
 
 export interface SendContext {
   isisVer: string;
@@ -52,6 +50,7 @@ export interface SendContext {
   securityToken: string;
   terminalPosId: string;
   employeePosId: string;
+  checkEmployeePosId?: string; // the check's OWNER when it differs from the sender (Transfer Check → employee)
   businessDateId: string;   // required header field (see resolveBusinessDate)
   checkNo: string;          // client-assigned check number
   isToGo?: boolean;
@@ -60,24 +59,46 @@ export interface SendContext {
 const el = (name: string, value: string | number): string => `<${name}>${escapeXml(String(value))}</${name}>`;
 
 /** One <LineItem …>. `lineNumber` map lets modifiers point at their parent.
- *  Emits Type="M" (menu/modifier), or Type="A" for adjustment lines. */
-function xmlLineItem(line: CheckLine, lineNumber: number, trayNumber: number, parentLineNumber?: number): string {
-  const type = line.kind === "A" ? "A" : "M";
+ *  Emits Type="M" (menu/modifier), "A" for adjustments, or "R" for reference
+ *  lines (non-priced notes/records — Print_On_Check/Show_On_Display 0). */
+function xmlLineItem(line: CheckLine, lineNumber: number, trayNumber: number, parentLineNumber?: number, parent?: CheckLine): string {
+  const type = line.kind === "A" ? "A" : line.kind === "R" ? "R" : "M";
+  const isRef = type === "R";
+  // A Transfered_Out void-off is invisible everywhere (voidLineItems isTransferItems :1946-1952).
+  const hidden = isRef || !!line.transferOut;
   const attrs = [
-    `Is_Held="0"`,
+    `Is_Held="${line.held ? "1" : "0"}"`,
     `Is_Void="${line.isVoid ? "1" : "0"}"`,
     `Transfered_Out="${line.transferOut ? "1" : "0"}"`,
-    `Print_On_Check="1"`,
-    `Show_On_Display="1"`,
+    `Print_On_Check="${hidden ? "0" : "1"}"`,
+    `Show_On_Display="${hidden ? "0" : "1"}"`,
     `Type="${type}"`,
     `Finalized="0"`,
-    `Is_Split="0"`,
+    `Is_Split="${line.isSplit ? "1" : "0"}"`,
     `lineitemkey="${escapeXml(line.key)}"`,
     `posted="0"`,
   ].join(" ");
   const parts: string[] = [];
-  parts.push(el("Guest_Num", line.guestNumber ?? 1));
-  if (line.kind === "Mo" && parentLineNumber !== undefined) {
+  // Guest_Num: emitted when set; M/A lines default to guest 1 (0 is a valid
+  // whole-table value and is emitted as-is). Reference lines omit it when unset.
+  if (line.guestNumber !== undefined) parts.push(el("Guest_Num", line.guestNumber));
+  else if (!isRef) parts.push(el("Guest_Num", 1));
+  if (line.appliedToGuests !== undefined) parts.push(el("applied_to_guests", line.appliedToGuests));
+  if ((line.transferOut || line.isSplit) && line.parentLineNumber !== undefined) {
+    // points at the ORIGINAL line that left this check (or was divided among guests)
+    parts.push(el("Parent_LineItem_ID", line.parentLineNumber));
+    parts.push(el("Parent_Tray_Number", line.parentTrayNumber ?? trayNumber));
+  } else if (line.isVoid && line.amount < 0 && line.parentLineNumber !== undefined) {
+    // a void reversal names the ORIGINAL it cancels (voidLineItems :1957-1958) —
+    // without these the server (and every pull-back) keeps the original live
+    parts.push(el("Void_Line_Item_ID", line.parentLineNumber));
+    parts.push(el("Void_Parent_Tray_Number", line.parentTrayNumber ?? trayNumber));
+  } else if (line.kind === "A" && parent?.sent && parent.lineNumber !== undefined) {
+    // an item-level discount on an already-sent item points at the item's stamped
+    // tray/line (addAdjustmentsToLineItems: Parent_LineItem_ID/Parent_Tray_Number)
+    parts.push(el("Parent_LineItem_ID", parent.lineNumber));
+    parts.push(el("Parent_Tray_Number", parent.trayNumber ?? trayNumber));
+  } else if ((line.kind === "Mo" || line.kind === "A") && parentLineNumber !== undefined) {
     parts.push(el("Parent_LineItem_ID", parentLineNumber));
     parts.push(el("Parent_Tray_Number", trayNumber));
   }
@@ -85,9 +106,10 @@ function xmlLineItem(line: CheckLine, lineNumber: number, trayNumber: number, pa
   parts.push(el("Quantity", line.quantity));
   parts.push(el("Line_Number", lineNumber));
   if (type === "A") parts.push(el("Adjustment_POS_ID", line.adjustmentId ?? ""));
-  else parts.push(el("MenuItem_POS_ID", line.menuItemId));
+  else if (!isRef) parts.push(el("MenuItem_POS_ID", line.menuItemId));
   if (line.voidPosId) parts.push(el("Void_POS_ID", line.voidPosId));
-  parts.push(el("Line_Amount", (line.amount * line.quantity).toFixed(2))); // extended, like the iPad's Amount
+  if (isRef && line.reference) parts.push(el("Reference", line.reference));
+  parts.push(el("Line_Amount", (isRef ? 0 : line.amount * line.quantity).toFixed(2))); // extended, like the iPad's Amount
   return `<LineItem ${attrs}>${parts.join("")}</LineItem>`;
 }
 
@@ -113,14 +135,23 @@ function xmlTenderLine(t: TenderLine, lineNumber: number): string {
 /** Per-report-group tax breakdown for the FinancialCheck (<Tax_Group_Amt>). */
 export interface WireTaxGroup { reportGroupId: string; amount: string; isExempt: boolean; }
 
+export interface SendOpts {
+  settle?: boolean;        // Is_Closed + Is_Settled (tendered out)
+  cancel?: boolean;        // Is_Cancelled + Is_Closed
+  close?: boolean;         // Is_Closed only — a source emptied by a split/transfer
+  transferred?: boolean;   // Is_Transferred=1 — a merge source
+  taxGroups?: WireTaxGroup[];
+}
+
 /** The full FinancialCheck document for the check's unsent round (one tray).
  *  `settle` closes the check: adds the tender lines' round and flips Is_Closed /
  *  Is_Settled (settle is the same POST re-sent, not a separate message —
  *  FinancialCheckManager.m:13824/23664/7953). `taxGroups` emit the tax
  *  breakdown (FinancialCheckManager.m:8274-8298). */
-export function buildFinancialCheck(check: Check, ctx: SendContext, opts: { settle?: boolean; cancel?: boolean; taxGroups?: WireTaxGroup[] } = {}, now = new Date()): string {
+export function buildFinancialCheck(check: Check, ctx: SendContext, opts: SendOpts = {}, now = new Date()): string {
   const settle = opts.settle ?? false;
   const cancel = opts.cancel ?? false;
+  const close = opts.close ?? false;
   const trayNumber = check.traysSent + 1;
   const stamp = dateTime(now);
 
@@ -132,7 +163,8 @@ export function buildFinancialCheck(check: Check, ctx: SendContext, opts: { sett
   const tenders = unsentTenders(check);
 
   const itemXml = items
-    .map((l) => xmlLineItem(l, numberByKey.get(l.key)!, trayNumber, l.parentKey ? numberByKey.get(l.parentKey) : undefined))
+    .map((l) => xmlLineItem(l, numberByKey.get(l.key)!, trayNumber, l.parentKey ? numberByKey.get(l.parentKey) : undefined,
+      l.parentKey ? check.lines.find((x) => x.key === l.parentKey) : undefined))
     .join("");
   const tenderXml = tenders.map((t, i) => xmlTenderLine(t, items.length + i + 1)).join("");
 
@@ -143,9 +175,9 @@ export function buildFinancialCheck(check: Check, ctx: SendContext, opts: { sett
 
   const flag = (b: boolean) => (b ? "1" : "0");
   const checkAttrs = [
-    `Is_Cancelled="${flag(cancel)}"`, `Is_Return="0"`, `Print_Count="0"`, `Is_Transferred="0"`,
+    `Is_Cancelled="${flag(cancel)}"`, `Is_Return="0"`, `Print_Count="0"`, `Is_Transferred="${flag(opts.transferred ?? false)}"`,
     `is_FutureOrder="0"`, `Is_Split="0"`, `Is_Tax_Exempt="0"`,
-    `Guest_Count="${check.guestCount}"`, `Is_Closed="${flag(settle || cancel)}"`, `Is_Reopen="0"`,
+    `Guest_Count="${check.guestCount}"`, `Is_Closed="${flag(settle || cancel || close)}"`, `Is_Reopen="0"`,
     // is_Settled (lowercase) is always empty on the wire; Is_Settled carries the flag.
     `is_Settled=""`, `Is_Settled="${flag(settle)}"`,
     `Check_Name="${escapeXml(check.tableName || "")}"`, `Is_New="${flag(check.traysSent === 0)}"`,
@@ -157,7 +189,7 @@ export function buildFinancialCheck(check: Check, ctx: SendContext, opts: { sett
   header.push(el("Store_ID", ctx.storeId));
   header.push(el("Security_Token", ctx.securityToken));
   header.push(el("Check_No", ctx.checkNo));
-  header.push(el("Employee_POS_ID", ctx.employeePosId));
+  header.push(el("Employee_POS_ID", ctx.checkEmployeePosId ?? check.employeePosId ?? ctx.employeePosId)); // the check's owner, not necessarily the sender
   header.push(el("check_key", check.id)); // stable idempotency key for this check
   header.push(el("is_Mobile", "0"));
   if (check.diningTableId) header.push(el("DiningTable_POS_ID", check.diningTableId));
@@ -227,7 +259,7 @@ export interface SendResult { ok: boolean; statusCode: string; message: string; 
 
 /** Fire the check to the kitchen (or settle it with `settle:true`).
  *  Success = Message_Status Status_Code=="100". */
-export async function sendCheck(enterpriseServerUrl: string, check: Check, ctx: SendContext, opts: { settle?: boolean; cancel?: boolean; taxGroups?: WireTaxGroup[] } = {}): Promise<SendResult> {
+export async function sendCheck(enterpriseServerUrl: string, check: Check, ctx: SendContext, opts: SendOpts = {}): Promise<SendResult> {
   const xml = buildFinancialCheck(check, ctx, opts);
   try {
     const parsed = parseXmlResponse(await postXml(apiServerAddress(enterpriseServerUrl), xml));

@@ -48,14 +48,25 @@ export function computeCheckTax(cat: Catalog, check: Check, exempt: Set<string> 
     byGroup.set(trgId, cur);
   };
 
+  const seen = new Set<string>(); // every report group touched, exempt or not (for the exemption picker/marker)
+  const packForItem = (menuItemId: string) => {
+    const item = cat.miById.get(menuItemId);
+    const group = item?.taxGroupId ? cat.taxGroupById.get(item.taxGroupId) : undefined;
+    return { pack: group ? cat.taxPackById.get(group.taxPackId) : undefined, roundDown: group?.roundDown ?? false };
+  };
   for (const line of check.lines) {
-    if (line.isVoid || line.transferOut || line.kind === "Co") continue;
+    if (line.isVoid || line.transferOut || line.isSplit || line.kind === "Co" || line.kind === "R") continue;
     // Adjustments (Type="A") tax against their own pack when they affect taxes
-    // (a discount's negative amount reduces net tax); items via their tax group.
+    // (a discount's negative amount reduces net tax); an item-level adjustment with
+    // no pack of its own taxes via its PARENT item's pack (TaxManager.m:1026-1073).
     let pack, roundDown = false;
     if (line.kind === "A") {
-      if (!line.taxPackId) continue;
-      pack = cat.taxPackById.get(line.taxPackId);
+      if (line.taxPackId) pack = cat.taxPackById.get(line.taxPackId);
+      else if (line.parentKey) {
+        const parent = check.lines.find((l) => l.key === line.parentKey);
+        if (!parent || !line.adjustmentId) continue;
+        ({ pack, roundDown } = packForItem(parent.menuItemId));
+      } else continue;
     } else {
       const item = cat.miById.get(line.menuItemId);
       const group = item?.taxGroupId ? cat.taxGroupById.get(item.taxGroupId) : undefined;
@@ -78,6 +89,7 @@ export function computeCheckTax(cat: Catalog, check: Check, exempt: Set<string> 
       } else {
         tax = r4(r4(base * def.rate) * 0.01);
       }
+      seen.add(def.reportGroupId);
       if (!exempt.has(def.reportGroupId)) add(def.reportGroupId, tax, trg.isInclusive);
       prevTax = tax;
     });
@@ -85,6 +97,8 @@ export function computeCheckTax(cat: Catalog, check: Check, exempt: Set<string> 
 
   let taxTotal = 0, inclusiveTax = 0;
   const groups: TaxGroupAmount[] = [];
+  // exempt groups still appear (at $0, flagged) so Remove Tax can list them and the check can mark them
+  for (const id of seen) if (exempt.has(id) && !byGroup.has(id)) byGroup.set(id, { amount: 0, inclusive: cat.reportGroupById.get(id)?.isInclusive ?? false });
   for (const [id, g] of byGroup) {
     const trg = cat.reportGroupById.get(id);
     const isExempt = exempt.has(id);

@@ -3,10 +3,16 @@
  * definition (cash / room-charge / native gift / native loyalty / credit).
  * Cash takes an amount and returns change; native gift does a balance inquiry
  * then redeem via <Payment> to HBroker; room charge records offline against a
- * room number; credit cards are stubbed (deferred). When the balance reaches
- * zero the check is settled (the FinancialCheck re-POST with Is_Closed/Is_Settled).
+ * room number. Credit tenders that are NOT Is_Online are offline "dummy"
+ * payments (makePayment: no processor → a plain Type="T" line); online card
+ * processing is still deferred. When the balance reaches zero the check is
+ * settled (the FinancialCheck re-POST with Is_Closed/Is_Settled).
  *
- * Balance due is the subtotal — tax is not yet computed (a separate subsystem).
+ * Tips (CheckViewController tips block :3240+): Ask_For_Tip → tip pad after the
+ * amount; Overpay_Is_Tip → anything above the balance is the tip; a tip of 50%
+ * or more of the balance needs a manager (TIP_AUTH). Divide By (DIVIDE_BY):
+ * a count pad sets N; each payment defaults to balance ÷ N and N steps down
+ * with every payment until the check closes.
  */
 
 import { useState } from "react";
@@ -14,19 +20,24 @@ import { checkSubtotal, tenderApplied, type Check, type TenderLine } from "@/mod
 import { balanceWithTax, grandTotal, type TaxResult } from "@/model/tax";
 import type { Tender } from "@/model/catalog";
 import type { GiftType, LoyaltyType, PaymentResult } from "@/protocol/payment";
+import NumberPad from "./NumberPad";
 
-const fmt = (n: number) => `$${n.toFixed(2)}`;
+const fmt = (n: number) => (n < 0 ? `-$${Math.abs(n).toFixed(2)}` : `$${n.toFixed(2)}`);
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-type Mode = { kind: "tenders" } | { kind: "cash" } | { kind: "gift"; tender: Tender } | { kind: "room"; tender: Tender };
+type Mode = { kind: "tenders" } | { kind: "cash" } | { kind: "gift"; tender: Tender } | { kind: "room"; tender: Tender }
+  | { kind: "card"; tender: Tender } | { kind: "tip"; tender: Tender; amount: number } | { kind: "divide" };
 
 export interface PaymentViewProps {
   check: Check;
   tax: TaxResult;
   tenders: Tender[];
   applyTender: (t: Omit<TenderLine, "key">) => void;
+  voidTender: (key: string) => void;
   processGift: (card: string, type: GiftType | LoyaltyType, amount: number) => Promise<PaymentResult>;
   settle: () => Promise<{ ok: boolean; message: string }>;
+  /** Manager authorization (TIP_AUTH) — runs onOk once an authorizer is confirmed. */
+  authorize: (title: string, onOk: () => void) => void;
   onClose: () => void;
   onClosed: () => void;
 }
@@ -39,11 +50,13 @@ export default function PaymentView(p: PaymentViewProps) {
   const [mode, setMode] = useState<Mode>({ kind: "tenders" });
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
+  const [divideNum, setDivideNum] = useState(1);   // DIVIDE_BY — ways left to split the balance
+  const share = divideNum > 1 ? round2(due / divideNum) : due; // this payment's default amount
 
   const cash = p.tenders.find((t) => t.isCash);
   const rooms = p.tenders.filter((t) => t.isRoomCharge);
   const gifts = p.tenders.filter((t) => t.isGift || t.isLoyalty);
-  const cards = p.tenders.filter((t) => t.isCredit);
+  const cards = p.tenders.filter((t) => t.isCredit && !t.isGift && !t.isLoyalty && !t.isRoomCharge);
 
   const settleNow = async () => {
     setBusy(true); setMsg("Settling…");
@@ -52,13 +65,39 @@ export default function PaymentView(p: PaymentViewProps) {
     if (r.ok) p.onClosed(); else setMsg(r.message);
   };
 
+  /** Record a tender line and step the divide-by count down (divideNum--). */
+  const record = (t: Omit<TenderLine, "key">, note: string) => {
+    p.applyTender(t);
+    if (divideNum > 1) setDivideNum((n) => n - 1);
+    setMode({ kind: "tenders" });
+    setMsg(note);
+  };
+
   const applyCash = (entered: number) => {
     const applied = round2(Math.min(entered, due));
     const change = round2(Math.max(0, entered - due));
-    p.applyTender({ tenderId: cash!.id, name: cash!.name, amount: applied, tip: 0, change });
-    setMode({ kind: "tenders" });
-    setMsg(change > 0 ? `Change due ${fmt(change)}` : "");
+    record({ tenderId: cash!.id, name: cash!.name, amount: applied, tip: 0, change }, change > 0 ? `Change due ${fmt(change)}` : "");
   };
+
+  /** Offline card amount entered: Overpay_Is_Tip turns the excess into the tip,
+   *  Ask_For_Tip opens the tip pad, otherwise the payment is recorded as-is. */
+  const cardAmount = (tender: Tender, entered: number) => {
+    if (entered <= 0) return;
+    if (entered > due + 0.005) {
+      if (tender.overpayIsTip) { finishCard(tender, due, round2(entered - due)); return; }
+      setMsg("Amount exceeds the balance due"); return;
+    }
+    if (tender.askForTip) { setMode({ kind: "tip", tender, amount: round2(entered) }); return; }
+    finishCard(tender, round2(entered), 0);
+  };
+  const finishCard = (tender: Tender, amount: number, tip: number) => {
+    const post = () => record({ tenderId: tender.id, name: tender.name, amount, tip, change: 0 },
+      tip > 0 ? `${tender.name} ${fmt(amount)} + tip ${fmt(tip)}` : `${tender.name} ${fmt(amount)}`);
+    // TIP_AUTH: a tip of half the balance or more needs a manager
+    if (tip > 0 && due > 0 && tip / due >= 0.5) p.authorize(`Authorize ${fmt(tip)} tip`, post);
+    else post();
+  };
+
 
   return (
     <div className="backdrop" onClick={busy ? undefined : p.onClose}>
@@ -67,18 +106,21 @@ export default function PaymentView(p: PaymentViewProps) {
           <div>
             <div className="pvtitle">{due <= 0.005 ? "Balance Paid" : "Balance Due"}</div>
             <div className="pvbal">{fmt(due)}</div>
-            <div className="pvsub">Subtotal {fmt(subtotal)}{p.tax.taxTotal > 0 ? ` · tax ${fmt(p.tax.taxTotal)}` : ""} · total {fmt(total)} · paid {fmt(paid)}</div>
+            <div className="pvsub">Subtotal {fmt(subtotal)} · tax {fmt(p.tax.taxTotal)} · total {fmt(total)} · paid {fmt(paid)}</div>
           </div>
           <button className="x" onClick={p.onClose} disabled={busy}>✕</button>
         </div>
 
-        {/* Applied tenders */}
+        {/* Applied tenders — an unsent one can be voided (removed) before the check closes */}
         {p.check.tenders.length > 0 && (
           <div className="pvtenders">
             {p.check.tenders.map((t) => (
               <div key={t.key} className="pvtl">
-                <span>{t.name}{t.reference ? ` · ${t.reference}` : ""}</span>
-                <span>{fmt(t.amount)}{t.change ? ` (chg ${fmt(t.change)})` : ""}</span>
+                <span>{t.name}{t.reference ? ` · ${t.reference}` : ""}{t.tip ? ` · tip ${fmt(t.tip)}` : ""}</span>
+                <span>
+                  {fmt(t.amount)}{t.change ? ` (chg ${fmt(t.change)})` : ""}
+                  {!t.sent && <button className="pvvoid" disabled={busy} onClick={() => { p.voidTender(t.key); setMsg(`${t.name} voided`); }}>Void</button>}
+                </span>
               </div>
             ))}
           </div>
@@ -91,39 +133,60 @@ export default function PaymentView(p: PaymentViewProps) {
             {due <= 0.005 ? (
               <button className="pvsettle" onClick={settleNow} disabled={busy}>{busy ? "Settling…" : "Close check"}</button>
             ) : (
-              <div className="pvgrid">
-                {cash && <button className="pvbtn" onClick={() => { setMsg(""); setMode({ kind: "cash" }); }}>Cash</button>}
-                {rooms.map((t) => <button key={t.id} className="pvbtn" onClick={() => { setMsg(""); setMode({ kind: "room", tender: t }); }}>{t.name}</button>)}
-                {gifts.map((t) => <button key={t.id} className="pvbtn" onClick={() => { setMsg(""); setMode({ kind: "gift", tender: t }); }}>{t.name}</button>)}
-                {cards.map((t) => <button key={t.id} className="pvbtn disabled" disabled title="Card processing — coming soon">{t.name}</button>)}
-              </div>
+              <>
+                <div className="pvgrid">
+                  {cash && <button className="pvbtn" onClick={() => { setMsg(""); setMode({ kind: "cash" }); }}>Cash</button>}
+                  {rooms.map((t) => <button key={t.id} className="pvbtn" onClick={() => { setMsg(""); setMode({ kind: "room", tender: t }); }}>{t.name}</button>)}
+                  {gifts.map((t) => <button key={t.id} className="pvbtn" onClick={() => { setMsg(""); setMode({ kind: "gift", tender: t }); }}>{t.name}</button>)}
+                  {cards.map((t) => t.isOnline
+                    ? <button key={t.id} className="pvbtn disabled" disabled title="Online card processing — coming soon">{t.name}</button>
+                    : <button key={t.id} className="pvbtn" onClick={() => { setMsg(""); setMode({ kind: "card", tender: t }); }}>{t.name}</button>)}
+                </div>
+                <div className="pvdivide">
+                  <span>{divideNum > 1 ? `Divided ${divideNum} ways · ${fmt(share)} each` : "Divide the balance evenly"}</span>
+                  <button onClick={() => setMode({ kind: "divide" })}>Divide By</button>
+                </div>
+              </>
             )}
-            {cards.length > 0 && due > 0.005 && <div className="pvnote">Card tenders are disabled — credit-card processing arrives later.</div>}
+            {cards.some((t) => t.isOnline) && due > 0.005 && <div className="pvnote">Online card tenders are disabled — card processing arrives later.</div>}
           </>
         )}
 
-        {mode.kind === "cash" && cash && <CashPad due={due} rounding={cash.roundingAmount} onApply={applyCash} onBack={() => setMode({ kind: "tenders" })} />}
+        {mode.kind === "cash" && cash && <CashPad due={share} rounding={cash.roundingAmount} onApply={applyCash} onBack={() => setMode({ kind: "tenders" })} />}
+
+        {mode.kind === "card" && (
+          <NumberPad title={mode.tender.name} sub={`Amount (balance ${fmt(due)}${divideNum > 1 ? `, share ${fmt(share)}` : ""})`} mode="money"
+            initial={String(Math.round(share * 100))} onOk={(v) => cardAmount(mode.tender, v)} onCancel={() => setMode({ kind: "tenders" })} />
+        )}
+        {mode.kind === "tip" && (
+          <NumberPad title="Tip" sub={`${mode.tender.name} ${fmt(mode.amount)} — enter the tip`} mode="money"
+            onOk={(v) => finishCard(mode.tender, mode.amount, round2(v))} onCancel={() => setMode({ kind: "tenders" })} />
+        )}
+        {mode.kind === "divide" && (
+          <NumberPad title="Divide By" sub={`Split ${fmt(due)} into how many payments?`} mode="count" initial={divideNum > 1 ? String(divideNum) : ""}
+            onOk={(n) => { setDivideNum(Math.max(1, Math.floor(n))); setMode({ kind: "tenders" }); setMsg(n > 1 ? `Divided ${Math.floor(n)} ways · ${fmt(round2(due / Math.floor(n)))} each` : ""); }}
+            onCancel={() => setMode({ kind: "tenders" })} />
+        )}
 
         {mode.kind === "room" && (
-          <RoomCharge due={due} tenderName={mode.tender.name}
+          <RoomCharge due={share} tenderName={mode.tender.name}
             onApply={(room, name, amount) => {
-              p.applyTender({ tenderId: mode.tender.id, name: mode.tender.name, amount: round2(Math.min(amount, due)), tip: 0, change: 0, reference: `Room ${room}${name ? ` ${name}` : ""}` });
-              setMode({ kind: "tenders" }); setMsg(`Charged ${fmt(Math.min(amount, due))} to room ${room}`);
+              const a = round2(Math.min(amount, due));
+              record({ tenderId: mode.tender.id, name: mode.tender.name, amount: a, tip: 0, change: 0, reference: `Room ${room}${name ? ` ${name}` : ""}` }, `Charged ${fmt(a)} to room ${room}`);
             }}
             onBack={() => setMode({ kind: "tenders" })} />
         )}
 
         {mode.kind === "gift" && (
-          <GiftPay due={due} tender={mode.tender} busy={busy}
+          <GiftPay due={share} tender={mode.tender} busy={busy}
             onBalance={async (card) => { setBusy(true); const r = await p.processGift(card, mode.tender.isLoyalty ? "LoyaltyBalance" : "PrePaidBalance", 0); setBusy(false); return r; }}
             onRedeem={async (card, amount, balanceRef) => {
               setBusy(true);
               const r = await p.processGift(card, mode.tender.isLoyalty ? "LoyaltyRedeem" : "PrePaidSale", amount);
               setBusy(false);
-              if (r.ok) {
-                p.applyTender({ tenderId: mode.tender.id, name: mode.tender.name, amount: round2(amount), tip: 0, change: 0, reference: card.slice(-4), balanceRef: r.balance ?? balanceRef });
-                setMode({ kind: "tenders" }); setMsg(`${mode.tender.name} applied${r.balance ? ` · balance ${r.balance}` : ""}`);
-              } else setMsg(r.message);
+              if (r.ok) record({ tenderId: mode.tender.id, name: mode.tender.name, amount: round2(amount), tip: 0, change: 0, reference: card.slice(-4), balanceRef: r.balance ?? balanceRef },
+                `${mode.tender.name} applied${r.balance ? ` · balance ${r.balance}` : ""}`);
+              else setMsg(r.message);
             }}
             onBack={() => setMode({ kind: "tenders" })} />
         )}

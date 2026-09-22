@@ -54,6 +54,10 @@ describe("buildFinancialCheck", () => {
   it("wraps lines in one Tray tagged with terminal + employee", () => {
     expect(xml).toMatch(/<Tray Tray_Number="1" Terminal_POS_ID="20" Sent_On="[^"]+" Employee_POS_ID="5" traykey="[^"]+">/);
   });
+  it("mints a numeric 7-digit traykey (iOS generateCheckKey)", () => {
+    const key = xml.match(/traykey="(\d+)"/)?.[1];
+    expect(key).toMatch(/^\d{7}$/);
+  });
   it("emits the item line as Type=M with MenuItem_POS_ID, Line_Number and Line_Amount", () => {
     expect(xml).toContain('Type="M"');
     expect(xml).toContain("<Line_Number>1</Line_Number><MenuItem_POS_ID>100</MenuItem_POS_ID><Line_Amount>18.00</Line_Amount>");

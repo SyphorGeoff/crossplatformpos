@@ -64,7 +64,7 @@ async function setLock(cfg: SessionConfig, p: { checkNo: string; checkKey: strin
 export const lockCheck = (cfg: SessionConfig, p: { checkNo: string; checkKey: string; businessDateId: string }) => setLock(cfg, p, true);
 export const unlockCheck = (cfg: SessionConfig, p: { checkNo: string; checkKey: string; businessDateId: string }) => setLock(cfg, p, false);
 
-export interface CheckNames { menuItemName: (id: string) => string; tenderName: (id: string) => string; }
+export interface CheckNames { menuItemName: (id: string) => string; tenderName: (id: string) => string; adjustmentName?: (id: string) => string; }
 
 /**
  * Read a full check back and reconstruct our Check model (parsePullBackCheck,
@@ -83,45 +83,7 @@ export async function readCheck(
   const check = Array.isArray(fc) ? (fc[0] as XmlDict) : (fc as XmlDict);
   if (!check || typeof check === "string") return null;
 
-  const lines: CheckLine[] = [];
-  const tenders: TenderLine[] = [];
-  const keyByTrayLine = new Map<string, string>(); // "tray:line" → local key
-  const trays = asList(findKey(check, "Tray"));
-  let trayCount = 0;
-  for (const tray of trays) {
-    trayCount++;
-    const trayNum = textOf(tray["Tray_Number"]) || String(trayCount);
-    for (const li of asList(findKey(tray, "LineItem"))) {
-      if (textOf(li["Is_Void"]) === "1" || textOf(li["Transfered_Out"]) === "1") continue;
-      const type = textOf(li["Type"]) || "M";
-      const qty = Number(textOf(findKey(li, "Quantity"))) || 1;
-      const ext = Number(textOf(findKey(li, "Line_Amount"))) || 0;
-      const lineNo = textOf(findKey(li, "Line_Number"));
-      if (type === "T") {
-        const tid = textOf(findKey(li, "Tender_POS_ID"));
-        tenders.push({
-          key: mintLineKey(), tenderId: tid, name: names.tenderName(tid),
-          amount: ext, tip: Number(textOf(findKey(li, "Tip_Amount"))) || 0,
-          change: Number(textOf(findKey(li, "Change_Given"))) || 0,
-          reference: textOf(findKey(li, "Reference")) || undefined,
-          balanceRef: textOf(findKey(li, "Transaction_Ref")) || undefined, sent: true,
-        });
-        continue;
-      }
-      const mid = textOf(findKey(li, "MenuItem_POS_ID"));
-      const parentLine = textOf(findKey(li, "Parent_LineItem_ID"));
-      const parentTray = textOf(findKey(li, "Parent_Tray_Number")) || trayNum;
-      const key = mintLineKey();
-      keyByTrayLine.set(`${trayNum}:${lineNo}`, key);
-      lines.push({
-        key, menuItemId: mid, description: names.menuItemName(mid),
-        quantity: qty, amount: qty ? Math.round((ext / qty) * 100) / 100 : ext,
-        kind: parentLine ? "Mo" : "M", indentLevel: parentLine ? 1 : 0,
-        parentKey: parentLine ? keyByTrayLine.get(`${parentTray}:${parentLine}`) : undefined,
-        guestNumber: Number(textOf(findKey(li, "Guest_Num"))) || undefined, sent: true,
-      });
-    }
-  }
+  const { lines, tenders } = parseCheckLines(check, names);
 
   return {
     id: textOf(findKey(check, "check_key")) || p.checkKey,
@@ -129,7 +91,126 @@ export async function readCheck(
     revenueCenterId: textOf(findKey(check, "RevenueCenter_POS_ID")),
     diningTableId: textOf(findKey(check, "DiningTable_POS_ID")) || undefined,
     tableName: textOf(check["Check_Name"]),
+    employeePosId: textOf(findKey(check, "Employee_POS_ID")) || undefined,
     guestCount: Number(textOf(check["Guest_Count"])) || 1,
-    lines, tenders, traysSent: trayCount, openedAt: Date.now(),
+    lines, tenders, traysSent: asList(findKey(check, "Tray")).length, openedAt: Date.now(),
   };
+}
+
+/* ---- Pull-back line parsing (FinancialCheckManager loadCurrentFinancialCheck +
+ * isValid: :16746-16850). The server keeps every line ever posted; the CLIENT nets:
+ *   - a line that is itself Is_Void / Transfered_Out / Is_Split is a marker, not an item;
+ *   - an original named by a void reversal's Void_Parent_Tray_Number/Void_Line_Item_ID
+ *     is struck (shown voided, no value);
+ *   - an original named by a Transfered_Out / Is_Split line's Parent_* has LEFT the
+ *     check and is dropped.
+ * Type "T" → tender, "A" → adjustment, "R" → reference (hidden/shown per refIsShown),
+ * anything else → menu item (modifier when it has a Parent_LineItem_ID). Is_Held and
+ * applied_to_guests are restored. */
+export function parseCheckLines(check: XmlDict, names: CheckNames): { lines: CheckLine[]; tenders: TenderLine[] } {
+  interface Raw {
+    tray: string; line: string; type: string; isVoid: boolean; xfer: boolean; split: boolean; held: boolean;
+    parentTray: string; parentLine: string; voidTray: string; voidLine: string;
+    qty: number; ext: number; guest?: number; applied?: string; auth?: string; ref: string;
+    mid: string; adj: string; tid: string; tip: number; change: number; reference?: string; balanceRef?: string;
+  }
+  const raws: Raw[] = [];
+  let trayCount = 0;
+  for (const tray of asList(findKey(check, "Tray"))) {
+    trayCount++;
+    const trayNum = textOf(tray["Tray_Number"]) || String(trayCount);
+    for (const li of asList(findKey(tray, "LineItem"))) {
+      const t = (k: string) => textOf(findKey(li, k));
+      raws.push({
+        tray: trayNum, line: t("Line_Number"), type: textOf(li["Type"]) || "M",
+        isVoid: textOf(li["Is_Void"]) === "1", xfer: textOf(li["Transfered_Out"]) === "1", split: textOf(li["Is_Split"]) === "1",
+        held: textOf(li["Is_Held"]) === "1",
+        parentTray: t("Parent_Tray_Number"), parentLine: t("Parent_LineItem_ID"),
+        voidTray: t("Void_Parent_Tray_Number"), voidLine: t("Void_Line_Item_ID"),
+        qty: Number(t("Quantity")) || 1, ext: Number(t("Line_Amount")) || 0,
+        guest: Number(t("Guest_Num")) >= 0 && t("Guest_Num") !== "" ? Number(t("Guest_Num")) : undefined,
+        applied: t("applied_to_guests") || undefined, auth: t("AuthorizingEmployee_ID") || undefined, ref: t("Reference"),
+        mid: t("MenuItem_POS_ID"), adj: t("Adjustment_POS_ID"), tid: t("Tender_POS_ID"),
+        tip: Number(t("Tip_Amount")) || 0, change: Number(t("Change_Given")) || 0,
+        reference: t("Reference") || undefined, balanceRef: t("Transaction_Ref") || undefined,
+      });
+    }
+  }
+  const voided = new Set<string>();   // originals cancelled by a void reversal
+  const removed = new Set<string>();  // originals that left (transfer / split)
+  for (const r of raws) {
+    if (r.isVoid && r.voidLine) voided.add(`${r.voidTray || r.tray}:${r.voidLine}`);
+    if ((r.xfer || r.split) && r.parentLine) removed.add(`${r.parentTray || r.tray}:${r.parentLine}`);
+  }
+  const lines: CheckLine[] = [];
+  const tenders: TenderLine[] = [];
+  const keyByTrayLine = new Map<string, string>();
+  for (const r of raws) {
+    if (r.isVoid || r.xfer || r.split) continue;             // markers, not items
+    const id = `${r.tray}:${r.line}`;
+    if (removed.has(id)) continue;                           // moved to another check
+    const struck = voided.has(id);
+    const common = { trayNumber: Number(r.tray) || undefined, lineNumber: Number(r.line) || undefined, sent: true as const };
+    if (r.type === "T") {
+      if (struck) continue;
+      tenders.push({ key: mintLineKey(), tenderId: r.tid, name: names.tenderName(r.tid), amount: r.ext, tip: r.tip, change: r.change, reference: r.reference, balanceRef: r.balanceRef, sent: true });
+      continue;
+    }
+    const key = mintLineKey();
+    keyByTrayLine.set(id, key);
+    if (r.type === "A") {
+      // an item-level adjustment carries Parent_* → sits under its item (indented) so
+      // later discounts see the item's net and "once per item" can be enforced
+      const parentKey = r.parentLine ? keyByTrayLine.get(`${r.parentTray || r.tray}:${r.parentLine}`) : undefined;
+      lines.push({ key, menuItemId: "", description: names.adjustmentName?.(r.adj) ?? `#${r.adj}`, quantity: 1, amount: r.ext, kind: "A", indentLevel: parentKey ? 1 : 0,
+        adjustmentId: r.adj, authEmpId: r.auth, guestNumber: r.guest, appliedToGuests: r.applied, isVoid: struck || undefined, parentKey, ...common });
+      continue;
+    }
+    if (r.type === "R") {
+      lines.push({ key, menuItemId: "", description: "", quantity: 1, amount: 0, kind: "R", indentLevel: 0,
+        reference: r.ref, authEmpId: r.auth, guestNumber: r.guest, appliedToGuests: r.applied, isVoid: struck || undefined, ...common });
+      continue;
+    }
+    const isMod = !!r.parentLine;
+    lines.push({
+      key, menuItemId: r.mid, description: names.menuItemName(r.mid),
+      quantity: r.qty, amount: r.qty ? Math.round((r.ext / r.qty) * 100) / 100 : r.ext,
+      kind: isMod ? "Mo" : "M", indentLevel: isMod ? 1 : 0,
+      parentKey: isMod ? keyByTrayLine.get(`${r.parentTray || r.tray}:${r.parentLine}`) : undefined,
+      guestNumber: r.guest, appliedToGuests: r.applied, held: r.held || undefined, isVoid: struck || undefined, ...common,
+    });
+  }
+  return { lines, tenders };
+}
+
+/* ---- Live single-field edit of a posted line (postLineItemModifyforstore_id
+ * :11645-11700): Trans_Type="Modify", Record_Type LineItem. The iPad uses it for
+ * Guest_Num (change guest on a sent line) and Line_Amount. Success = Status_Code 100. */
+export async function modifyLineItem(cfg: SessionConfig, p: {
+  businessDateId: string; checkNo: string; checkKey: string; trayNumber: number; lineNumber: number; field: "Guest_Num" | "Line_Amount"; value: string;
+}): Promise<{ ok: boolean; message: string }> {
+  const xml = `${XML_HEAD}${TRANS_DTD}<Transactional_Request Trans_Type="Modify"><ISIS_Ver>1.0</ISIS_Ver>` +
+    `<Store_ID>${escapeXml(cfg.storeId)}</Store_ID><Security_Token>${escapeXml(cfg.token)}</Security_Token><Record_Type>LineItem</Record_Type>` +
+    `<BusinessDate_ID>${escapeXml(p.businessDateId)}</BusinessDate_ID><Check_No>${escapeXml(p.checkNo)}</Check_No><check_key>${escapeXml(p.checkKey)}</check_key>` +
+    `<Tray_Number>${p.trayNumber}</Tray_Number><Line_Number>${p.lineNumber}</Line_Number>` +
+    `<Field_Name>${p.field}</Field_Name><Field_Value>${escapeXml(p.value)}</Field_Value></Transactional_Request>`;
+  try {
+    const parsed = parseXmlResponse(await postXml(apiServerAddress(cfg.enterpriseServerUrl), xml));
+    const code = textOf(findKey(parsed, "Status_Code"));
+    return { ok: code === "100", message: textOf(findKey(parsed, "Status_Text")) || code || "No response" };
+  } catch (e) { return { ok: false, message: `server unreachable: ${String((e as Error).message ?? e)}` }; }
+}
+
+/** The employee's tenders still awaiting finalization (tip/capture) — CreditCardManager
+ *  loadUnFinalizedTenders: Trans_Type="Unfinalized_Tenders" for this business date /
+ *  employee / terminal. Clock-out is refused while any exist (pressClockOut). */
+export async function fetchUnfinalizedTenders(cfg: SessionConfig, p: { businessDateId: string; empPosId: string }): Promise<{ empPosId: string; checkNo: string }[]> {
+  const xml = `${XML_HEAD}${TRANS_DTD}<Transactional_Request Trans_Type="Unfinalized_Tenders">` +
+    el("ISIS_Ver", cfg.isisVer) + el("Store_ID", cfg.storeId) + el("Security_Token", cfg.token) +
+    el("BusinessDate_ID", p.businessDateId) + el("Emp_POS_ID", p.empPosId) + el("Terminal_POS_ID", cfg.terminalPosId) +
+    `</Transactional_Request>`;
+  const parsed = parseXmlResponse(await postXml(apiServerAddress(cfg.enterpriseServerUrl), xml));
+  return asList(findKey(parsed, "Unfinalized_Tender")).map((r) => ({
+    empPosId: textOf(findKey(r, "Emp_POS_ID")), checkNo: textOf(findKey(r, "Check_Number")) || textOf(findKey(r, "Check_No")),
+  })).filter((t) => !p.empPosId || t.empPosId === p.empPosId);
 }

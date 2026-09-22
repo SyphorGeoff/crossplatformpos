@@ -50,6 +50,19 @@ export async function fetchClockedInEmp(cfg: SessionConfig, empId: string): Prom
   return null;
 }
 
+/** Every clocked-in Emp_POS_ID (FinancialCheckManager loadEmployees — the Transfer
+ *  Check employee list is built from Trans_Type="Clocked_In_Emps"). null = unreachable. */
+export async function fetchClockedInEmpIds(cfg: SessionConfig): Promise<Set<string> | null> {
+  const xml = `${XML_HEAD}${TRANS_DTD}<Transactional_Request Trans_Type="Clocked_In_Emps">` +
+    el("ISIS_Ver", cfg.isisVer) + el("Store_ID", cfg.storeId) + el("Security_Token", cfg.token) + `</Transactional_Request>`;
+  try {
+    const parsed = parseXmlResponse(await postXml(apiServerAddress(cfg.enterpriseServerUrl), xml));
+    const ids = new Set<string>();
+    for (const r of asList(findKey(parsed, "Clocked_In_Emp"))) { const id = textOf(findKey(r, "Emp_POS_ID")); if (id) ids.add(id); }
+    return ids;
+  } catch { return null; }
+}
+
 /** yyyy-MM-dd HH:mm — the time-card timestamp format (minute precision). */
 export function clockStamp(d = new Date()): string {
   const p = (n: number) => String(n).padStart(2, "0");
@@ -75,13 +88,15 @@ function parse(xml: string): ClockResult {
 /** Clock IN. Returns the server's card Sequence (needed for clock-out). */
 export async function clockIn(cfg: SessionConfig, p: {
   businessDateId: string; empPosId: string; jobPosId: string; rate: number; teamName?: string;
+  defaultRoomId?: string;   // Default_Dining_Room_POS_ID — the room picked at clock-in (LoginManager.m:321-325)
 }, now = new Date()): Promise<ClockResult> {
   const xml = `${XML_HEAD}${DTD}<Time_Card_Post>` +
     el("ISIS_Ver", cfg.isisVer) + el("Store_ID", cfg.storeId) + el("Security_Token", cfg.token) +
     el("BusinessDate_ID", p.businessDateId) + el("Emp_POS_ID", p.empPosId) + el("Job_POS_ID", p.jobPosId) +
     `<Sequence></Sequence>` + el("Clock_In_Date_Time", clockStamp(now)) + el("Clock_Out_Date_Time", "1") +
     el("Tips_Declared", "1") + el("Rate", p.rate.toFixed(2)) + el("Is_Clock_Out", "0") +
-    el("Team_Name", p.teamName ?? "") + el("Is_Adjustment", "0") + `</Time_Card_Post>`;
+    el("Team_Name", p.teamName ?? "") + (p.defaultRoomId ? el("Default_Dining_Room_POS_ID", p.defaultRoomId) : "") +
+    el("Is_Adjustment", "0") + `</Time_Card_Post>`;
   try { return parse(await postXml(apiServerAddress(cfg.enterpriseServerUrl), xml)); }
   catch (e) { return { ok: false, alreadyClockedIn: false, message: `server unreachable: ${String((e as Error).message ?? e)}`, sequence: "" }; }
 }

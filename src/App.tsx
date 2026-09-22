@@ -5,11 +5,12 @@
  * activation chain + sync against a live server end to end.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Setup from "./views/Setup";
 import Menu from "./views/Menu";
 import { ISIS_VER, useSettings } from "./state/useSettings";
 import { fullSync, loadSeqMap, incrementalSync, type SyncConfig } from "./protocol/defsync";
+import { requestStandardToken } from "./protocol/activation";
 
 export default function App() {
   const { settings, update } = useSettings();
@@ -17,26 +18,37 @@ export default function App() {
   const [line, setLine] = useState("");
   const started = useRef(false);
 
-  const cfg = useCallback((): SyncConfig => ({
-    enterpriseServerUrl: settings.enterpriseServerUrl, isisVer: ISIS_VER,
-    storeId: settings.storeId, token: settings.token,
-  }), [settings]);
-
-  // On activation: full sync if never synced, else incremental (launch refresh).
+  // On activation: refresh the daily session token, then full sync if never
+  // synced, else incremental (launch refresh).
   useEffect(() => {
     if (!settings.activated || started.current) return;
     started.current = true;
     const hasData = Object.keys(loadSeqMap()).length > 0;
     setPhase(hasData ? "ready" : "syncing"); // with a cache, browse immediately; refresh in background
     void (async () => {
+      // The Standard session token minted at activation expires (daily) — every
+      // live call needs a valid one, so re-request it at launch, the way iOS does
+      // (getStandardToken). No credentials required: store/terminal/UID/code
+      // identify the licensed terminal. Falls back to the stored token offline.
+      let token = settings.token;
+      const tok = await requestStandardToken({
+        enterpriseServerUrl: settings.enterpriseServerUrl, isisVer: ISIS_VER,
+        storeId: settings.storeId, terminalPosId: settings.terminalPosId,
+        terminalUID: settings.terminalUid, enterpriseCode: settings.enterpriseCode,
+      });
+      if (tok.ok && tok.token) { token = tok.token; update({ token }); }
+      const syncCfg: SyncConfig = {
+        enterpriseServerUrl: settings.enterpriseServerUrl, isisVer: ISIS_VER,
+        storeId: settings.storeId, token,
+      };
       const onProg = (name: string, i: number, total: number, rows: number) => setLine(`${name} (${i + 1}/${total}) — ${rows} rows`);
       try {
-        if (hasData) { await incrementalSync(cfg(), onProg); }
-        else { await fullSync(cfg(), onProg); }
+        if (hasData) { await incrementalSync(syncCfg, onProg); }
+        else { await fullSync(syncCfg, onProg); }
       } catch (e) { setLine(`Sync error: ${String((e as Error).message ?? e)} — using cache`); }
       setPhase("ready");
     })();
-  }, [settings.activated, cfg]);
+  }, [settings.activated]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!settings.activated) {
     return <Setup initial={settings} onDone={(patch) => update(patch)} />;
