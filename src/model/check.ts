@@ -34,6 +34,8 @@ export interface CheckLine {
   isVoid?: boolean;
   transferOut?: boolean;    // a negative void-off line moving an item off this check (split/transfer)
   isSplit?: boolean;        // Is_Split=1 — a negative marker retiring a line that was divided among guests
+  course?: number;          // print_Sort_Order — the line's course (0 = none); undefined = item default
+  rungAt?: number;          // ms when this terminal rang the line (local only; drives "Repeat last (12 min ago)")
   held?: boolean;           // Is_Held — on the check but withheld from the kitchen chit
   sent?: boolean;           // already fired to the kitchen in a prior round
   trayNumber?: number;      // Tray_Number the server holds this line under (stamped when sent)
@@ -105,11 +107,12 @@ export function guestAssignment(currentGuest: number): { guestNumber: number; ap
 }
 
 /** Append a menu item as a new order line (quantity 1) with the caller's key. */
-export function addItemLine(check: Check, item: MenuItem, key: string, guestNumber?: number, appliedToGuests?: string): Check {
+export function addItemLine(check: Check, item: MenuItem, key: string, guestNumber?: number, appliedToGuests?: string, course?: number, held?: boolean): Check {
   const line: CheckLine = {
     key, menuItemId: item.id, description: item.name,
     quantity: 1, amount: Number(item.price) || 0, kind: "M", indentLevel: 0,
-    modChainId: item.modChainId || undefined, guestNumber, appliedToGuests,
+    modChainId: item.modChainId || undefined, guestNumber, appliedToGuests, course, held: held || undefined,
+    rungAt: Date.now(),
   };
   return { ...check, lines: [...check.lines, line] };
 }
@@ -421,6 +424,73 @@ export function refIsShown(l: CheckLine): boolean {
   if (l.reference.includes("NOTSHOWN")) return false;
   if (l.authEmpId !== undefined || l.appliedToGuests || l.adjustmentId) return false;
   return true;
+}
+
+/* ---------------- Coursing (print_Sort_Order) ---------------- */
+
+/** The course a line prints under: its own override, else the item's default
+ *  (CheckTableViewController :231-237 / PrintManager :5404). 0 = none. */
+export function effectiveCourse(line: CheckLine, itemDefault: number): number {
+  if (line.course !== undefined) return line.course;
+  return itemDefault > 0 ? itemDefault : 0;
+}
+
+/** Set the course on the selected top-level lines (CouringViewController pressN /
+ *  pressZero). Modifiers follow their parent and never carry one themselves. */
+export function setCourse(check: Check, keys: Set<string>, course: number): Check {
+  return { ...check, lines: check.lines.map((l) => (keys.has(l.key) && l.kind === "M" ? { ...l, course } : l)) };
+}
+
+/** The latest live line of a menu item on the check (Repeat last pill). */
+export function lastLineOf(check: Check, menuItemId: string): CheckLine | undefined {
+  for (let i = check.lines.length - 1; i >= 0; i--) {
+    const l = check.lines[i];
+    if (l.kind === "M" && l.menuItemId === menuItemId && !l.isVoid && !l.transferOut && !l.isSplit) return l;
+  }
+  return undefined;
+}
+
+/** Repeat last: ring the item again exactly as its latest line — same mods,
+ *  seat, course and reference — as a fresh unsent family. */
+export function repeatLastOf(check: Check, menuItemId: string, now = Date.now()): { check: Check; key?: string } {
+  const last = lastLineOf(check, menuItemId);
+  if (!last) return { check };
+  const key = mintLineKey();
+  const strip = (l: CheckLine): CheckLine => {
+    const c = { ...l, sent: undefined, trayNumber: undefined, lineNumber: undefined, held: undefined, rungAt: now };
+    delete c.sent; delete c.trayNumber; delete c.lineNumber; delete c.held;
+    return c;
+  };
+  const copies: CheckLine[] = [{ ...strip(last), key }];
+  for (const l of check.lines) if (l.parentKey === last.key && l.kind === "Mo" && !l.isVoid) copies.push({ ...strip(l), key: mintLineKey(), parentKey: key });
+  return { check: { ...check, lines: [...check.lines, ...copies] }, key };
+}
+
+/** A note on a menu-item line (Reference on the M LineItem — iOS emits Reference
+ *  on any line that has one; prints under the item on the chit). */
+export function setLineReference(check: Check, key: string, text: string): Check {
+  const t = text.trim();
+  return { ...check, lines: check.lines.map((l) => (l.key === key ? { ...l, reference: t || undefined } : l)) };
+}
+
+/** Fire Course N: a SHOWN "FIRE COURSE N" note plus the hidden audit record
+ *  {"type":"firecourse"} — the fired state any terminal can read back. */
+export function addFireCourseRecord(check: Check, course: number, authEmpId = "", now?: Date): Check {
+  const noted = addShownRef(check, `FIRE COURSE ${course}`);
+  return addCommonSchemaRef(noted, { type: "firecourse", course, time: stampNoSec(now), src: "pos" }, authEmpId);
+}
+
+/** Courses already fired on this check (from the firecourse records). */
+export function firedCourses(check: Check): Set<number> {
+  const out = new Set<number>();
+  for (const l of check.lines) {
+    if (l.kind !== "R" || l.isVoid || !l.reference || !l.reference.startsWith("{")) continue;
+    try {
+      const rec = JSON.parse(l.reference) as { type?: string; course?: number | string };
+      if (rec.type === "firecourse" && rec.course !== undefined) out.add(Number(rec.course));
+    } catch { /* not a record */ }
+  }
+  return out;
 }
 
 /** Reassign a line's guest (change-guest). Guest 0 sets only applied_to_guests="0"

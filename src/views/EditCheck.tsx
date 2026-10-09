@@ -34,6 +34,7 @@ export interface EditCheckActions {
   sortGuest?: () => void;
   changeGuest?: () => void;
   refire?: () => void;
+  changeCourse?: () => void;   // course chooser for the selected lines (CouringViewController)
 }
 
 export interface EditCheckProps {
@@ -106,6 +107,7 @@ export default function EditCheck(p: EditCheckProps) {
         <Fn glyph="⇅" label="Sort Guest" onClick={a.sortGuest} />
         <Fn glyph="◐" label={`Change Guest${n}`} onClick={a.changeGuest} />
         <Fn glyph="🔥" label={`Refire${n}`} onClick={a.refire} />
+        <Fn glyph="≡" label={`Change Course${n}`} onClick={a.changeCourse} />
       </div>
     </div>
   );

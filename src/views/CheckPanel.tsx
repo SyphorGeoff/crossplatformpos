@@ -6,8 +6,12 @@
  * mutation goes through useCheck / the Menu orchestration.
  */
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { checkSubtotal, highestGuestNumber, lineExtended, refIsShown, sortLinesByGuest, unsentLines, type Check, type CheckLine } from "@/model/check";
+
+/** Paul's ten course hues (CheckTableViewController _courseTintForCourse), style only. */
+export const COURSE_HUES = [30, 148, 198, 45, 282, 342, 210, 15, 120, 260];
+export const courseHue = (n: number): number => COURSE_HUES[((Math.max(1, n) - 1) % 10)];
 import { grandTotal, type TaxResult } from "@/model/tax";
 
 const fmt = (n: number): string => (n < 0 ? `-$${Math.abs(n).toFixed(2)}` : `$${n.toFixed(2)}`);
@@ -44,12 +48,30 @@ export interface CheckPanelProps {
   guestLocked?: boolean;                   // a modifier flow is open: the seat cannot change mid-flow
   sending?: boolean;
   sendError?: string;
+  /* ---- coursing (RevenueCenter.showCourse / rc_backup21) ---- */
+  showCourse?: boolean;                    // "C{n}" pills + course headers + chips
+  courseOf?: (l: CheckLine) => number;     // effective course for a line (0 = none)
+  courseLabel?: (n: number) => string;     // header text ("Course 2" unless a printer names it)
+  firedCourses?: Set<number>;              // courses with a firecourse record
+  onFireCourse?: (course: number) => void; // waiter fires a sent course
+  onLineLongPress?: (key: string) => void; // 1-second press on a line → course chooser (iOS CheckTableCellView)
+  useCourseButtons?: boolean;              // the "Adding to" course picker is shown
+  addingCourse?: number;                   // 0 = Auto (item default)
+  onAddingCourse?: () => void;             // open the picker
 }
 
-function LineRow({ line, selecting, checked, showGuest, onToggle, onQty, onRemove }: {
+function LineRow({ line, selecting, checked, showGuest, onToggle, onQty, onRemove, course, onLongPress }: {
   line: CheckLine; selecting: boolean; checked: boolean; showGuest: boolean; onToggle: (k: string) => void;
   onQty: CheckPanelProps["onQty"]; onRemove: CheckPanelProps["onRemove"];
+  course?: number;                 // effective course to show as a "C{n}" pill (showCourse only)
+  onLongPress?: (key: string) => void;
 }) {
+  // 1-second press opens the course chooser for this line (CheckTableCellView pressLong).
+  const timer = useRef<number | null>(null);
+  const fired = useRef(false);
+  const start = () => { if (!onLongPress) return; fired.current = false; timer.current = window.setTimeout(() => { fired.current = true; timer.current = null; onLongPress(line.key); }, 1000); };
+  const clear = () => { if (timer.current !== null) { clearTimeout(timer.current); timer.current = null; } };
+  const press = onLongPress ? { onPointerDown: start, onPointerUp: clear, onPointerLeave: clear, onPointerCancel: clear, onContextMenu: (e: React.SyntheticEvent) => e.preventDefault() } : {};
   if (line.kind === "R") {
     // A shown reference line — a plain note on the check (no qty/price/controls).
     return (
@@ -64,15 +86,17 @@ function LineRow({ line, selecting, checked, showGuest, onToggle, onQty, onRemov
     <div
       className={`cl ${isMod ? "mod" : ""} ${line.sent ? "sent" : "fresh"} ${line.isVoid ? "void" : ""} ${selectable ? "selectable" : ""} ${checked ? "picked" : ""}`}
       style={{ paddingLeft: 10 + line.indentLevel * 16 }}
-      onClick={selectable ? () => onToggle(line.key) : undefined}
+      onClick={selectable ? () => onToggle(line.key) : () => { if (fired.current) fired.current = false; }}
+      {...press}
     >
       <div className="clmain">
         {selectable && <span className="clcheck">{checked ? "☑" : "☐"}</span>}
+        {!!course && line.kind === "M" && <span className="clcourse" style={{ "--ch": courseHue(course) } as React.CSSProperties}>C{course}</span>}
         {showGuest && line.kind === "M" && (
           <span className="clguest">{line.appliedToGuests === "0" ? "T" : `G${line.guestNumber ?? 1}`}</span>
         )}
         <span className="clqty">{line.quantity > 1 ? `${line.quantity}×` : ""}</span>
-        <span className="clname">{line.description}{line.held && <span className="clheld">HELD</span>}</span>
+        <span className="clname">{line.description}{line.held && <span className="clheld">HELD</span>}{line.kind === "M" && line.reference && <span className="clitemnote">{line.reference}</span>}</span>
         <span className="clamt">{line.amount ? fmt(lineExtended(line)) : ""}</span>
       </div>
       {!selecting && !line.sent && line.kind === "M" && (
@@ -86,6 +110,8 @@ function LineRow({ line, selecting, checked, showGuest, onToggle, onQty, onRemov
     </div>
   );
 }
+
+const nGuestsFor = (c: Check) => highestGuestNumber(c);
 
 export default function CheckPanel(p: CheckPanelProps) {
   const { check, tax } = p;
@@ -102,6 +128,38 @@ export default function CheckPanel(p: CheckPanelProps) {
   const itemCount = shown.filter((l) => l.kind === "M").length;
   // Sort Guest: order item families (item + its modifiers) by guest number.
   const display = p.sortByGuest ? sortLinesByGuest(shown) : shown;
+
+  // ---- Coursing view (showCourse): course headers, filter chips, Ordering Mode ----
+  // Sort Guest wins over course grouping (Paul's 1.0bc): flat list by guest.
+  const coursing = !!p.showCourse && !p.sortByGuest && !!p.courseOf;
+  const [courseFilter, setCourseFilter] = useState<number | null>(null);
+  const [sentExpanded, setSentExpanded] = useState(false);
+  type Family = { head: CheckLine; rest: CheckLine[]; course: number };
+  const families: Family[] = [];
+  const trailers: CheckLine[] = [];
+  if (coursing) {
+    const byKey = new Map<string, Family>();
+    for (const l of shown) {
+      if (l.parentKey && byKey.has(l.parentKey)) { byKey.get(l.parentKey)!.rest.push(l); continue; }
+      if (l.kind === "M") { const f = { head: l, rest: [], course: p.courseOf!(l) }; families.push(f); byKey.set(l.key, f); }
+      else trailers.push(l);
+    }
+  }
+  const unsentHeads = families.filter((f) => !f.head.sent);
+  const sentHeads = families.filter((f) => f.head.sent);
+  const orderingMode = coursing && unsentHeads.length > 0 && !sentExpanded;
+  useEffect(() => { if (unsentHeads.length === 0) setSentExpanded(false); }, [unsentHeads.length]); // Send → back to the full view
+  const coursesPresent = [...new Set(families.map((f) => f.course).filter((c) => c > 0))].sort((a, b) => a - b);
+  useEffect(() => { if (courseFilter !== null && !coursesPresent.includes(courseFilter)) setCourseFilter(null); }, [courseFilter, coursesPresent.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
+  const sentTotal = sentHeads.reduce((a, f) => a + lineExtended(f.head) + f.rest.filter((r) => r.kind === "Mo").reduce((b, r) => b + lineExtended(r), 0), 0);
+  const fam = (f: Family, ks: Parameters<typeof LineRow>[0] extends infer T ? Omit<T, "line"> : never) => [f.head, ...f.rest].map((l) => <LineRow key={l.key} line={l} {...ks} course={l.kind === "M" ? f.course : undefined} />);
+  const rowProps = { selecting, showGuest: nGuestsFor(check) > 1, onToggle: p.onToggleLine ?? (() => {}), onQty: p.onQty, onRemove: p.onRemove, onLongPress: p.onLineLongPress };
+  const courseState = (c: number): "pending" | "sent" | "fired" => {
+    const heads = families.filter((f) => f.course === c);
+    if (!heads.some((f) => f.head.sent)) return "pending";
+    if (c === 1 || p.firedCourses?.has(c)) return "fired";
+    return "sent";
+  };
 
   // The guest selector bar (avatars · + · T), per the iPad -setGuestButtons.
   const nGuests = highestGuestNumber(check);
@@ -143,6 +201,15 @@ export default function CheckPanel(p: CheckPanelProps) {
         </div>
       </div>
 
+      {coursing && coursesPresent.length > 0 && !orderingMode && (
+        <div className="cchips" role="tablist" aria-label="Course filter">
+          <button className={`cchip ${courseFilter === null ? "on" : ""}`} onClick={() => setCourseFilter(null)}>All</button>
+          {coursesPresent.map((c) => (
+            <button key={c} className={`cchip ${courseFilter === c ? "on" : ""}`} style={{ "--ch": courseHue(c) } as React.CSSProperties} onClick={() => setCourseFilter(c)}>C{c}</button>
+          ))}
+        </div>
+      )}
+
       <div className="clines">
         {shown.length === 0 ? (
           <div className="cempty">
@@ -150,9 +217,43 @@ export default function CheckPanel(p: CheckPanelProps) {
             <div className="cemptyrule" />
             <div className="cemptysub">Pick a category to start</div>
           </div>
-        ) : display.map((l) => (
-          <LineRow key={l.key} line={l} selecting={selecting} checked={sel.has(l.key)} showGuest={nGuests > 1} onToggle={p.onToggleLine ?? (() => {})} onQty={p.onQty} onRemove={p.onRemove} />
-        ))}
+        ) : !coursing ? display.map((l) => (
+          <LineRow key={l.key} line={l} selecting={selecting} checked={sel.has(l.key)} showGuest={nGuests > 1} onToggle={p.onToggleLine ?? (() => {})} onQty={p.onQty} onRemove={p.onRemove}
+            course={p.showCourse && p.courseOf && l.kind === "M" ? p.courseOf(l) : undefined} onLongPress={p.onLineLongPress} />
+        )) : orderingMode ? (
+          <>
+            {/* Ordering Mode (Paul 1.0bd v8/v9): unsent items on top in entry order, sent ones collapsed */}
+            {unsentHeads.map((f) => fam(f, { ...rowProps, checked: sel.has(f.head.key) }))}
+            {sentHeads.length > 0 && (
+              <button className="csentpill" onClick={() => setSentExpanded(true)}>
+                {sentHeads.length} SENT — {fmt(sentTotal)}<span>▼ TAP TO SHOW</span>
+              </button>
+            )}
+          </>
+        ) : (
+          <>
+            {courseFilter === null && families.filter((f) => f.course === 0).map((f) => fam(f, { ...rowProps, checked: sel.has(f.head.key) }))}
+            {coursesPresent.filter((c) => courseFilter === null || c === courseFilter).map((c) => {
+              const st = courseState(c);
+              return (
+                <div key={`c${c}`} className="ccourse-block">
+                  <div className={`ccourse ${st}`} style={{ "--ch": courseHue(c) } as React.CSSProperties}>
+                    <span className="cclabel">{(p.courseLabel ?? ((n: number) => `Course ${n}`))(c).toUpperCase()}</span>
+                    <span className="ccstate">{st === "pending" ? "pending" : st === "fired" ? "fired" : "sent"}</span>
+                    {st === "sent" && p.onFireCourse && !selecting && (
+                      <button className="ccfire" onClick={() => p.onFireCourse!(c)}>▶ FIRE COURSE</button>
+                    )}
+                  </div>
+                  {families.filter((f) => f.course === c).map((f) => fam(f, { ...rowProps, checked: sel.has(f.head.key) }))}
+                </div>
+              );
+            })}
+            {courseFilter === null && trailers.map((l) => (
+              <LineRow key={l.key} line={l} selecting={selecting} checked={sel.has(l.key)} showGuest={nGuests > 1} onToggle={p.onToggleLine ?? (() => {})} onQty={p.onQty} onRemove={p.onRemove} />
+            ))}
+            {unsentHeads.length > 0 && <button className="csentpill collapse" onClick={() => setSentExpanded(false)}>▲ BACK TO NEW ITEMS</button>}
+          </>
+        )}
       </div>
 
       {!selecting && p.onSelectGuest && (
@@ -162,6 +263,12 @@ export default function CheckPanel(p: CheckPanelProps) {
           ))}
           <button className="gbtn add" aria-label="Add guest" disabled={p.guestLocked} onClick={() => p.onAddGuest?.()}>+</button>
           <button className={`gbtn tbtn ${cur === -1 ? "on" : ""}`} aria-label="Whole table" disabled={p.guestLocked} onClick={() => p.onSelectGuest!(-1)}>T</button>
+          {p.useCourseButtons && p.onAddingCourse && (
+            <button className={`gbtn course ${p.addingCourse ? "on" : ""}`} disabled={p.guestLocked} onClick={p.onAddingCourse}
+              style={p.addingCourse ? ({ "--ch": courseHue(p.addingCourse) } as React.CSSProperties) : undefined}>
+              {p.addingCourse ? `Course ${p.addingCourse} ▾` : "Course · Auto ▾"}
+            </button>
+          )}
         </div>
       )}
 

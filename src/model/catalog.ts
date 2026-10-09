@@ -35,6 +35,11 @@ export interface MenuItem {
   forceTabName: boolean;      // Menu_Item.enomatic_lookup — REPURPOSED: an unsent one forces a tab name (isForceTabName)
   nonRevenue: boolean;
   imageId: string;            // MenuItem_Image_ID || Image_ID
+  description: string;        // Description — shown by the long-press item popup
+  printSortOrder: number;     // Print_Sort_Order — the item's default course (0 = none)
+  cost: number;               // Cost — item cost from the feed (0 when empty; iOS ignores it)
+  affinityId: string;         // MenuItem_Affinity_POS_ID — the suggested pairing (PairedItemViewController)
+  top16: boolean;             // Top16 — a visual favorite (VisualFavoritesManager)
   _raw: DefRow;
 }
 
@@ -57,6 +62,9 @@ export interface RevenueCenter {
   alwaysAskForTab: boolean;   // Always_Ask_For_Tab — a tab name is required before send / pay / print
   disableAutoGrat: boolean;   // rc_backup15 (isDisable_AutoGrat)
   logoutAfterPayment: boolean; // logoutAfterPayment — back to the login keypad once the check closes
+  showCourse: boolean;        // showCourse — "C{n}" course labels on the check lines
+  useCourseButtons: boolean;  // rc_backup21 — course chooser while ordering (ItemsTableVC course bar)
+  guestBeforeCourse: boolean; // sort_Guest_Before_Course — kitchen chit groups by guest, then course
   _raw: DefRow;
 }
 
@@ -139,6 +147,11 @@ function toMenuItem(r: DefRow): MenuItem {
     askForPrice: s(r, "Ask_For_Price") === "1",
     forceTabName: s(r, "enomatic_lookup") === "1" || s(r, "Enomatic_Lookup") === "1" || s(r, "Is_Enomatic_Lookup") === "1",
     nonRevenue: s(r, "Non_Revenue") === "1",
+    description: s(r, "Description"),
+    printSortOrder: Number(s(r, "Print_Sort_Order")) || 0,
+    cost: Number(s(r, "Cost")) > 0 ? Number(s(r, "Cost")) : 0,
+    affinityId: s(r, "MenuItem_Affinity_POS_ID"),
+    top16: s(r, "Top16") === "1",
     imageId: s(r, "MenuItem_Image_ID") || s(r, "Image_ID"),
     _raw: r,
   };
@@ -174,6 +187,9 @@ export function revenueCenters(): RevenueCenter[] {
     alwaysAskForTab: s(r, "Always_Ask_For_Tab") === "1" || s(r, "always_Ask_For_Tab") === "1",
     disableAutoGrat: s(r, "rc_backup15") === "1",
     logoutAfterPayment: s(r, "logoutAfterPayment") === "1" || s(r, "Logout_After_Payment") === "1",
+    showCourse: s(r, "showCourse") === "1",
+    useCourseButtons: s(r, "rc_backup21") === "1",
+    guestBeforeCourse: s(r, "sort_Guest_Before_Course") === "1",
     _raw: r,
   }));
 }
@@ -332,6 +348,8 @@ export interface StoreConfig {
   loyaltyMerchantPassword: string;
   allowRefire: boolean;       // Allow_Refire && !hide_Edit_Refire (CheckViewController.m:4516)
   maxCheckAmount: number;     // max_check_amount (Store getMax_check_amount; 1,000,000 when unset)
+  printCourseLine: boolean;   // print_Course_Line — always print course headers on prep chits
+  useSyphor: boolean;         // use_Syphor — hides the course chooser on check lines
 }
 const nativeProcessor = (v: string) => /isis|aireus/i.test(v);
 export function storeConfig(): StoreConfig {
@@ -340,6 +358,8 @@ export function storeConfig(): StoreConfig {
     usePin: s(r, "UsePin") === "1" || s(r, "Use_Pin") === "1" || s(r, "usePin") === "1",
     allowRefire: s(r, "Allow_Refire") === "1" && s(r, "hide_Edit_Refire") !== "1",
     maxCheckAmount: Number(s(r, "max_check_amount")) > 0 ? Number(s(r, "max_check_amount")) : 1_000_000,
+    printCourseLine: s(r, "print_Course_Line") === "1",
+    useSyphor: s(r, "use_Syphor") === "1",
     enterpriseId: s(r, "Enterprise_ID"),
     imageServerUrl: s(r, "ImageServerURL"),
     gcProcessor: s(r, "GC_Processor"),

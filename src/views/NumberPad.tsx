@@ -7,8 +7,8 @@
 
 import { useState } from "react";
 
-export default function NumberPad({ title, sub, mode, initial = "", onOk, onCancel }: {
-  title: string; sub?: string; mode: "money" | "count"; initial?: string;
+export default function NumberPad({ title, sub, mode, initial = "", allowZero = false, onOk, onCancel }: {
+  title: string; sub?: string; mode: "money" | "count"; initial?: string; allowZero?: boolean;
   onOk: (value: number) => void; onCancel: () => void;
 }) {
   const [digits, setDigits] = useState(initial.replace(/\D/g, ""));
@@ -16,7 +16,7 @@ export default function NumberPad({ title, sub, mode, initial = "", onOk, onCanc
   const shown = mode === "money" ? `$${value.toFixed(2)}` : digits || "0";
   const press = (k: string) => setDigits((d) => (d + k).replace(/^0+(?=\d)/, "").slice(0, 9));
   const del = () => setDigits((d) => d.slice(0, -1));
-  const ok = () => { if (mode === "count" && value < 1) return; onOk(value); };
+  const ok = () => { if (mode === "count" && value < 1 && !allowZero) return; onOk(value); };
   return (
     <div className="backdrop" onClick={onCancel}>
       <div className="authbox" onClick={(e) => e.stopPropagation()}>

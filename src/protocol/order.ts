@@ -105,10 +105,14 @@ function xmlLineItem(line: CheckLine, lineNumber: number, trayNumber: number, pa
   if (line.authEmpId) parts.push(el("AuthorizingEmployee_ID", line.authEmpId));
   parts.push(el("Quantity", line.quantity));
   parts.push(el("Line_Number", lineNumber));
+  // Course (print_Sort_Order, FinancialCheckManager :12359): an item's own override;
+  // a modifier rides its parent's so a pull-back on another terminal agrees.
+  const course = line.kind === "M" ? line.course : line.kind === "Mo" ? parent?.course : undefined;
+  if (course !== undefined) parts.push(el("print_Sort_Order", course));
   if (type === "A") parts.push(el("Adjustment_POS_ID", line.adjustmentId ?? ""));
   else if (!isRef) parts.push(el("MenuItem_POS_ID", line.menuItemId));
   if (line.voidPosId) parts.push(el("Void_POS_ID", line.voidPosId));
-  if (isRef && line.reference) parts.push(el("Reference", line.reference));
+  if (line.reference && (isRef || line.kind === "M")) parts.push(el("Reference", line.reference)); // iOS: any line with a Reference emits it (:12363)
   parts.push(el("Line_Amount", (isRef ? 0 : line.amount * line.quantity).toFixed(2))); // extended, like the iPad's Amount
   return `<LineItem ${attrs}>${parts.join("")}</LineItem>`;
 }

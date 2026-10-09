@@ -25,10 +25,10 @@ const sg = (id: string, name: string, o: Partial<ScreenGroup> & { skip?: string 
 const mi = (id: string, name: string, o: Partial<MenuItem> & { hide?: string; nlu?: string } = {}): MenuItem => ({
   id, name, price: o.price ?? "1.00", screenGroupId: o.screenGroupId ?? "", otherScreenGroupIds: o.otherScreenGroupIds ?? [],
   sort: o.sort ?? 0, categoryId: "", taxGroupId: o.taxGroupId ?? "", printGroupId: "", printGroupIds: o.printGroupIds ?? [], isModifier: o.isModifier ?? false, modChainId: o.modChainId ?? "",
-  askForPrice: false, forceTabName: false, nonRevenue: false, imageId: "",
+  askForPrice: false, forceTabName: false, nonRevenue: false, imageId: "", description: "", printSortOrder: 0, cost: 0, affinityId: "", top16: false,
   _raw: { Hide_From_Store: o.hide ?? "0", NLU: o.nlu ?? "" },
 });
-const rc = (id: string, name: string, filter = false): RevenueCenter => ({ id, name, screenGroupFilter: filter, alwaysAskForTab: false, disableAutoGrat: false, logoutAfterPayment: false, _raw: {} });
+const rc = (id: string, name: string, filter = false): RevenueCenter => ({ id, name, screenGroupFilter: filter, alwaysAskForTab: false, disableAutoGrat: false, logoutAfterPayment: false, showCourse: false, useCourseButtons: false, guestBeforeCourse: false, _raw: {} });
 const term = (id: string, defRc = "", defSg = ""): Terminal => ({
   id, name: "T" + id, defaultScreenGroupId: defSg, defaultRevenueCenterId: defRc, _raw: {},
 });

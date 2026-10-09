@@ -10,8 +10,48 @@ import { FONT_PREP, PrintDoc } from "@/platform/escpos";
 
 const money = (n: number) => `$${n.toFixed(2)}`;
 
-export interface PrepItem { qty: number; name: string; mods: string[]; seat?: string; held?: boolean; }
+export interface PrepItem { qty: number; name: string; mods: string[]; seat?: string; held?: boolean; course?: number; guest?: number; note?: string; }
 export interface PrepCtx { checkNo: string; server: string; guests: number; rcName: string; tabLabel: string; date: string; time: string; refire?: boolean; }
+/** Course-header rules for one printer (PrintManager :5297-5320 + :5416-5472). */
+export interface CourseOpts {
+  useCourse: boolean;          // Printer.useCourse
+  forceHeaders: boolean;       // Store.print_Course_Line — headers even if some items are uncoursed
+  names: string[];             // Printer.course1..10 ("" → "Course N")
+  red: boolean;                // Printer.printCourseRed
+  guestBeforeCourse: boolean;  // RevenueCenter.sort_Guest_Before_Course
+}
+
+/** "***** Course 2 *****" — up to five stars each side, like the iPad's courseLine. */
+export function courseHeaderText(name: string, width: number): string {
+  const stars = "*".repeat(Math.max(1, Math.min(5, Math.floor((width - name.length) / 2))));
+  return `${stars} ${name} ${stars}`;
+}
+
+/**
+ * Order the chit's items for printing: course 1..10 then "Others", or guest →
+ * course when the RVC sorts guest first. A missing course is 6 (PrintManager
+ * :5404); 0 is "Others". Returns runs of [header, items]; header "" = no header.
+ */
+export function courseRuns(items: PrepItem[], o: CourseOpts): { header: string; items: PrepItem[] }[] {
+  const printable = items.filter((i) => !i.held);
+  const courseOf = (i: PrepItem) => (i.course === undefined ? 6 : i.course);
+  const headersOn = o.useCourse && (o.forceHeaders || printable.every((i) => courseOf(i) >= 1 && courseOf(i) <= 10));
+  if (!headersOn) return [{ header: "", items: printable }];
+  const nameOf = (n: number) => (o.names[n - 1] || `Course ${n}`);
+  const runsFor = (pool: PrepItem[]) => {
+    const out: { header: string; items: PrepItem[] }[] = [];
+    for (let c = 1; c <= 10; c++) {
+      const its = pool.filter((i) => courseOf(i) === c);
+      if (its.length) out.push({ header: nameOf(c), items: its });
+    }
+    const others = pool.filter((i) => courseOf(i) < 1 || courseOf(i) > 10);
+    if (others.length) out.push({ header: "Others", items: others });
+    return out;
+  };
+  if (!o.guestBeforeCourse) return runsFor(printable);
+  const guests = [...new Set(printable.map((i) => i.guest ?? 0))].sort((a, b) => a - b);
+  return guests.flatMap((g) => runsFor(printable.filter((i) => (i.guest ?? 0) === g)));
+}
 
 // Server line = first name + last initial (PrintManager getOrderHeaderDetails).
 function serverShort(name: string): string {
@@ -21,7 +61,7 @@ function serverShort(name: string): string {
 
 /** Kitchen/prep chit — one printer's items, no prices (PrintManager printCurrentOrder /
  *  getOrderHeaderDetails / getOrderTail). RVC + tab print red on impact printers. */
-export function buildPrepChit(printerName: string, ctx: PrepCtx, items: PrepItem[], cpl = 40): string {
+export function buildPrepChit(printerName: string, ctx: PrepCtx, items: PrepItem[], cpl = 40, courses?: CourseOpts): string {
   // Order-chit width (PrintManager.m:5231-5246): base 42 unless the printer's
   // Chars_Per_Line is a non-standard value; then, because the chit prints in
   // double-wide font (printDW), the usable width is halved (31 → 20).
@@ -37,15 +77,52 @@ export function buildPrepChit(printerName: string, ctx: PrepCtx, items: PrepItem
   d.centeredRed(ctx.rcName);
   if (ctx.tabLabel) d.centeredRed(ctx.tabLabel);
   d.sep("=");
-  for (const it of items) {
-    if (it.held) continue; // held items are withheld from the kitchen
-    // includeSeat printers append the seat (S1 / T) to the item name (PrintManager.m:13116-13124).
-    d.item(String(it.qty), it.seat ? `${it.name}  ${it.seat}` : it.name);
-    for (const m of it.mods) d.line(`   - ${m}`);
+  const runs = courses ? courseRuns(items, courses) : [{ header: "", items: items.filter((i) => !i.held) }];
+  for (const run of runs) {
+    if (run.header) {
+      // course header centered between asterisks, red when the printer asks (printCourseRed)
+      const text = courseHeaderText(run.header, width);
+      if (courses?.red) d.centeredRed(text); else d.centered(text);
+    }
+    for (const it of run.items) {
+      // includeSeat printers append the seat (S1 / T) to the item name (PrintManager.m:13116-13124).
+      d.item(String(it.qty), it.seat ? `${it.name}  ${it.seat}` : it.name);
+      for (const m of it.mods) d.line(`   - ${m}`);
+      if (it.note) d.line(`   * ${it.note}`);   // the line's Reference (allergen / server note)
+    }
   }
   d.sep("=");
   d.two(ctx.date, ctx.time);
   d.feed(2);          // extra clearance before the cut
+  d.cut();
+  return d.toString();
+}
+
+/** Fire chit — the waiter fired course N: a short ticket telling a paper station
+ *  which already-sent items to start now. "*** FIRE COURSE N ***" then the items. */
+export function buildFireChit(printerName: string, ctx: PrepCtx, course: number, courseLabel: string, items: PrepItem[], cpl = 40, red = false): string {
+  const base = cpl === 40 || cpl === 31 || cpl === 32 ? 42 : cpl;
+  const width = cpl === 31 ? 20 : Math.floor(base / 2);
+  const d = new PrintDoc(width);
+  d.raw(FONT_PREP);
+  const head = `FIRE COURSE ${course}`;
+  if (red) d.centeredRed(head); else d.centered(head);
+  if (courseLabel && courseLabel !== `Course ${course}`) d.centered(courseLabel);
+  if (printerName) d.centered(printerName);
+  d.centered(`CHECKNUM: ${ctx.checkNo || "-"}`);
+  d.two(serverShort(ctx.server), `Gst:${ctx.guests}`);
+  d.sep("=");
+  d.centeredRed(ctx.rcName);
+  if (ctx.tabLabel) d.centeredRed(ctx.tabLabel);
+  d.sep("=");
+  for (const it of items) {
+    d.item(String(it.qty), it.seat ? `${it.name}  ${it.seat}` : it.name);
+    for (const m of it.mods) d.line(`   - ${m}`);
+    if (it.note) d.line(`   * ${it.note}`);
+  }
+  d.sep("=");
+  d.two(ctx.date, ctx.time);
+  d.feed(2);
   d.cut();
   return d.toString();
 }

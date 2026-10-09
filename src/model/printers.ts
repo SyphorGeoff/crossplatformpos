@@ -13,6 +13,9 @@
 import { loadDefRows } from "@/protocol/defsync";
 import type { DefRow } from "./definitions";
 
+/** The header text for course n on this printer (AIPrinter courseName1..10). */
+export const courseName = (p: Printer, n: number): string => (p.courseNames[n - 1] || `Course ${n}`);
+
 const s = (r: DefRow, k: string): string => { const v = r[k]; return v == null ? "" : String(Array.isArray(v) ? v[0] ?? "" : v); };
 const alive = (r: DefRow): boolean => s(r, "Mark_Deleted") !== "1";
 const HTTP_PORTS = new Set(["80", "443", "8080", "8443"]);
@@ -30,6 +33,10 @@ export interface Printer {
   hasCashDrawer: boolean;
   printLargeTotal: boolean;   // double-size TOTAL line on the check
   includeSeat: boolean;       // append the seat (S1 / T) to each prep-chit item
+  useCourse: boolean;         // useCourse — course headers on this printer's prep chits
+  courseNames: string[];      // course1..course10 (empty → "Course N")
+  printCourseRed: boolean;    // printCourseRed — course headers in red
+  holdUnfiredCourses: boolean; // NEW optional column (KDS printers): send later courses as unfired, released by Fire Course
 }
 
 function toPrinter(r: DefRow): Printer {
@@ -47,6 +54,10 @@ function toPrinter(r: DefRow): Printer {
     hasCashDrawer: s(r, "Has_Cash_Drawer") === "1",
     printLargeTotal: s(r, "printLargeTotal") === "1",
     includeSeat: s(r, "includeSeat") === "1",
+    useCourse: s(r, "useCourse") === "1",
+    courseNames: Array.from({ length: 10 }, (_, i) => s(r, `course${i + 1}`).trim()),
+    printCourseRed: s(r, "printCourseRed") === "1",
+    holdUnfiredCourses: s(r, "holdUnfiredCourses") === "1",
   };
 }
 

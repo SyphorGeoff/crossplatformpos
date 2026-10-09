@@ -40,10 +40,10 @@ export function useCheck(defaultRcId: string, terminalPosId: string) {
   /** Add a menu item. `guest` is the assignment captured when the tile was TAPPED
    *  (a modifier flow may be open in between — the seat never changes mid-flow);
    *  defaults to the currently selected guest. */
-  const addItem = useCallback((item: MenuItem, guest?: { guestNumber: number; appliedToGuests?: string }) => {
+  const addItem = useCallback((item: MenuItem, guest?: { guestNumber: number; appliedToGuests?: string }, course?: number, held?: boolean) => {
     const key = mintLineKey();
     const { guestNumber, appliedToGuests } = guest ?? guestAssignment(currentGuest);
-    mutate((c) => addItemLine(c, item, key, guestNumber, appliedToGuests));
+    mutate((c) => addItemLine(c, item, key, guestNumber, appliedToGuests, course, held));
     return key; // caller uses this to attach modifiers
   }, [mutate, currentGuest]);
   const splitAmong = useCallback((keys: Set<string>, guests: number[], authEmpId?: string) =>

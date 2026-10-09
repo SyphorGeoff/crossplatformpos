@@ -113,6 +113,7 @@ export function parseCheckLines(check: XmlDict, names: CheckNames): { lines: Che
     parentTray: string; parentLine: string; voidTray: string; voidLine: string;
     qty: number; ext: number; guest?: number; applied?: string; auth?: string; ref: string;
     mid: string; adj: string; tid: string; tip: number; change: number; reference?: string; balanceRef?: string;
+    course?: number;
   }
   const raws: Raw[] = [];
   let trayCount = 0;
@@ -133,6 +134,7 @@ export function parseCheckLines(check: XmlDict, names: CheckNames): { lines: Che
         mid: t("MenuItem_POS_ID"), adj: t("Adjustment_POS_ID"), tid: t("Tender_POS_ID"),
         tip: Number(t("Tip_Amount")) || 0, change: Number(t("Change_Given")) || 0,
         reference: t("Reference") || undefined, balanceRef: t("Transaction_Ref") || undefined,
+        course: t("print_Sort_Order") !== "" && Number.isFinite(Number(t("print_Sort_Order"))) ? Number(t("print_Sort_Order")) : undefined,
       });
     }
   }
@@ -177,7 +179,8 @@ export function parseCheckLines(check: XmlDict, names: CheckNames): { lines: Che
       quantity: r.qty, amount: r.qty ? Math.round((r.ext / r.qty) * 100) / 100 : r.ext,
       kind: isMod ? "Mo" : "M", indentLevel: isMod ? 1 : 0,
       parentKey: isMod ? keyByTrayLine.get(`${r.parentTray || r.tray}:${r.parentLine}`) : undefined,
-      guestNumber: r.guest, appliedToGuests: r.applied, held: r.held || undefined, isVoid: struck || undefined, ...common,
+      guestNumber: r.guest, appliedToGuests: r.applied, held: r.held || undefined, isVoid: struck || undefined,
+      course: isMod ? undefined : r.course, reference: !isMod && r.ref ? r.ref : undefined, ...common,
     });
   }
   return { lines, tenders };
@@ -187,7 +190,7 @@ export function parseCheckLines(check: XmlDict, names: CheckNames): { lines: Che
  * :11645-11700): Trans_Type="Modify", Record_Type LineItem. The iPad uses it for
  * Guest_Num (change guest on a sent line) and Line_Amount. Success = Status_Code 100. */
 export async function modifyLineItem(cfg: SessionConfig, p: {
-  businessDateId: string; checkNo: string; checkKey: string; trayNumber: number; lineNumber: number; field: "Guest_Num" | "Line_Amount"; value: string;
+  businessDateId: string; checkNo: string; checkKey: string; trayNumber: number; lineNumber: number; field: "Guest_Num" | "Line_Amount" | "print_Sort_Order"; value: string;
 }): Promise<{ ok: boolean; message: string }> {
   const xml = `${XML_HEAD}${TRANS_DTD}<Transactional_Request Trans_Type="Modify"><ISIS_Ver>1.0</ISIS_Ver>` +
     `<Store_ID>${escapeXml(cfg.storeId)}</Store_ID><Security_Token>${escapeXml(cfg.token)}</Security_Token><Record_Type>LineItem</Record_Type>` +

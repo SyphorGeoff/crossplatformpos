@@ -14,11 +14,14 @@ export interface KdsHeader {
   server: string; empId: string; guests: number; checkNo: string; date: string;
   revenueCenter: string; tableName: string; store: string; printerId: string;
   bdid: string; checkKey: string; togo: string; vip: string; allergy: string;
+  fire?: string;   // NEW optional: "N" — this document releases course N (Fire Course), not a new round
 }
 export interface KdsItem {
   lineitemkey: string; quantity: string; description: string; amount: string;
   guestNumber: string; indentLevel: number; reference: string; type: string; isVoid: string;
   prepTime?: string;
+  course?: string; // NEW optional: "1".."10"
+  fired?: string;  // NEW optional: "0" = sent but held until Fire Course; absent/"1" = live
 }
 
 /** The KDS order document (getKDSOrderString). Built as a plain object and
@@ -33,11 +36,14 @@ export function buildKdsOrderJson(uuid: string, h: KdsHeader, items: KdsItem[], 
         checkNumber: `Check: ${h.checkNo}`, date: h.date, revenueCenter: h.revenueCenter,
         tableName: h.tableName, store: h.store, printer: h.printerId, bdid: h.bdid,
         checkkey: h.checkKey, togo: h.togo, vip: h.vip, allergy: h.allergy,
+        ...(h.fire !== undefined ? { fire: h.fire } : {}),
       },
       lineitem: items.map((l) => ({
         lineitemkey: l.lineitemkey, quantity: l.quantity, description: l.description, amount: l.amount,
         guestNumber: l.guestNumber, indentLevel: String(l.indentLevel), reference: l.reference,
         type: l.type, is_void: l.isVoid, prep_time: l.prepTime ?? "", KDSImage: "", detail: "",
+        ...(l.course !== undefined ? { course: l.course } : {}),
+        ...(l.fired !== undefined ? { fired: l.fired } : {}),
       })),
       footer: { tax: footer.tax, total: footer.total },
     },

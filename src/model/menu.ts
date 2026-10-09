@@ -196,6 +196,18 @@ export function itemsInScreenGroup(cat: Catalog, sgId: string): MenuItem[] {
     .sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name));
 }
 
+/** The synthetic "Favorites" screen group id (VisualFavoritesManager: Top16 items). */
+export const FAVORITES_GROUP_ID = "__favorites";
+export const favoritesGroup = (): ScreenGroup =>
+  ({ id: FAVORITES_GROUP_ID, name: "Favorites", sort: -1, parentIds: [], displayMode: "", imageId: "", color: "", isTableView: false, _raw: {} });
+
+/** Favorites: every Top16 sellable item plus this employee's pinned ones. */
+export function favoriteItems(cat: Catalog, pinnedIds: Set<string>): MenuItem[] {
+  return cat.menuItems
+    .filter((mi) => (mi.top16 || pinnedIds.has(mi.id)) && !mi.isModifier && mi._raw["Hide_From_Store"] !== "1")
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
 /** Case/space-insensitive name+NLU search across sellable items (not modifiers). */
 export function searchItems(cat: Catalog, query: string): MenuItem[] {
   const q = query.trim().toLowerCase();

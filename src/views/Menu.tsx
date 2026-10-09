@@ -28,13 +28,13 @@ import NumberPad from "./NumberPad";
 import ManagerMenu from "./ManagerMenu";
 import { checkHtmlUrl, sendEmployeeNotice, sendTextCheck } from "@/protocol/messaging";
 import { memberLookup, type Member } from "@/protocol/memberlookup";
-import { backupPrinter, checkPrinter, checkWrapper, prepPrintersForGroups, type Printer } from "@/model/printers";
-import { buildClockChit, buildCustomerCheck, buildPrepChit, type CheckLineOut, type PrepCtx, type PrepItem } from "@/protocol/printjobs";
+import { backupPrinter, checkPrinter, checkWrapper, prepPrintersForGroups, printers as loadPrinters, type Printer } from "@/model/printers";
+import { buildClockChit, buildCustomerCheck, buildFireChit, buildPrepChit, type CheckLineOut, type CourseOpts, type PrepCtx, type PrepItem } from "@/protocol/printjobs";
 import { printTo } from "@/platform/print";
 import { DRAWER_KICK } from "@/platform/escpos";
 import { buildKdsOrderJson, sendKdsOrder, type KdsItem } from "@/protocol/kdsorder";
 import {
-  childScreenGroups, initialSelection, itemsInScreenGroup, loadCatalog, modifierSteps,
+  childScreenGroups, FAVORITES_GROUP_ID, favoriteItems, favoritesGroup, initialSelection, itemsInScreenGroup, loadCatalog, modifierSteps,
   rootScreenGroups, searchItems, type Catalog, type ModifierStep,
 } from "@/model/menu";
 import {
@@ -50,8 +50,13 @@ import {
 } from "@/protocol/order";
 import { sendPayment, type GiftType, type LoyaltyType, type PaymentContext, type PaymentResult } from "@/protocol/payment";
 import { fetchOpenChecks, fetchUnfinalizedTenders, lockCheck, modifyLineItem, readCheck, unlockCheck, type OpenCheck } from "@/protocol/tables";
-import { addTransferCheckRecord, applyAutoGratuity, applyItemAdjustments, applyMovePlan, checkSubtotal, guestAssignment, lineExtended, markRoundSent, mergeInto, newCheck, removeLine, splitToNewCheck, unsentLines, voidLine, type AutoGratDef, type Check, type CheckLine } from "@/model/check";
+import { addFireCourseRecord, addTransferCheckRecord, applyAutoGratuity, applyItemAdjustments, applyMovePlan, checkSubtotal, effectiveCourse, firedCourses, guestAssignment, highestGuestNumber, lastLineOf, lineExtended, repeatLastOf, setLineReference, markRoundSent, mergeInto, newCheck, removeLine, setCourse, splitToNewCheck, unsentLines, voidLine, type AutoGratDef, type Check, type CheckLine } from "@/model/check";
 import { computeCheckTax, grandTotal, taxGroupsForWire } from "@/model/tax";
+import { adjustCount, countFor, emptyCounts, stockRefusal, withServerCounts, type ItemCounts } from "@/model/itemcounts";
+import { fetchMenuItemCounters, removeMenuItemCounter, setMenuItemCounter } from "@/protocol/itemcounts";
+import ItemTile from "./ItemTile";
+import { loadJSON, saveJSON } from "@/platform/storage";
+import { courseHue } from "./CheckPanel";
 
 /* Muted "food" tile tones (Sr_Simulator counter palette). Index 0/blank = the
    default system tone; button_color picks a specific tone (the item>category>
@@ -75,9 +80,22 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
   const [rcId, setRcId] = useState<string>(init.rcId);
   const [stack, setStack] = useState<ScreenGroup[]>(() => (init.screenGroup ? [init.screenGroup] : []));
   const [query, setQuery] = useState("");
-  const [pending, setPending] = useState<{ item: MenuItem; steps: ModifierStep[]; guest: { guestNumber: number; appliedToGuests?: string }; price?: number } | null>(null);
+  /** Everything a long-press pill can decide about a ring, carried through the
+   *  modifier / open-price flows so it lands on the line that finally gets placed. */
+  type RingOpts = { course?: number; guestIdx?: number; qty?: number; held?: boolean; after?: (key: string) => void; skipPairing?: boolean };
+  const [pending, setPending] = useState<{ item: MenuItem; steps: ModifierStep[]; guest: { guestNumber: number; appliedToGuests?: string }; price?: number; opts: RingOpts } | null>(null);
   // Open-price prompt (ASK_FOR_PRICE) and cover-count pad (table open) — NumberPad targets
-  const [pricePrompt, setPricePrompt] = useState<{ item: MenuItem; steps: ModifierStep[]; guest: { guestNumber: number; appliedToGuests?: string } } | null>(null);
+  const [pricePrompt, setPricePrompt] = useState<{ item: MenuItem; steps: ModifierStep[]; guest: { guestNumber: number; appliedToGuests?: string }; opts: RingOpts } | null>(null);
+  const [overridePad, setOverridePad] = useState<{ key: string; name: string; amount: number } | null>(null); // manager "Override price" pill
+  const [notePad, setNotePad] = useState<{ key: string; name: string; chips: string[]; text: string } | null>(null); // "Allergen note" pill
+  const [fireNowKey, setFireNowKey] = useState<string | null>(null); // "Fire now" pill: fires once the rung line is in state
+  // Pairs Well With (MenuItem_Affinity_POS_ID): iOS asks before ringing — Order / Description / Skip
+  const [pairing, setPairing] = useState<{ mi: MenuItem; paired: MenuItem; opts: RingOpts; showDesc: boolean } | null>(null);
+  // Pin to favorites: this employee's pinned items (per device), on top of the Top16 set
+  const pinsKey = `pos.favpins.${employee?.id ?? ""}`;
+  const [pins, setPins] = useState<Set<string>>(() => new Set(loadJSON<string[]>(pinsKey, [])));
+  useEffect(() => { setPins(new Set(loadJSON<string[]>(pinsKey, []))); }, [pinsKey]);
+  const togglePin = (id: string) => setPins((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); saveJSON(pinsKey, [...next]); return next; });
   const [coverPrompt, setCoverPrompt] = useState<DiningTable | null>(null);
   // Tab-name prompt gating send / pay / print (payingCheck / sendCheck / print paths)
   const [tabNamePrompt, setTabNamePrompt] = useState<{ after: () => void } | null>(null);
@@ -91,6 +109,13 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
   const [bdid, setBdid] = useState("");
   const [showPay, setShowPay] = useState(false);
   const [mode, setMode] = useState<"floor" | "order" | "tabs" | "manager">("order");
+  // 86 / item countdown (MenuItemCountManager): server counts + local rung offsets
+  const [counts, setCounts] = useState<ItemCounts>(emptyCounts);
+  const [itemPopup, setItemPopup] = useState<MenuItem | null>(null);                    // long-press popup
+  const [countPad, setCountPad] = useState<{ mi: MenuItem; auth: Authorizer } | null>(null); // Manage Qty pad
+  // Coursing: the sticky "Adding to" course (0 = Auto, FinancialCheckManager.courseNum) and the course chooser
+  const [addingCourse, setAddingCourse] = useState(0);
+  const [coursePick, setCoursePick] = useState<{ mode: "adding" } | { mode: "lines"; keys: string[] } | null>(null);
   const [showHub, setShowHub] = useState(false);
   const [editing, setEditing] = useState(false);
   const [sel, setSel] = useState<Set<string>>(new Set()); // selected line keys in Edit mode
@@ -102,6 +127,10 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
   const [taxExempt, setTaxExempt] = useState<Set<string>>(new Set()); // removed tax report-group ids
   const [sortByGuest, setSortByGuest] = useState(false);
   const [transferItemKeys, setTransferItemKeys] = useState<Set<string> | null>(null); // items awaiting a destination table
+  // Destination-table confirmation (ChangeTableViewController pressTable): the iPad
+  // always asks before moving a check, warns when the table already has one, and
+  // for item transfers offers New Check / Merge (or a check picker when several).
+  const [xferConfirm, setXferConfirm] = useState<{ kind: "check" | "items"; table: DiningTable; occs: OpenCheck[] } | null>(null);
   const [memberBox, setMemberBox] = useState<null | { q: string; busy: boolean; msg: string; results: Member[] }>(null);
   const lastReceiptRef = useRef("");   // last customer-check text, for Reprint Last Check
   const [transferMode, setTransferMode] = useState(false);
@@ -178,13 +207,16 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
   const current = stack[stack.length - 1];
   const searching = query.trim().length > 0;
 
-  const subGroups = useMemo<ScreenGroup[]>(
-    () => (searching || !current ? [] : childScreenGroups(cat, current.id, rcId)),
-    [cat, current, rcId, searching],
-  );
+  const favorites = useMemo(() => favoriteItems(cat, pins), [cat, pins]);
+  const subGroups = useMemo<ScreenGroup[]>(() => {
+    if (searching || !current) return [];
+    const kids = current.id === FAVORITES_GROUP_ID ? [] : childScreenGroups(cat, current.id, rcId);
+    // Visual favorites (Top16 + pins) ride as the first tile of the root screen
+    return stack.length === 1 && favorites.length > 0 ? [favoritesGroup(), ...kids] : kids;
+  }, [cat, current, rcId, searching, stack.length, favorites.length]);
   const items = useMemo<MenuItem[]>(
-    () => (searching ? searchItems(cat, query) : current ? itemsInScreenGroup(cat, current.id) : []),
-    [cat, current, query, searching],
+    () => (searching ? searchItems(cat, query) : current ? (current.id === FAVORITES_GROUP_ID ? favorites : itemsInScreenGroup(cat, current.id)) : []),
+    [cat, current, query, searching, favorites],
   );
 
   const selectRc = (id: string) => {
@@ -201,38 +233,132 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
    *  line is created; switching seats while a sheet is open never moves it). An
    *  open-price item asks for its price first (ASK_FOR_PRICE :16890-16902), then
    *  any modifier chain runs. */
+  /** Reload the 86 counts (loadMenuItemCount): on entering the order screen and
+   *  after a manager sets / removes a counter. A reload clears the local offsets. */
+  const refreshCounts = async () => {
+    if (!employee) return;
+    try {
+      const bd = await ensureBd();
+      const rows = await fetchMenuItemCounters(sessionCfg(), { businessDateId: bd, empPosId: employee.id });
+      if (rows) setCounts(withServerCounts(rows));
+    } catch { /* unreachable server: keep what we have */ }
+  };
+  const empIdForCounts = employee?.id ?? "";
+  useEffect(() => { if (mode === "order" && empIdForCounts) void refreshCounts(); }, [mode, empIdForCounts]); // eslint-disable-line react-hooks/exhaustive-deps
+  /** decrementCounter on ring / isDeleting on remove+void: keep the tile counts honest between reloads. */
+  const countRing = (menuItemId: string, qty: number) => setCounts((c) => adjustCount(c, menuItemId, qty));
+  const lineOf = (key: string) => ck.check.lines.find((l) => l.key === key);
+  const removeCounted = (key: string) => {
+    const l = lineOf(key);
+    if (l?.kind === "M") countRing(l.menuItemId, -l.quantity);
+    ck.remove(key);
+  };
+  const setQtyCounted = (key: string, qty: number) => {
+    const l = lineOf(key);
+    if (l?.kind === "M") {
+      const diff = Math.max(0, qty) - l.quantity;
+      const refusal = stockRefusal(counts, l.menuItemId, diff);
+      if (refusal) { setSendError(refusal); return; }
+      countRing(l.menuItemId, diff);
+    }
+    ck.setQty(key, qty);
+  };
+
   /** Store.max_check_amount (getMax_check_amount / amountDiff): refuse an item that
    *  would push the check past the limit. */
   const overMax = (price: number): boolean => {
     if (checkSubtotal(ck.check) + price <= store.maxCheckAmount) return false;
     setSendError("Your check reaches max limit"); return true;
   };
-  const tapItem = (mi: MenuItem) => {
+  /** `courseOverride` comes from the long-press course pills; otherwise the sticky
+   *  "Adding to" course (0 = Auto → the item's default at print time). */
+  const tapItem = (mi: MenuItem, o: RingOpts = {}) => {
     const steps = mi.modChainId ? modifierSteps(cat, mi.modChainId, rcId) : [];
-    const guest = guestAssignment(ck.currentGuest);
+    const guest = guestAssignment(o.guestIdx ?? ck.currentGuest);   // "Send to seat N" pill overrides the selected guest
+    const opts: RingOpts = { ...o, course: o.course ?? (addingCourse > 0 ? addingCourse : undefined) };
+    const qty = Math.max(1, Math.floor(o.qty ?? 1));
     setSendError("");
-    if (!mi.askForPrice && overMax(Number(mi.price) || 0)) return;
-    if (mi.askForPrice) { setPricePrompt({ item: mi, steps, guest }); return; }
-    if (steps.length) setPending({ item: mi, steps, guest });
-    else ck.addItem(mi, guest);
+    const refusal = stockRefusal(counts, mi.id, qty);   // 86: sold-out / countdown gate
+    if (refusal) { setSendError(refusal); return; }
+    // Pairs Well With (CheckViewController :15291-15320): ask before ringing unless the store uses Syphor
+    if (!o.skipPairing && !store.useSyphor && mi.affinityId) {
+      const paired = cat.miById.get(mi.affinityId);
+      if (paired && paired.id !== mi.id) { setPairing({ mi, paired, opts: { ...opts, skipPairing: true }, showDesc: false }); return; }
+    }
+    if (!mi.askForPrice && overMax((Number(mi.price) || 0) * qty)) return;
+    if (mi.askForPrice) { setPricePrompt({ item: mi, steps, guest, opts }); return; }
+    if (steps.length) setPending({ item: mi, steps, guest, opts });
+    else placeItem(mi, guest, undefined, [], opts);
   };
-  const placeItem = (mi: MenuItem, guest: { guestNumber: number; appliedToGuests?: string }, price?: number, chosen: ChosenModifier[] = []) => {
-    const key = ck.addItem(mi, guest);
+  const placeItem = (mi: MenuItem, guest: { guestNumber: number; appliedToGuests?: string }, price?: number, chosen: ChosenModifier[] = [], o: RingOpts = {}) => {
+    const key = ck.addItem(mi, guest, o.course, o.held);
+    const qty = Math.max(1, Math.floor(o.qty ?? 1));
+    countRing(mi.id, qty);
     if (price !== undefined) ck.setPrice(key, Math.round(price * 100) / 100);
     for (const cm of chosen) ck.addModifier(key, cm.item, cm.free ? 0 : Number(cm.item.price) || 0);
+    if (qty > 1) ck.setQty(key, qty);   // x2 / x3 / x5 pill — modifiers scale with the parent
+    o.after?.(key);
   };
   const finishMods = (chosen: ChosenModifier[]) => {
     if (!pending) return;
-    placeItem(pending.item, pending.guest, pending.price, chosen);
+    placeItem(pending.item, pending.guest, pending.price, chosen, pending.opts);
     setPending(null);
   };
   const finishPrice = (amount: number) => {
     if (!pricePrompt) return;
-    const { item, steps, guest } = pricePrompt; setPricePrompt(null);
+    const { item, steps, guest, opts } = pricePrompt; setPricePrompt(null);
     if (overMax(amount)) return;
-    if (steps.length) setPending({ item, steps, guest, price: amount });
-    else placeItem(item, guest, amount);
+    if (steps.length) setPending({ item, steps, guest, price: amount, opts });
+    else placeItem(item, guest, amount, [], opts);
   };
+  /** The comp adjustment for the manager pills: a percentage discount named "comp";
+   *  an open one takes 100 / 50 / 25, a fixed one shows only its own percent. */
+  const compAdj = adjustmentDefs.find((a) => /comp/i.test(a.name) && a.isPercentage && !a.isServiceCharge);
+  /** Pill role from the clocked-in JOB (no Job_Class in the back office yet):
+   *  Skip_Table → counter (bar / cashier share one set), else server; no shift → every pill. */
+  const pillRole: "server" | "counter" | "all" = (() => {
+    const j = clock ? empJobs.find((x) => x.id === clock.jobId) : undefined;
+    return j ? (j.skipTable ? "counter" : "server") : "all";
+  })();
+  const agoLabel = (ms?: number) => (ms === undefined ? "" : Date.now() - ms < 60_000 ? "just now" : `${Math.round((Date.now() - ms) / 60_000)} min ago`);
+  /** Repeat last: ring the item again as its latest line on this check (mods, seat, course). */
+  const repeatLast = (mi: MenuItem) => {
+    const last = lastLineOf(ck.check, mi.id);
+    if (!last) return;
+    const refusal = stockRefusal(counts, mi.id, last.quantity);
+    if (refusal) { setSendError(refusal); return; }
+    ck.update((c) => repeatLastOf(c, mi.id).check);
+    countRing(mi.id, last.quantity);
+    setSendError(`Repeated ${mi.name}`);
+  };
+  /** Fire now (server pill): send ONLY this item's family to the kitchen right now;
+   *  the other unsent lines stay unsent for the next Send. */
+  const fireNow = async (key: string) => {
+    if (!employee) return;
+    const fam = new Set<string>();
+    for (const l of ck.check.lines) if (l.key === key || (l.parentKey && fam.has(l.parentKey))) fam.add(l.key);
+    const others = ck.check.lines.filter((l) => !l.sent && !fam.has(l.key) && l.kind !== "R");
+    if (others.length === 0) { await doSend(); return; } // nothing else waiting — a plain Send & Stay
+    setSending(true); setSendError("");
+    try {
+      const { bd, checkNo } = await ensureSession();
+      const subset: Check = { ...ck.check, checkNumber: checkNo, lines: ck.check.lines.filter((l) => l.sent || fam.has(l.key)) };
+      const res = await sendCheck(settings.enterpriseServerUrl, subset, buildCtx(bd, checkNo), { settle: false, taxGroups: taxGroupsForWire(computeCheckTax(cat, subset, taxExempt)) });
+      if (!res.ok) { setSendError(`Fire now failed: ${res.message}`); setSending(false); return; }
+      const stamped = markRoundSent(subset);
+      const byKey = new Map(stamped.lines.map((l) => [l.key, l]));
+      ck.update((c) => ({ ...c, checkNumber: checkNo, traysSent: stamped.traysSent, lines: c.lines.map((l) => (fam.has(l.key) && byKey.get(l.key)) || l) }));
+      void printPrepChits(stamped.lines.filter((l) => fam.has(l.key) && (l.kind === "M" || l.kind === "Mo") && !l.isVoid), checkNo);
+      setSendError("Fired to the kitchen");
+    } catch (e) { setSendError(String((e as Error).message ?? e)); }
+    setSending(false);
+  };
+  useEffect(() => {
+    if (!fireNowKey || !ck.check.lines.some((l) => l.key === fireNowKey)) return;
+    const key = fireNowKey; setFireNowKey(null);
+    void fireNow(key);
+  }, [fireNowKey, ck.check]); // eslint-disable-line react-hooks/exhaustive-deps
+  const ALLERGEN_CHIPS = ["Allergy", "Gluten", "Dairy", "Nuts", "Shellfish", "Egg", "Soy", "Vegan"];
 
   /** A tab name is required before send / pay / print when the check has none and
    *  (payingCheck :8929-8942, send :10823-10838): the RC is Always_Ask_For_Tab, or the
@@ -273,7 +399,8 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
       } catch { /* keep the local counter */ }
     })();
   }, [employee]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { setTaxExempt(new Set()); setEditing(false); }, [ck.check.id]); // per-check: reset tax exemption; leave Edit for the menu view when the check closes/switches
+  useEffect(() => { setTaxExempt(new Set()); setEditing(false); setAddingCourse(0); }, [ck.check.id]);
+  useEffect(() => { if (mode !== "order") setAddingCourse(0); }, [mode]); // iOS resets courseNum on leaving the check screen // per-check: reset tax exemption; leave Edit for the menu view when the check closes/switches
 
   const sessionCfg = (): SessionConfig => ({
     enterpriseServerUrl: settings.enterpriseServerUrl, isisVer: ISIS_VER,
@@ -553,8 +680,9 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
   };
 
   const pickTable = async (table: DiningTable, occ?: OpenCheck) => {
-    if (transferItemKeys) { void transferItemsTo(table, occ); return; }
-    if (transferMode) { void transferTo(table); return; }
+    const occs = openChecks.filter((o) => o.tableId === table.id); // every open check on that table, not just the floor's first
+    if (transferItemKeys) { setXferConfirm({ kind: "items", table, occs }); return; }
+    if (transferMode) { setXferConfirm({ kind: "check", table, occs }); return; }
     if (!occ) { // open a fresh check bound to the table — cover count first (guestCountPad on table open)
       setCoverPrompt(table);
       return;
@@ -581,13 +709,32 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
 
   /** Route the just-fired items to their printers: a paper prep chit to raw/cloud
    *  printers, and a KDS order (/remoteorder/) to KDS-flagged printers. */
-  const printPrepChits = async (fired: typeof ck.check.lines, checkNo: string, opts: { refire?: boolean } = {}) => {
-    const families: { item: (typeof fired)[number]; mods: typeof fired }[] = [];
-    for (const l of fired) {
+  /* ---- Coursing helpers (COURSING_SPEC.md §5/§6) ---- */
+  const courseOfLine = (l: CheckLine): number => effectiveCourse(l, cat.miById.get(l.menuItemId)?.printSortOrder ?? 0);
+  /** A modifier prints under its parent's course. */
+  const familyCourse = (l: CheckLine): number => {
+    if (l.kind === "M") return courseOfLine(l);
+    const parent = l.parentKey ? ck.check.lines.find((x) => x.key === l.parentKey) : undefined;
+    return parent ? courseOfLine(parent) : 0;
+  };
+  const currentRc = () => cat.rcById.get(ck.check.revenueCenterId);
+  const courseOptsFor = (printer: Printer): CourseOpts => ({
+    useCourse: printer.useCourse, forceHeaders: store.printCourseLine, names: printer.courseNames, red: printer.printCourseRed,
+    guestBeforeCourse: currentRc()?.guestBeforeCourse ?? false,
+  });
+  /** On-screen course label: the first course-printing printer that names it, else "Course N". */
+  const courseLabelFor = (n: number): string => {
+    for (const pr of loadPrinters()) if (pr.useCourse && pr.courseNames[n - 1]) return pr.courseNames[n - 1];
+    return `Course ${n}`;
+  };
+  /** Route item families to prep printers (one merged bucket per printer). */
+  const bucketByPrinter = (lines: CheckLine[]) => {
+    const families: { item: CheckLine; mods: CheckLine[] }[] = [];
+    for (const l of lines) {
       if (l.kind === "M") families.push({ item: l, mods: [] });
       else if (l.kind === "Mo") families[families.length - 1]?.mods.push(l);
     }
-    const buckets = new Map<string, { printer: Printer; lines: typeof fired }>();
+    const buckets = new Map<string, { printer: Printer; lines: CheckLine[] }>();
     for (const fam of families) {
       const mi = cat.miById.get(fam.item.menuItemId);
       const pgIds = mi?.printGroupIds?.length ? mi.printGroupIds : (mi?.printGroupId ? [mi.printGroupId] : []);
@@ -596,56 +743,150 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
         b.lines.push(fam.item, ...fam.mods); buckets.set(pr.id, b);
       }
     }
-    if (buckets.size === 0) return;
-    const rcName = cat.rcById.get(ck.check.revenueCenterId)?.name ?? "";
-    const tableName = ck.check.diningTableId ? `Table ${tableNumberOf(ck.check.diningTableId)}` : (ck.check.tableName || "");
-    const now = new Date();
-    const uuid = () => { try { return crypto.randomUUID(); } catch { return String(Date.now()) + Math.floor(Math.random() * 1e6); } };
+    return buckets;
+  };
+  const prepCtxFor = (checkNo: string, now: Date, refire?: boolean): PrepCtx => {
+    const p2 = (n: number) => String(n).padStart(2, "0");
+    let hr = now.getHours() % 12; if (hr === 0) hr = 12;
+    return {
+      checkNo, server: employee?.name ?? "", guests: ck.check.guestCount, rcName: currentRc()?.name ?? "",
+      tabLabel: ck.check.diningTableId ? `TBL: ${tableNumberOf(ck.check.diningTableId)}` : `TAB:${ck.check.tableName ? ` ${ck.check.tableName}` : ""}`,
+      date: `${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())}`,
+      time: `${hr}:${p2(now.getMinutes())}`, refire,
+    };
+  };
+  const prepItemsFor = (printer: Printer, lines: CheckLine[]): PrepItem[] => {
+    const out: PrepItem[] = [];
+    let cur: PrepItem | null = null;
+    for (const l of lines) {
+      // Seat tag (S1 / T) only when the printer has includeSeat set (PrintManager.m:5248 + 13116-13124).
+      if (l.kind === "M") {
+        const seat = printer.includeSeat ? (l.guestNumber && l.guestNumber > 0 && !l.appliedToGuests ? `S${l.guestNumber}` : "T") : undefined;
+        const c = courseOfLine(l);
+        cur = { qty: l.quantity, name: l.description, mods: [], seat, held: l.held, course: l.course === undefined && c === 0 ? undefined : c, guest: l.guestNumber ?? 0, note: l.reference };
+        out.push(cur);
+      } else if (cur) cur.mods.push(l.description);
+    }
+    return out;
+  };
+  const kdsHeaderFor = (checkNo: string, printer: Printer, now: Date, fire?: number) => ({
+    token: settings.token, entid: store.enterpriseId, entcode: settings.enterpriseCode,
+    server: employee?.name ?? "", empId: employee?.id ?? "", guests: ck.check.guestCount, checkNo,
+    date: now.toLocaleString(), revenueCenter: currentRc()?.name ?? "",
+    tableName: ck.check.diningTableId ? `Table ${tableNumberOf(ck.check.diningTableId)}` : (ck.check.tableName || ""),
+    store: settings.storeId, printerId: printer.id, bdid: bdid, checkKey: ck.check.id, togo: "", vip: "", allergy: "0",
+    ...(fire !== undefined ? { fire: String(fire) } : {}),
+  });
+  const kdsLine = (l: CheckLine, course: number, fired?: string): KdsItem => ({
+    lineitemkey: `${ck.check.id}:${l.key}`, quantity: String(l.quantity), description: l.description,
+    amount: l.amount.toFixed(2), guestNumber: l.guestNumber && l.guestNumber > 0 ? String(l.guestNumber) : "T",
+    indentLevel: l.indentLevel, reference: l.kind === "M" ? (l.reference ?? "") : "", type: l.kind === "Mo" ? "Mo" : "M", isVoid: l.isVoid ? "1" : "0",
+    ...(course > 0 ? { course: String(course) } : {}), ...(fired !== undefined ? { fired } : {}),
+  });
+  const uuid = () => { try { return crypto.randomUUID(); } catch { return String(Date.now()) + Math.floor(Math.random() * 1e6); } };
 
+  /** Fire the round's items to the kitchen: paper chits with course headers
+   *  (PrintManager rules) and KDS documents with "Co" course lines. When a KDS
+   *  printer opts in (holdUnfiredCourses), courses above this round's lowest
+   *  course go out unfired, to be released by Fire Course. */
+  const printPrepChits = async (fired: typeof ck.check.lines, checkNo: string, opts: { refire?: boolean } = {}) => {
+    const buckets = bucketByPrinter(fired);
+    if (buckets.size === 0) return;
+    const now = new Date();
     for (const { printer, lines } of buckets.values()) {
       if (printer.isKDS) {
-        const refireMark: KdsItem[] = opts.refire
+        const co = courseOptsFor(printer);
+        const live = lines.filter((l) => !l.held);
+        const heads = live.filter((l) => l.kind === "M");
+        const coursesOn = co.useCourse && (co.forceHeaders || heads.every((l) => { const c = courseOfLine(l); return c >= 1 && c <= 10; }));
+        const withCourse = heads.map(courseOfLine).filter((c) => c > 0);
+        const minCourse = withCourse.length ? Math.min(...withCourse) : 0;
+        const firedFlag = (c: number): string | undefined => (printer.holdUnfiredCourses ? (minCourse > 0 && c > minCourse ? "0" : "1") : undefined);
+        const items: KdsItem[] = opts.refire
           ? [{ lineitemkey: `${ck.check.id}:refire`, quantity: "", description: "REFIRE", amount: "", guestNumber: "", indentLevel: 0, reference: "", type: "Co", isVoid: "0" }]
           : []; // DisplayManager :1100-1102 — a string entry becomes a type "Co" line
-        const items: KdsItem[] = refireMark.concat(lines.filter((l) => !l.held).map((l) => ({
-          lineitemkey: `${ck.check.id}:${l.key}`, quantity: String(l.quantity), description: l.description,
-          amount: l.amount.toFixed(2), guestNumber: l.guestNumber && l.guestNumber > 0 ? String(l.guestNumber) : "T",
-          indentLevel: l.indentLevel, reference: "", type: l.kind === "Mo" ? "Mo" : "M", isVoid: l.isVoid ? "1" : "0",
-        })));
-        const json = buildKdsOrderJson(uuid(), {
-          token: settings.token, entid: store.enterpriseId, entcode: settings.enterpriseCode,
-          server: employee?.name ?? "", empId: employee?.id ?? "", guests: ck.check.guestCount, checkNo,
-          date: now.toLocaleString(), revenueCenter: rcName, tableName, store: settings.storeId,
-          printerId: printer.id, bdid: bdid, checkKey: ck.check.id, togo: "", vip: "", allergy: "0",
-        }, items, { tax: tax.taxTotal.toFixed(2), total: grandTotal(checkSubtotal(ck.check), tax).toFixed(2) });
+        // families in print order: by course (1..10, then Others) when headers apply, else entry order
+        const fams: { head: CheckLine; mods: CheckLine[]; course: number }[] = [];
+        for (const l of live) {
+          if (l.kind === "M") fams.push({ head: l, mods: [], course: courseOfLine(l) });
+          else fams[fams.length - 1]?.mods.push(l);
+        }
+        const order = coursesOn ? [...fams].sort((a, b) => (a.course >= 1 && a.course <= 10 ? a.course : 99) - (b.course >= 1 && b.course <= 10 ? b.course : 99)) : fams;
+        let lastHeader = "";
+        for (const f of order) {
+          if (coursesOn) {
+            const header = f.course >= 1 && f.course <= 10 ? (printer.courseNames[f.course - 1] || `Course ${f.course}`) : "Others";
+            if (header !== lastHeader) { // a course name rides to the KDS as a type "Co" line (PrintManager :5459)
+              items.push({ lineitemkey: `${ck.check.id}:co${f.course}`, quantity: "", description: header, amount: "", guestNumber: "", indentLevel: 0, reference: "", type: "Co", isVoid: "0" });
+              lastHeader = header;
+            }
+          }
+          const flag = firedFlag(f.course);
+          items.push(kdsLine(f.head, f.course, flag));
+          for (const m of f.mods) items.push(kdsLine(m, f.course, flag));
+        }
+        const json = buildKdsOrderJson(uuid(), kdsHeaderFor(checkNo, printer, now), items, { tax: tax.taxTotal.toFixed(2), total: grandTotal(checkSubtotal(ck.check), tax).toFixed(2) });
         void sendKdsOrder(printer, json);
       } else {
-        const prepItems: PrepItem[] = [];
-        let cur: PrepItem | null = null;
-        for (const l of lines) {
-          // Seat tag (S1 / T) only when the printer has includeSeat set
-          // (PrintManager.m:5248 + 13116-13124): a real guest → "S{n}", a
-          // whole-table item → "T".
-          if (l.kind === "M") {
-            const seat = printer.includeSeat
-              ? (l.guestNumber && l.guestNumber > 0 && !l.appliedToGuests ? `S${l.guestNumber}` : "T")
-              : undefined;
-            cur = { qty: l.quantity, name: l.description, mods: [], seat, held: l.held }; prepItems.push(cur);
-          }
-          else if (cur) cur.mods.push(l.description);
-        }
-        const p2 = (n: number) => String(n).padStart(2, "0");
-        let hr = now.getHours() % 12; if (hr === 0) hr = 12;
-        const ctx: PrepCtx = {
-          checkNo, server: employee?.name ?? "", guests: ck.check.guestCount, rcName,
-          tabLabel: ck.check.diningTableId ? `TBL: ${tableNumberOf(ck.check.diningTableId)}` : `TAB:${ck.check.tableName ? ` ${ck.check.tableName}` : ""}`,
-          date: `${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())}`,
-          time: `${hr}:${p2(now.getMinutes())}`, refire: opts.refire,
-        };
-        const job = buildPrepChit(printer.name, ctx, prepItems, printer.charsPerLine);
+        const job = buildPrepChit(printer.name, prepCtxFor(checkNo, now, opts.refire), prepItemsFor(printer, lines), printer.charsPerLine, courseOptsFor(printer));
         void printTo(printer, job, { enterpriseCode: settings.enterpriseCode, storeId: settings.storeId, backup: backupPrinter(printer) });
       }
     }
+  };
+
+  /** Fire Course N (waiter-driven, COURSING_SPEC §6.2): record it on the check,
+   *  then tell each station holding that course's items — a FIRE chit on paper,
+   *  a `fire` document on a KDS. */
+  const fireCourse = async (n: number) => {
+    if (!employee) return;
+    const lines = ck.check.lines.filter((l) => (l.kind === "M" || l.kind === "Mo") && l.sent && !l.isVoid && !l.transferOut && !l.isSplit && !l.held && familyCourse(l) === n);
+    if (!lines.some((l) => l.kind === "M")) { setSendError(`Course ${n} is empty. Add at least one item to the course before firing it.`); return; }
+    setSending(true); setSendError("");
+    const next = addFireCourseRecord(ck.check, n, employee.id);
+    const r = await postCheck(false, next);
+    if (!r.ok) { setSendError(`Fire course failed: ${r.message}`); setSending(false); return; }
+    const checkNo = ck.check.checkNumber ?? "";
+    const now = new Date();
+    for (const { printer, lines: plines } of bucketByPrinter(lines).values()) {
+      if (printer.isKDS) {
+        const items = plines.map((l) => kdsLine(l, n, "1"));
+        const json = buildKdsOrderJson(uuid(), kdsHeaderFor(checkNo, printer, now, n), items, { tax: tax.taxTotal.toFixed(2), total: grandTotal(checkSubtotal(ck.check), tax).toFixed(2) });
+        void sendKdsOrder(printer, json);
+      } else {
+        const job = buildFireChit(printer.name, prepCtxFor(checkNo, now), n, printer.courseNames[n - 1] || `Course ${n}`, prepItemsFor(printer, plines), printer.charsPerLine, printer.printCourseRed);
+        void printTo(printer, job, { enterpriseCode: settings.enterpriseCode, storeId: settings.storeId, backup: backupPrinter(printer) });
+      }
+    }
+    setSendError(`Fired course ${n}`); setSending(false);
+  };
+
+  /** Change Course on lines (CouringViewController pressN/pressZero): set it locally;
+   *  sent lines also re-post print_Sort_Order through the Modify path. */
+  const applyCourseChange = (keys: string[], course: number) => {
+    const set = new Set(keys);
+    const sentLines = ck.check.lines.filter((l) => set.has(l.key) && l.kind === "M" && l.sent && l.trayNumber && l.lineNumber);
+    const checkNo = ck.check.checkNumber, checkKey = ck.check.id, bdOfCheck = ck.check.businessDateId;
+    ck.update((c) => setCourse(c, set, course)); unselectAll(); setEditing(false);
+    if (sentLines.length && checkNo) {
+      void (async () => {
+        try {
+          const bd = bdOfCheck || (await ensureBd());
+          for (const l of sentLines) {
+            const r = await modifyLineItem(sessionCfg(), { businessDateId: bd, checkNo, checkKey, trayNumber: l.trayNumber!, lineNumber: l.lineNumber!, field: "print_Sort_Order", value: String(course) });
+            if (!r.ok) { setSendError(`Course change not saved on the server: ${r.message}`); return; }
+          }
+          setSendError(`Course changed on ${sentLines.length} sent line(s)`);
+        } catch (e) { setSendError(String((e as Error).message ?? e)); }
+      })();
+    }
+  };
+  /** 1-second press on a check line (CheckTableCellView pressLong): course chooser
+   *  for a menu item; iOS routes an unsent modifier to Change Modifier instead. */
+  const lineLongPress = (key: string) => {
+    if (store.useSyphor) return;
+    const l = ck.check.lines.find((x) => x.key === key);
+    if (!l || l.kind !== "M") return;
+    setCoursePick({ mode: "lines", keys: [key] });
   };
 
   /** Build the customer-check receipt text for the current check. */
@@ -845,7 +1086,7 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
   // manager auth + reason; unsent lines are just removed.
   const voidSelected = (keys: Set<string>) => {
     const sentKeys = [...keys].filter((k) => ck.check.lines.find((l) => l.key === k)?.sent);
-    if (sentKeys.length === 0) { keys.forEach((k) => ck.remove(k)); return; }
+    if (sentKeys.length === 0) { keys.forEach((k) => removeCounted(k)); return; }
     requireAuth(false, "Authorize void", "void", (auth) => setVoidReason({ keys: [...keys], auth }));
   };
   /** Void: reduce the check HERE (pure reducers) and POST that exact object — the
@@ -858,6 +1099,7 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
     for (const k of keys) {
       const line = next.lines.find((l) => l.key === k);
       if (!line) continue;
+      if (line.kind === "M" && !line.isVoid) countRing(line.menuItemId, -line.quantity); // isDeleting → count comes back
       next = line.sent ? voidLine(next, k, reasonId, auth.id) : removeLine(next, k);
     }
     ck.loadCheck(next);
@@ -1193,6 +1435,7 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
     nameTab: () => { const v = window.prompt("Name this tab:", ck.check.tableName); if (v !== null) ck.setTable(v.trim()); },
     guestCount: () => { const v = Number(window.prompt("Guest count:", String(ck.check.guestCount)) ?? ""); if (v >= 1) ck.setGuests(Math.floor(v)); },
     changeGuest: sel.size ? () => setGuestPick(new Set(sel)) : undefined,   // guest pad (GuestSelection) → applyGuestChange
+    changeCourse: sel.size && !store.useSyphor ? () => setCoursePick({ mode: "lines", keys: [...sel] }) : undefined,
     removeTax: tax.groups.some((g) => !g.isExempt)
       ? () => requireAuth(false, "Authorize remove tax", "removeTax", () => setShowTaxPick(true))
       : undefined,
@@ -1205,7 +1448,12 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
           if (v >= 0) ck.setPrice(priceTarget.key, Math.round(v * 100) / 100);
         })
       : undefined,
-    reorder: canReorder ? () => { ck.reorder(new Set(sel)); setEditing(false); } : undefined,
+    reorder: canReorder
+      ? () => {
+          for (const k of sel) { const l = lineOf(k); if (l?.kind === "M" && !l.isVoid) countRing(l.menuItemId, l.quantity); } // reorderItems decrements again
+          ck.reorder(new Set(sel)); setEditing(false);
+        }
+      : undefined,
     holdUnhold: sel.size ? () => { ck.holdUnhold(new Set(sel)); unselectAll(); } : undefined,
     sortGuest: () => setSortByGuest((s) => !s),
     textCheck: (ck.check.checkNumber && unsentLines(ck.check).length === 0) ? () => void doTextCheck() : undefined,
@@ -1306,11 +1554,8 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
               </button>
             ))}
             {items.map((mi) => (
-              <button key={`i${mi.id}`} className={`tile item ${mi.isModifier ? "mod" : ""}`} onClick={() => tapItem(mi)}>
-                <span className="tname">{mi.name}</span>
-                <span className="tprice">{money(mi.price, mi.askForPrice)}</span>
-                {mi.modChainId && <span className="tmod" title="has modifiers">＋</span>}
-              </button>
+              <ItemTile key={`i${mi.id}`} mi={mi} count={countFor(counts, mi.id)} priceLabel={money(mi.price, mi.askForPrice)}
+                onTap={() => tapItem(mi)} onLongPress={() => setItemPopup(mi)} />
             ))}
             {subGroups.length === 0 && items.length === 0 && (
               <div className="empty">{searching ? "No matching items." : "This screen has no items or sub-screens."}</div>
@@ -1324,8 +1569,8 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
           tax={tax}
           revenueCenterName={cat.rcById.get(ck.check.revenueCenterId)?.name ?? ""}
           orderName={employee.name}
-          onQty={ck.setQty}
-          onRemove={ck.remove}
+          onQty={setQtyCounted}
+          onRemove={removeCounted}
           onSetTable={ck.setTable}
           onSetGuests={ck.setGuests}
           onSend={doSend}
@@ -1345,6 +1590,15 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
           guestLocked={!!pending || !!pricePrompt}
           sending={sending}
           sendError={sendError}
+          showCourse={currentRc()?.showCourse ?? false}
+          courseOf={courseOfLine}
+          courseLabel={courseLabelFor}
+          firedCourses={firedCourses(ck.check)}
+          onFireCourse={(n) => void fireCourse(n)}
+          onLineLongPress={store.useSyphor ? undefined : lineLongPress}
+          useCourseButtons={currentRc()?.useCourseButtons ?? false}
+          addingCourse={addingCourse}
+          onAddingCourse={() => setCoursePick({ mode: "adding" })}
         />
       </div>
 
@@ -1453,6 +1707,259 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
           </div>
         </div>
       )}
+
+      {xferConfirm && (() => {
+        const { kind, table, occs } = xferConfirm;
+        const close = () => setXferConfirm(null);
+        const checkNo = ck.check.checkNumber ?? "";
+        if (kind === "check") {
+          const who = xferEmp ? `${xferEmp.emp.name} and table ${table.name}` : `table ${table.name}`;
+          const msg = occs.length === 0
+            ? `Transfer check# ${checkNo} to ${who}?`
+            : `There is already a check on table ${table.name}. Are you sure you want to transfer check# ${checkNo} to ${who}?`;
+          return (
+            <div className="backdrop" onClick={close}>
+              <div className="authbox" onClick={(e) => e.stopPropagation()}>
+                <div className="authtitle">Transfer Check</div>
+                <div className="authsub">{msg}</div>
+                <div className="mfactions">
+                  <button className="mfbtn ghost" onClick={close}>Cancel</button>
+                  <button className="mfbtn go" onClick={() => { close(); void transferTo(table); }}>OK</button>
+                </div>
+              </div>
+            </div>
+          );
+        }
+        // Transfer Items: empty table → confirm a new check; one check → New Check / Merge; several → pick
+        return (
+          <div className="backdrop" onClick={close}>
+            <div className="authbox" onClick={(e) => e.stopPropagation()}>
+              <div className="authtitle">Transfer Items</div>
+              {occs.length === 0 && (
+                <>
+                  <div className="authsub">Transfer items to Table {table.name} and create a new check?</div>
+                  <div className="mfactions">
+                    <button className="mfbtn ghost" onClick={close}>No</button>
+                    <button className="mfbtn go" onClick={() => { close(); void transferItemsTo(table); }}>Yes</button>
+                  </div>
+                </>
+              )}
+              {occs.length === 1 && (
+                <>
+                  <div className="authsub">Transfer items to a new check or Merge the check?</div>
+                  <div className="mfactions">
+                    <button className="mfbtn ghost" onClick={close}>Cancel</button>
+                    <button className="mfbtn ghost" onClick={() => { close(); void transferItemsTo(table); }}>New Check</button>
+                    <button className="mfbtn go" onClick={() => { close(); void transferItemsTo(table, occs[0]); }}>Merge</button>
+                  </div>
+                </>
+              )}
+              {occs.length > 1 && (
+                <>
+                  <div className="authsub">Table {table.name} has {occs.length} open checks — merge into one, or start a new check</div>
+                  <div className="mgrlist">
+                    {occs.map((o) => (
+                      <button key={o.checkNo} className="mgrrow" onClick={() => { close(); void transferItemsTo(table, o); }}>Check {o.checkNo}<span>merge</span></button>
+                    ))}
+                    <button className="mgrrow" onClick={() => { close(); void transferItemsTo(table); }}>New Check</button>
+                  </div>
+                  <button className="mfbtn ghost" onClick={close}>Cancel</button>
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
+      {itemPopup && (() => {
+        const mi = itemPopup; const close = () => setItemPopup(null);
+        const n = countFor(counts, mi.id);
+        return (
+          <div className="backdrop" onClick={close}>
+            <div className="authbox" onClick={(e) => e.stopPropagation()}>
+              <div className="authtitle">{mi.name}</div>
+              <div className="itemdesc">{mi.description.trim() || "No Description Available"}</div>
+              {n >= 0 && <div className="authsub">{n === 0 ? "Sold out" : `${n} left`}</div>}
+              {(currentRc()?.showCourse || currentRc()?.useCourseButtons) && (
+                <div className="itempills" aria-label="Order into course">
+                  {Array.from({ length: 10 }, (_, i) => i + 1).map((c) => (
+                    <button key={c} className={mi.printSortOrder === c ? "def" : ""} style={{ "--ch": courseHue(c) } as React.CSSProperties}
+                      onClick={() => { close(); tapItem(mi, { course: c }); }}>C{c}</button>
+                  ))}
+                </div>
+              )}
+              {/* Role pills (Paul's catalog, filtered by the clocked-in job): server vs counter (bar / cashier) */}
+              {(() => {
+                const isServer = pillRole !== "counter", isCounter = pillRole !== "server";
+                const last = lastLineOf(ck.check, mi.id);
+                const seatLabel = isServer ? "Seat" : "Guest";
+                return (
+                  <>
+                    <div className="itempills" aria-label="Order to seat">
+                      {Array.from({ length: Math.max(ck.check.guestCount, highestGuestNumber(ck.check)) }, (_, i) => (
+                        <button key={i} className={ck.currentGuest === i ? "def" : ""} style={{ "--ch": 200 } as React.CSSProperties} onClick={() => { close(); tapItem(mi, { guestIdx: i }); }}>{seatLabel} {i + 1}</button>
+                      ))}
+                      <button className={ck.currentGuest === -1 ? "def" : ""} style={{ "--ch": 45 } as React.CSSProperties} onClick={() => { close(); tapItem(mi, { guestIdx: -1 }); }}>Table</button>
+                    </div>
+                    <div className="itempills" aria-label="Quantity and timing">
+                      {isCounter && [2, 3, 5].map((q) => (
+                        <button key={q} style={{ "--ch": 30 } as React.CSSProperties} onClick={() => { close(); tapItem(mi, { qty: q }); }}>x{q}</button>
+                      ))}
+                      {isCounter && last && (
+                        <button style={{ "--ch": 120 } as React.CSSProperties} onClick={() => { close(); repeatLast(mi); }}>Repeat last{last.rungAt ? ` (${agoLabel(last.rungAt)})` : ""}</button>
+                      )}
+                      {mi.modChainId && <button style={{ "--ch": 282 } as React.CSSProperties} onClick={() => { close(); tapItem(mi); }}>Add Mods</button>}
+                      {isServer && <button style={{ "--ch": 0 } as React.CSSProperties} onClick={() => { close(); tapItem(mi, { held: true }); }}>Hold</button>}
+                      {isServer && <button style={{ "--ch": 15 } as React.CSSProperties} onClick={() => { close(); tapItem(mi, { after: (key) => setFireNowKey(key) }); }}>Fire now</button>}
+                      {isServer && <button style={{ "--ch": 342 } as React.CSSProperties} onClick={() => { close(); tapItem(mi, { after: (key) => setNotePad({ key, name: mi.name, chips: [], text: "" }) }); }}>Allergen note</button>}
+                      {isServer && <button style={{ "--ch": 148 } as React.CSSProperties} onClick={() => { close(); tapItem(mi, { after: (key) => { setSel(new Set([key])); setSplitGuests(new Set()); } }); }}>Split item</button>}
+                    </div>
+                  </>
+                );
+              })()}
+              {(() => {
+                const paired = mi.affinityId ? cat.miById.get(mi.affinityId) : undefined;
+                const pinned = pins.has(mi.id);
+                return (
+                  <div className="itempills" aria-label="Pairing and favorites">
+                    {paired && paired.id !== mi.id && (
+                      <button style={{ "--ch": 45 } as React.CSSProperties} onClick={() => { close(); tapItem(paired, { skipPairing: true }); }}>Pairs with {paired.name}</button>
+                    )}
+                    <button className={pinned || mi.top16 ? "def" : ""} style={{ "--ch": 260 } as React.CSSProperties} disabled={mi.top16 && !pinned} title={mi.top16 && !pinned ? "A back-office favorite (Top16)" : undefined}
+                      onClick={() => { togglePin(mi.id); setSendError(pinned ? `${mi.name} unpinned` : `${mi.name} pinned to Favorites`); }}>
+                      {pinned ? "★ Unpin" : mi.top16 ? "★ Favorite" : "☆ Pin to favorites"}
+                    </button>
+                  </div>
+                );
+              })()}
+              {perms?.manager && mi.cost > 0 && (() => {
+                const price = Number(mi.price) || 0;
+                const margin = price > 0 ? Math.round(((price - mi.cost) / price) * 100) : null;
+                return <div className="authsub itemcost">Cost ${mi.cost.toFixed(2)}{margin !== null ? ` · Margin ${margin}%` : ""}</div>;
+              })()}
+              {perms?.manager && (
+                <div className="itempills mgr" aria-label="Manager">
+                  {compAdj && [100, 50, 25].filter((pct) => compAdj.isOpen || compAdj.amount === pct).map((pct) => (
+                    <button key={pct} style={{ "--ch": 342 } as React.CSSProperties}
+                      onClick={() => { close(); tapItem(mi, { after: (key) => requireAuth(compAdj.requiresAuth, `Authorize ${compAdj.name}`, "adjust", (auth) => finishDiscount(compAdj, auth, [key], pct)) }); }}>
+                      Comp {pct}%
+                    </button>
+                  ))}
+                  <button style={{ "--ch": 210 } as React.CSSProperties}
+                    onClick={() => { close(); tapItem(mi, { after: (key) => requireAuth(false, "Authorize change price", "overridePrice", () => setOverridePad({ key, name: mi.name, amount: Number(mi.price) || 0 })) }); }}>
+                    Override price
+                  </button>
+                  <button style={{ "--ch": 15 } as React.CSSProperties}
+                    onClick={() => { close(); requireAuth(false, "Authorize 86 count", "manager", (auth) => {
+                      void (async () => {
+                        const r = await setMenuItemCounter(sessionCfg(), { menuItemId: mi.id, counter: 0, authEmpId: auth.id });
+                        setSendError(r.ok ? `${mi.name}: 86'd` : `86 failed: ${r.message}`);
+                        await refreshCounts();
+                      })();
+                    }); }}>
+                    86 from here
+                  </button>
+                </div>
+              )}
+              <div className="mgrlist">
+                <button className="mgrrow" onClick={() => { close(); tapItem(mi); }}>Order Item</button>
+                <button className="mgrrow" onClick={() => { close(); requireAuth(false, "Authorize 86 count", "manager", (auth) => setCountPad({ mi, auth })); }}>Manage Qty<span>set what's left</span></button>
+                <button className="mgrrow" onClick={() => {
+                  close();
+                  void (async () => {
+                    const r = await removeMenuItemCounter(sessionCfg(), { menuItemId: mi.id, authEmpId: employee?.id ?? "" });
+                    setSendError(r.ok ? `${mi.name}: counter removed` : `Remove Qty failed: ${r.message}`);
+                    await refreshCounts();
+                  })();
+                }}>Remove Qty<span>no countdown</span></button>
+              </div>
+              <button className="mfbtn ghost" onClick={close}>Skip</button>
+            </div>
+          </div>
+        );
+      })()}
+      {pairing && (() => {
+        const { mi, paired, opts, showDesc } = pairing; const close = () => setPairing(null);
+        return (
+          <div className="backdrop" onClick={close}>
+            <div className="authbox" onClick={(e) => e.stopPropagation()}>
+              <div className="authtitle">Pairs well with</div>
+              <div className="authsub">{mi.name} pairs well with {paired.name}</div>
+              {showDesc && <div className="itemdesc">{paired.description.trim() || "No Description for this item"}</div>}
+              <div className="mgrlist">
+                <button className="mgrrow" onClick={() => { close(); tapItem(mi, opts); tapItem(paired, { skipPairing: true, guestIdx: opts.guestIdx }); }}>Order both<span>{mi.name} + {paired.name}</span></button>
+                <button className="mgrrow" onClick={() => setPairing({ ...pairing, showDesc: !showDesc })}>Description<span>{paired.name}</span></button>
+                <button className="mgrrow" onClick={() => { close(); tapItem(mi, opts); }}>Skip<span>just {mi.name}</span></button>
+              </div>
+              <button className="mfbtn ghost" onClick={close}>Cancel</button>
+            </div>
+          </div>
+        );
+      })()}
+      {notePad && (() => {
+        const close = () => setNotePad(null);
+        const toggle = (c: string) => setNotePad((n) => n && ({ ...n, chips: n.chips.includes(c) ? n.chips.filter((x) => x !== c) : [...n.chips, c] }));
+        const text = [...notePad.chips, notePad.text.trim()].filter(Boolean).join(" · ");
+        return (
+          <div className="backdrop" onClick={close}>
+            <div className="authbox" onClick={(e) => e.stopPropagation()}>
+              <div className="authtitle">Allergen note</div>
+              <div className="authsub">{notePad.name}</div>
+              <div className="itempills" aria-label="Allergens">
+                {ALLERGEN_CHIPS.map((c) => (
+                  <button key={c} className={notePad.chips.includes(c) ? "def" : ""} style={{ "--ch": 342 } as React.CSSProperties} onClick={() => toggle(c)}>{c}</button>
+                ))}
+              </div>
+              <input className="ctable" placeholder="Note for the kitchen (optional)" value={notePad.text} onChange={(e) => setNotePad((n) => n && ({ ...n, text: e.target.value }))} autoFocus />
+              <div className="mfactions">
+                <button className="mfbtn ghost" onClick={close}>Cancel</button>
+                <button className="mfbtn go" disabled={!text} onClick={() => { const { key } = notePad; close(); ck.update((c) => setLineReference(c, key, text)); setSendError(`Note added: ${text}`); }}>Add note</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+      {overridePad && (
+        <NumberPad title={overridePad.name} sub="Override price" mode="money" initial={String(Math.round(overridePad.amount * 100))}
+          onOk={(v) => { const { key } = overridePad; setOverridePad(null); ck.setPrice(key, Math.round(v * 100) / 100); setSendError(`Price overridden on ${overridePad.name}`); }}
+          onCancel={() => setOverridePad(null)} />
+      )}
+      {countPad && (
+        <NumberPad title={countPad.mi.name} sub="How many are left? (0 = sold out)" mode="count" allowZero
+          initial={countFor(counts, countPad.mi.id) > 0 ? String(countFor(counts, countPad.mi.id)) : ""}
+          onOk={(v) => {
+            const { mi, auth } = countPad; setCountPad(null);
+            void (async () => {
+              const r = await setMenuItemCounter(sessionCfg(), { menuItemId: mi.id, counter: v, authEmpId: auth.id });
+              setSendError(r.ok ? (v === 0 ? `${mi.name}: sold out` : `${mi.name}: ${v} left`) : `Manage Qty failed: ${r.message}`);
+              await refreshCounts();
+            })();
+          }}
+          onCancel={() => setCountPad(null)} />
+      )}
+
+      {coursePick && (() => {
+        const close = () => setCoursePick(null);
+        const adding = coursePick.mode === "adding";
+        const current = adding ? addingCourse : (() => { const l = ck.check.lines.find((x) => x.key === coursePick.keys[0]); return l ? courseOfLine(l) : 0; })();
+        const pick = (c: number) => { close(); if (adding) setAddingCourse(c); else applyCourseChange(coursePick.keys, c); };
+        return (
+          <div className="backdrop" onClick={close}>
+            <div className="authbox" onClick={(e) => e.stopPropagation()}>
+              <div className="authtitle">{adding ? "Add new items to which course?" : `Change course${coursePick.keys.length > 1 ? ` (${coursePick.keys.length} lines)` : ""}`}</div>
+              <div className="coursepick">
+                {Array.from({ length: 10 }, (_, i) => i + 1).map((c) => (
+                  <button key={c} className={current === c ? "on" : ""} style={{ "--ch": courseHue(c) } as React.CSSProperties} onClick={() => pick(c)}>
+                    {courseLabelFor(c) === `Course ${c}` ? `C${c}` : courseLabelFor(c)}
+                  </button>
+                ))}
+                <button className="none" onClick={() => pick(0)}>{adding ? "Auto — item's default course" : "No course"}</button>
+              </div>
+              <button className="mfbtn ghost" onClick={close}>Cancel</button>
+            </div>
+          </div>
+        );
+      })()}
 
       {adjOpen && (
         <NumberPad title={adjOpen.adj.name} sub={adjOpen.adj.isPercentage ? "Enter the percent" : "Enter the amount"} mode={adjOpen.adj.isPercentage ? "count" : "money"}
