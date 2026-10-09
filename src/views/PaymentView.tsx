@@ -33,7 +33,8 @@ export interface PaymentViewProps {
   tax: TaxResult;
   tenders: Tender[];
   applyTender: (t: Omit<TenderLine, "key">) => void;
-  voidTender: (key: string) => void;
+  voidTender: (key: string) => void;                 // unsent tender: just removed
+  voidPostedTender?: (key: string) => void;          // posted tender: void auth + reason, reversal posted
   processGift: (card: string, type: GiftType | LoyaltyType, amount: number) => Promise<PaymentResult>;
   settle: () => Promise<{ ok: boolean; message: string }>;
   /** Manager authorization (TIP_AUTH) — runs onOk once an authorizer is confirmed. */
@@ -81,20 +82,26 @@ export default function PaymentView(p: PaymentViewProps) {
 
   /** Offline card amount entered: Overpay_Is_Tip turns the excess into the tip,
    *  Ask_For_Tip opens the tip pad, otherwise the payment is recorded as-is. */
+  /** Card amount pad OK. An empty pad means "this payment's default" (the share
+   *  when divided, else the balance). Above that target: Overpay_Is_Tip turns the
+   *  excess into the tip, otherwise it's refused. */
   const cardAmount = (tender: Tender, entered: number) => {
-    if (entered <= 0) return;
-    if (entered > due + 0.005) {
-      if (tender.overpayIsTip) { finishCard(tender, due, round2(entered - due)); return; }
-      setMsg("Amount exceeds the balance due"); return;
+    const target = round2(divideNum > 1 ? share : due);
+    const amt = entered > 0 ? round2(entered) : target;
+    if (amt <= 0) return;
+    if (amt > target + 0.005) {
+      if (tender.overpayIsTip) { finishCard(tender, target, round2(amt - target)); return; }
+      setMsg(`Amount exceeds the ${divideNum > 1 ? "share" : "balance due"} (${fmt(target)})`); setMode({ kind: "tenders" }); return;
     }
-    if (tender.askForTip) { setMode({ kind: "tip", tender, amount: round2(entered) }); return; }
-    finishCard(tender, round2(entered), 0);
+    if (tender.askForTip) { setMode({ kind: "tip", tender, amount: amt }); return; }
+    finishCard(tender, amt, 0);
   };
   const finishCard = (tender: Tender, amount: number, tip: number) => {
+    setMode({ kind: "tenders" }); // the pads close first — a cancelled tip auth leaves nothing pending
     const post = () => record({ tenderId: tender.id, name: tender.name, amount, tip, change: 0 },
       tip > 0 ? `${tender.name} ${fmt(amount)} + tip ${fmt(tip)}` : `${tender.name} ${fmt(amount)}`);
-    // TIP_AUTH: a tip of half the balance or more needs a manager
-    if (tip > 0 && due > 0 && tip / due >= 0.5) p.authorize(`Authorize ${fmt(tip)} tip`, post);
+    // TIP_AUTH: a tip of half the payment or more needs a manager; cancelling the auth cancels the payment
+    if (tip > 0 && amount > 0 && tip / amount >= 0.5) { setMsg(`${fmt(tip)} tip needs a manager`); p.authorize(`Authorize ${fmt(tip)} tip`, post); }
     else post();
   };
 
@@ -111,15 +118,16 @@ export default function PaymentView(p: PaymentViewProps) {
           <button className="x" onClick={p.onClose} disabled={busy}>✕</button>
         </div>
 
-        {/* Applied tenders — an unsent one can be voided (removed) before the check closes */}
-        {p.check.tenders.length > 0 && (
+        {/* Applied tenders — an unsent one is removed; a POSTED one (pulled-back check) is voided with a reversal, cash or card alike */}
+        {p.check.tenders.some((t) => !t.isVoid) && (
           <div className="pvtenders">
-            {p.check.tenders.map((t) => (
+            {p.check.tenders.filter((t) => !t.isVoid).map((t) => (
               <div key={t.key} className="pvtl">
                 <span>{t.name}{t.reference ? ` · ${t.reference}` : ""}{t.tip ? ` · tip ${fmt(t.tip)}` : ""}</span>
                 <span>
                   {fmt(t.amount)}{t.change ? ` (chg ${fmt(t.change)})` : ""}
                   {!t.sent && <button className="pvvoid" disabled={busy} onClick={() => { p.voidTender(t.key); setMsg(`${t.name} voided`); }}>Void</button>}
+                  {t.sent && p.voidPostedTender && <button className="pvvoid" disabled={busy} onClick={() => p.voidPostedTender!(t.key)}>Void</button>}
                 </span>
               </div>
             ))}
@@ -155,11 +163,11 @@ export default function PaymentView(p: PaymentViewProps) {
         {mode.kind === "cash" && cash && <CashPad due={share} rounding={cash.roundingAmount} onApply={applyCash} onBack={() => setMode({ kind: "tenders" })} />}
 
         {mode.kind === "card" && (
-          <NumberPad title={mode.tender.name} sub={`Amount (balance ${fmt(due)}${divideNum > 1 ? `, share ${fmt(share)}` : ""})`} mode="money"
-            initial={String(Math.round(share * 100))} onOk={(v) => cardAmount(mode.tender, v)} onCancel={() => setMode({ kind: "tenders" })} />
+          <NumberPad key="card" title={mode.tender.name} sub={`Amount — OK alone pays ${fmt(share)}${divideNum > 1 ? ` (share of ${fmt(due)})` : ""}`} mode="money"
+            onOk={(v) => cardAmount(mode.tender, v)} onCancel={() => setMode({ kind: "tenders" })} />
         )}
         {mode.kind === "tip" && (
-          <NumberPad title="Tip" sub={`${mode.tender.name} ${fmt(mode.amount)} — enter the tip`} mode="money"
+          <NumberPad key={`tip-${mode.amount}`} title="Tip" sub={`${mode.tender.name} ${fmt(mode.amount)} — enter the tip (OK alone = no tip)`} mode="money"
             onOk={(v) => finishCard(mode.tender, mode.amount, round2(v))} onCancel={() => setMode({ kind: "tenders" })} />
         )}
         {mode.kind === "divide" && (

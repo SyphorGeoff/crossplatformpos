@@ -118,16 +118,23 @@ function xmlLineItem(line: CheckLine, lineNumber: number, trayNumber: number, pa
 }
 
 /** One <LineItem Type="T"> — a tender/payment (FinancialCheckManager.m:7224/12255). */
-function xmlTenderLine(t: TenderLine, lineNumber: number): string {
+function xmlTenderLine(t: TenderLine, lineNumber: number, trayNumber: number): string {
   const attrs = [
-    `Is_Held="0"`, `Is_Void="0"`, `Transfered_Out="0"`, `Print_On_Check="1"`,
+    `Is_Held="0"`, `Is_Void="${t.isVoid ? "1" : "0"}"`, `Transfered_Out="0"`, `Print_On_Check="1"`,
     `Show_On_Display="0"`, `Type="T"`, `Finalized="1"`, `Is_Split="0"`,
     `lineitemkey="${escapeXml(t.key)}"`, `posted="0"`,
   ].join(" ");
   const parts: string[] = [];
+  if (t.isVoid && t.parentLineNumber !== undefined) {
+    // a tender reversal names the ORIGINAL payment it cancels (voidLineItem on a Type T line)
+    parts.push(el("Void_Line_Item_ID", t.parentLineNumber));
+    parts.push(el("Void_Parent_Tray_Number", t.parentTrayNumber ?? trayNumber));
+  }
+  if (t.authEmpId) parts.push(el("AuthorizingEmployee_ID", t.authEmpId));
   parts.push(el("Quantity", 1));
   parts.push(el("Line_Number", lineNumber));
   parts.push(el("Tender_POS_ID", t.tenderId));
+  if (t.voidPosId) parts.push(el("Void_POS_ID", t.voidPosId));
   if (t.tip) parts.push(el("Tip_Amount", t.tip.toFixed(2)));
   if (t.change) parts.push(el("Change_Given", t.change.toFixed(2)));
   if (t.balanceRef) parts.push(el("Transaction_Ref", t.balanceRef));
@@ -170,7 +177,7 @@ export function buildFinancialCheck(check: Check, ctx: SendContext, opts: SendOp
     .map((l) => xmlLineItem(l, numberByKey.get(l.key)!, trayNumber, l.parentKey ? numberByKey.get(l.parentKey) : undefined,
       l.parentKey ? check.lines.find((x) => x.key === l.parentKey) : undefined))
     .join("");
-  const tenderXml = tenders.map((t, i) => xmlTenderLine(t, items.length + i + 1)).join("");
+  const tenderXml = tenders.map((t, i) => xmlTenderLine(t, items.length + i + 1, trayNumber)).join("");
 
   const tray =
     `<Tray Tray_Number="${trayNumber}" Terminal_POS_ID="${escapeXml(ctx.terminalPosId)}" ` +

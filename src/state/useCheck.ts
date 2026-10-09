@@ -9,7 +9,7 @@ import { useCallback, useState } from "react";
 import { loadJSON, saveJSON } from "@/platform/storage";
 import {
   addAdjustmentLine, addItemLine, addModifierLine, addTender, guestAssignment, holdUnholdLines, markRoundSent, mintLineKey,
-  newCheck, removeLine, removeTender, reorderLines, setLineGuest, setLinePrice, setQuantity, splitItemAmongGuests, voidLine, type Check, type TenderLine,
+  newCheck, removeLine, removeTender, reorderLines, voidTenderLine, setLineGuest, setLinePrice, setQuantity, splitItemAmongGuests, voidLine, type Check, type TenderLine,
 } from "@/model/check";
 import { mintCheckNumber } from "./checkcounter";
 import type { MenuItem } from "@/model/catalog";
@@ -69,6 +69,8 @@ export function useCheck(defaultRcId: string, terminalPosId: string) {
 
   const applyTender = useCallback((t: Omit<TenderLine, "key">) => mutate((c) => addTender(c, t)), [mutate]);
   const voidTender = useCallback((key: string) => mutate((c) => removeTender(c, key)), [mutate]);
+  /** Void a POSTED tender: struck + negative reversal, sent on the next post (voidTenderLine). */
+  const voidPostedTender = useCallback((key: string, voidPosId: string, authEmpId: string) => mutate((c) => voidTenderLine(c, key, voidPosId, authEmpId)), [mutate]);
   const applyAdjustment = useCallback((a: Parameters<typeof addAdjustmentLine>[1]) =>
     mutate((c) => addAdjustmentLine(c, a)), [mutate]);
   /** Apply an arbitrary pure reducer (discount-by-item, auto gratuity…) and persist. */
@@ -93,5 +95,5 @@ export function useCheck(defaultRcId: string, terminalPosId: string) {
   /** Replace the current check with one pulled from the server (resume a table). */
   const loadCheck = useCallback((c: Check) => { persist(c); setCheck(c); setCurrentGuest(0); }, []);
 
-  return { check, currentGuest, setCurrentGuest, addItem, addModifier, remove: remove_, setQty, setPrice, reorder, holdUnhold, setGuestFor, splitAmong, setTable, setGuests, setRevenueCenter, setDiningTable, setCheckNumber, applyTender, voidTender, applyAdjustment, update, voidItem, markSent, reset, loadCheck };
+  return { check, currentGuest, setCurrentGuest, addItem, addModifier, remove: remove_, setQty, setPrice, reorder, holdUnhold, setGuestFor, splitAmong, setTable, setGuests, setRevenueCenter, setDiningTable, setCheckNumber, applyTender, voidTender, voidPostedTender, applyAdjustment, update, voidItem, markSent, reset, loadCheck };
 }

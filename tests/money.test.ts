@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { applyAutoGratuity, applyItemAdjustments, markRoundSent, removeTender, type Check, type CheckLine } from "@/model/check";
+import { applyAutoGratuity, applyItemAdjustments, markRoundSent, removeTender, tenderApplied, voidTenderLine, type Check, type CheckLine } from "@/model/check";
 import { computeCheckTax } from "@/model/tax";
 import { buildFinancialCheck, type SendContext } from "@/protocol/order";
 import type { Catalog } from "@/model/menu";
@@ -141,5 +141,40 @@ describe("removeTender", () => {
     ] };
     expect(removeTender(c, "t2").tenders.map((t) => t.key)).toEqual(["t1", "t3"]);
     expect(removeTender(c, "t1").tenders.map((t) => t.key)).toEqual(["t1", "t2", "t3"]);
+  });
+});
+
+describe("void a posted tender (cash or offline card)", () => {
+  const base = (): Check => ({ ...check([line("a", 10, { sent: true, trayNumber: 1, lineNumber: 1 })]), traysSent: 1, tenders: [
+    { key: "t1", tenderId: "9", name: "Visa", amount: 6, tip: 1, change: 0, sent: true, trayNumber: 1, lineNumber: 2 },
+    { key: "t2", tenderId: "1", name: "Cash", amount: 4, tip: 0, change: 0 },
+  ] });
+  it("strikes the posted tender and adds a negative Is_Void reversal naming it; applied total nets to the rest", () => {
+    const c = voidTenderLine(base(), "t1", "V7", "33");
+    expect(c.tenders.map((t) => [t.key === "t1" ? "orig" : t.key === "t2" ? "cash" : "rev", t.amount, t.tip, !!t.isVoid])).toEqual([["orig", 6, 1, true], ["cash", 4, 0, false], ["rev", -6, -1, true]]);
+    const rev = c.tenders[2];
+    expect([rev.parentTrayNumber, rev.parentLineNumber, rev.voidPosId, rev.authEmpId, rev.sent]).toEqual([1, 2, "V7", "33", false]);
+    expect(tenderApplied(c)).toBe(4);
+  });
+  it("an unsent tender is just removed; a struck one is ignored", () => {
+    const c = voidTenderLine(base(), "t2", "V7", "33");
+    expect(c.tenders.map((t) => t.key)).toEqual(["t1"]);
+    const twice = voidTenderLine(voidTenderLine(base(), "t1", "V7", "33"), "t1", "V7", "33");
+    expect(twice.tenders).toHaveLength(3);
+  });
+  it("the reversal goes on the wire as Is_Void=1 with Void_Line_Item_ID / Void_Parent_Tray_Number and the reason", () => {
+    const c = voidTenderLine(base(), "t1", "V7", "33");
+    const xml = buildFinancialCheck(c, ctx);
+    const rev = xml.split("<LineItem ").find((s) => s.includes("Line_Amount>-6.00"))!;
+    expect(rev).toContain('Is_Void="1"');
+    expect(rev).toContain('Type="T"');
+    expect(rev).toContain("<Void_Line_Item_ID>2</Void_Line_Item_ID><Void_Parent_Tray_Number>1</Void_Parent_Tray_Number>");
+    expect(rev).toContain("<AuthorizingEmployee_ID>33</AuthorizingEmployee_ID>");
+    expect(rev).toContain("<Void_POS_ID>V7</Void_POS_ID>");
+    expect(rev).toContain("<Tip_Amount>-1.00</Tip_Amount>");
+  });
+  it("markRoundSent stamps tenders after the items in the tray", () => {
+    const c = markRoundSent({ ...check([line("a", 10), line("b", 5)]), tenders: [{ key: "t", tenderId: "1", name: "Cash", amount: 5, tip: 0, change: 0 }] });
+    expect(c.tenders[0]).toMatchObject({ sent: true, trayNumber: 1, lineNumber: 3 });
   });
 });

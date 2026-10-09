@@ -50,7 +50,7 @@ import {
 } from "@/protocol/order";
 import { sendPayment, type GiftType, type LoyaltyType, type PaymentContext, type PaymentResult } from "@/protocol/payment";
 import { fetchOpenChecks, fetchUnfinalizedTenders, lockCheck, modifyLineItem, readCheck, unlockCheck, type OpenCheck } from "@/protocol/tables";
-import { addFireCourseRecord, addTransferCheckRecord, applyAutoGratuity, applyItemAdjustments, applyMovePlan, checkSubtotal, effectiveCourse, firedCourses, guestAssignment, highestGuestNumber, lastLineOf, lineExtended, repeatLastOf, setLineReference, markRoundSent, mergeInto, newCheck, removeLine, setCourse, splitToNewCheck, unsentLines, voidLine, type AutoGratDef, type Check, type CheckLine } from "@/model/check";
+import { absorbSentLines, addFireCourseRecord, addTransferCheckRecord, applyAutoGratuity, applyItemAdjustments, applyMovePlan, checkSubtotal, effectiveCourse, firedCourses, guestAssignment, highestGuestNumber, lastLineOf, lineExtended, repeatLastOf, setLineReference, markRoundSent, mergeInto, newCheck, removeLine, setCourse, splitToNewCheck, unsentLines, voidLine, voidTenderLine, type AutoGratDef, type Check, type CheckLine } from "@/model/check";
 import { computeCheckTax, grandTotal, taxGroupsForWire } from "@/model/tax";
 import { adjustCount, countFor, emptyCounts, stockRefusal, withServerCounts, type ItemCounts } from "@/model/itemcounts";
 import { fetchMenuItemCounters, removeMenuItemCounter, setMenuItemCounter } from "@/protocol/itemcounts";
@@ -153,6 +153,7 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
   const [floorStatus, setFloorStatus] = useState("");
   const [lockedCheck, setLockedCheck] = useState<{ checkNo: string; checkKey: string; bd: string } | null>(null);
   const [showManager, setShowManager] = useState(false);
+  const [confirmTerminal, setConfirmTerminal] = useState(false); // Manager's Menu → Terminal: confirm before de-activating
   const [mgrStatus, setMgrStatus] = useState("");
   const [mgrBusy, setMgrBusy] = useState(false);
   const [pendingAuth, setPendingAuth] = useState<{ title: string; action: AuthAction; onOk: (a: Authorizer) => void } | null>(null);
@@ -160,6 +161,7 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
   const [signingIn, setSigningIn] = useState(false);
 
   const ck = useCheck(init.rcId, settings.terminalPosId);
+  const checkRef = useRef(ck.check); checkRef.current = ck.check; // always-current check for async flows
   const payTenders = useMemo(() => loadTenders().filter((t) => t.appliesToCheck && !t.hidden).sort((a, b) => a.sort - b.sort), []);
   const store = useMemo(() => storeConfig(), []);
   const tax = useMemo(() => computeCheckTax(cat, ck.check, taxExempt), [cat, ck.check, taxExempt]);
@@ -259,6 +261,7 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
       const diff = Math.max(0, qty) - l.quantity;
       const refusal = stockRefusal(counts, l.menuItemId, diff);
       if (refusal) { setSendError(refusal); return; }
+      if (diff > 0 && overMax(l.amount * diff)) return;   // Store.max_check_amount applies to the stepper too
       countRing(l.menuItemId, diff);
     }
     ck.setQty(key, qty);
@@ -335,19 +338,20 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
    *  the other unsent lines stay unsent for the next Send. */
   const fireNow = async (key: string) => {
     if (!employee) return;
+    const live = checkRef.current;   // the check as it is NOW, not as this render captured it
     const fam = new Set<string>();
-    for (const l of ck.check.lines) if (l.key === key || (l.parentKey && fam.has(l.parentKey))) fam.add(l.key);
-    const others = ck.check.lines.filter((l) => !l.sent && !fam.has(l.key) && l.kind !== "R");
+    for (const l of live.lines) if (l.key === key || (l.parentKey && fam.has(l.parentKey))) fam.add(l.key);
+    if (fam.size === 0) return;
+    const others = live.lines.filter((l) => !l.sent && !fam.has(l.key) && l.kind !== "R");
     if (others.length === 0) { await doSend(); return; } // nothing else waiting — a plain Send & Stay
     setSending(true); setSendError("");
     try {
       const { bd, checkNo } = await ensureSession();
-      const subset: Check = { ...ck.check, checkNumber: checkNo, lines: ck.check.lines.filter((l) => l.sent || fam.has(l.key)) };
+      const subset: Check = { ...checkRef.current, checkNumber: checkNo, lines: checkRef.current.lines.filter((l) => l.sent || fam.has(l.key)) };
       const res = await sendCheck(settings.enterpriseServerUrl, subset, buildCtx(bd, checkNo), { settle: false, taxGroups: taxGroupsForWire(computeCheckTax(cat, subset, taxExempt)) });
       if (!res.ok) { setSendError(`Fire now failed: ${res.message}`); setSending(false); return; }
       const stamped = markRoundSent(subset);
-      const byKey = new Map(stamped.lines.map((l) => [l.key, l]));
-      ck.update((c) => ({ ...c, checkNumber: checkNo, traysSent: stamped.traysSent, lines: c.lines.map((l) => (fam.has(l.key) && byKey.get(l.key)) || l) }));
+      ck.update((c) => absorbSentLines(c, stamped, fam));   // the fired family is SENT; the rest stays for the next Send
       void printPrepChits(stamped.lines.filter((l) => fam.has(l.key) && (l.kind === "M" || l.kind === "Mo") && !l.isVoid), checkNo);
       setSendError("Fired to the kitchen");
     } catch (e) { setSendError(String((e as Error).message ?? e)); }
@@ -400,7 +404,9 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
     })();
   }, [employee]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setTaxExempt(new Set()); setEditing(false); setAddingCourse(0); }, [ck.check.id]);
-  useEffect(() => { if (mode !== "order") setAddingCourse(0); }, [mode]); // iOS resets courseNum on leaving the check screen // per-check: reset tax exemption; leave Edit for the menu view when the check closes/switches
+  useEffect(() => { if (mode !== "order") setAddingCourse(0); }, [mode]); // iOS resets courseNum on leaving the check screen
+  // Arriving on the floor (sign-in landing, Tables, Query By Table): fresh occupancy, no stale status text
+  useEffect(() => { if (mode === "floor" && employee) { setFloorStatus(""); void refreshOpenChecks(); } }, [mode, employee?.id]); // eslint-disable-line react-hooks/exhaustive-deps // per-check: reset tax exemption; leave Edit for the menu view when the check closes/switches
 
   const sessionCfg = (): SessionConfig => ({
     enterpriseServerUrl: settings.enterpriseServerUrl, isisVer: ISIS_VER,
@@ -497,6 +503,20 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
 
   /** Send & Stay — fire unsent items to the kitchen, keep editing the check. */
   const doSendStay = () => void doSend();
+
+  /** Backing out of the payment sheet: any payment taken but not yet posted goes to the
+   *  server right away (iOS makePayment posts each tender), so a partial payment never
+   *  sits only on this terminal. */
+  const closePay = async () => {
+    if (ck.check.tenders.some((t) => !t.sent)) {
+      setSending(true); setSendError("");
+      const r = await postCheck(false);
+      setSending(false);
+      if (!r.ok) { setSendError(`Payment not saved: ${r.message}`); return; } // keep the sheet open; nothing is lost
+      setSendError("Payment saved");
+    }
+    setShowPay(false);
+  };
 
   /** Pay (I-17, payingCheck): the check is SENT before the payment sheet opens, so
    *  backing out leaves nothing unsent/removable; auto gratuity rides along. */
@@ -625,7 +645,7 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
       ck.loadCheck({ ...pulled, businessDateId: bd });
       if (pulled.revenueCenterId && cat.rcById.has(pulled.revenueCenterId)) setRcId(pulled.revenueCenterId);
       setLockedCheck({ checkNo: occ.checkNo, checkKey: occ.checkKey, bd });
-      setSendError(""); setMode("order");
+      setSendError(""); setFloorStatus(""); setMode("order");
       setFloorLoading(false); return true;
     } catch (e) { setFloorStatus(String((e as Error).message ?? e)); setFloorLoading(false); return false; }
   };
@@ -779,7 +799,7 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
   });
   const kdsLine = (l: CheckLine, course: number, fired?: string): KdsItem => ({
     lineitemkey: `${ck.check.id}:${l.key}`, quantity: String(l.quantity), description: l.description,
-    amount: l.amount.toFixed(2), guestNumber: l.guestNumber && l.guestNumber > 0 ? String(l.guestNumber) : "T",
+    amount: l.amount.toFixed(2), guestNumber: l.appliedToGuests === "0" || !l.guestNumber || l.guestNumber <= 0 ? "T" : String(l.guestNumber),
     indentLevel: l.indentLevel, reference: l.kind === "M" ? (l.reference ?? "") : "", type: l.kind === "Mo" ? "Mo" : "M", isVoid: l.isVoid ? "1" : "0",
     ...(course > 0 ? { course: String(course) } : {}), ...(fired !== undefined ? { fired } : {}),
   });
@@ -842,9 +862,11 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
     const lines = ck.check.lines.filter((l) => (l.kind === "M" || l.kind === "Mo") && l.sent && !l.isVoid && !l.transferOut && !l.isSplit && !l.held && familyCourse(l) === n);
     if (!lines.some((l) => l.kind === "M")) { setSendError(`Course ${n} is empty. Add at least one item to the course before firing it.`); return; }
     setSending(true); setSendError("");
-    const next = addFireCourseRecord(ck.check, n, employee.id);
+    const before = ck.check;
+    const next = addFireCourseRecord(before, n, employee.id);
+    ck.update(() => next);   // the record is on the check NOW (header → FIRED, button gone); the post marks it sent
     const r = await postCheck(false, next);
-    if (!r.ok) { setSendError(`Fire course failed: ${r.message}`); setSending(false); return; }
+    if (!r.ok) { ck.update(() => before); setSendError(`Fire course failed: ${r.message}`); setSending(false); return; }
     const checkNo = ck.check.checkNumber ?? "";
     const now = new Date();
     for (const { printer, lines: plines } of bucketByPrinter(lines).values()) {
@@ -1097,13 +1119,15 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
     const { keys, auth } = voidReason; setVoidReason(null);
     let next = ck.check;
     for (const k of keys) {
+      const tender = next.tenders.find((t) => t.key === k);
+      if (tender) { next = voidTenderLine(next, k, reasonId, auth.id); continue; }   // a posted payment (cash / offline card)
       const line = next.lines.find((l) => l.key === k);
       if (!line) continue;
       if (line.kind === "M" && !line.isVoid) countRing(line.menuItemId, -line.quantity); // isDeleting → count comes back
       next = line.sent ? voidLine(next, k, reasonId, auth.id) : removeLine(next, k);
     }
     ck.loadCheck(next);
-    if (unsentLines(next).length === 0) { setSendError("Void applied"); return; } // only unsent lines were removed
+    if (unsentLines(next).length === 0 && !next.tenders.some((t) => !t.sent)) { setSendError("Void applied"); return; } // only unsent lines/tenders were removed
     setSending(true);
     try {
       const { bd, checkNo } = await ensureSession();
@@ -1171,6 +1195,20 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
     );
   }
 
+  /** Manager's Menu → Terminal: confirm before de-activating (rendered in BOTH the manager branch and the main screen). */
+  const terminalConfirm = confirmTerminal ? (
+        <div className="backdrop" onClick={() => setConfirmTerminal(false)}>
+          <div className="authbox" onClick={(e) => e.stopPropagation()}>
+            <div className="authtitle">Re-activate this terminal?</div>
+            <div className="authsub">This removes the current activation. You will need the enterprise credentials to activate it again.</div>
+            <div className="mfactions">
+              <button className="mfbtn ghost" onClick={() => setConfirmTerminal(false)}>Cancel</button>
+              <button className="mfbtn go" onClick={() => { setConfirmTerminal(false); onChangeStation(); }}>Re-activate</button>
+            </div>
+          </div>
+        </div>
+  ) : null;
+
   if (mode === "manager") {
     return (<>
       <ManagerMenu
@@ -1180,10 +1218,11 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
           queryByTable: () => { setMode("floor"); void refreshOpenChecks(); },
           openChecks: () => { setMode("tabs"); void refreshOpenChecks(); },
           clockOut: () => void doClockOut(),
-          terminal: onChangeStation,
+          terminal: () => setConfirmTerminal(true),
           exit: () => void doSignOut(),
         }}
       />
+      {terminalConfirm}
     </>);
   }
 
@@ -1938,6 +1977,8 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
           onCancel={() => setCountPad(null)} />
       )}
 
+      {terminalConfirm}
+
       {coursePick && (() => {
         const close = () => setCoursePick(null);
         const adding = coursePick.mode === "adding";
@@ -2102,10 +2143,11 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
           tenders={payTenders}
           applyTender={ck.applyTender}
           voidTender={ck.voidTender}
+          voidPostedTender={(key) => requireAuth(false, "Authorize void", "void", (auth) => setVoidReason({ keys: [key], auth }))}
           processGift={processGift}
           settle={settle}
           authorize={(title, ok) => requireAuth(false, title, "manager", () => ok())}
-          onClose={() => setShowPay(false)}
+          onClose={() => void closePay()}
           onClosed={() => {
             const wasTable = !!ck.check.diningTableId;
             const logoutAfter = cat.rcById.get(ck.check.revenueCenterId)?.logoutAfterPayment ?? false; // N-13

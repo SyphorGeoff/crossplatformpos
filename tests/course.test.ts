@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { addFireCourseRecord, addItemLine, effectiveCourse, firedCourses, lastLineOf, markRoundSent, repeatLastOf, setCourse, setLineReference, unsentLines, type Check, type CheckLine } from "@/model/check";
+import { absorbSentLines, addFireCourseRecord, addItemLine, effectiveCourse, firedCourses, lastLineOf, markRoundSent, repeatLastOf, setCourse, setLineReference, unsentLines, type Check, type CheckLine } from "@/model/check";
 import { buildFinancialCheck, type SendContext } from "@/protocol/order";
 import { parseCheckLines } from "@/protocol/tables";
 import { buildFireChit, buildPrepChit, courseHeaderText, courseRuns, type CourseOpts, type PrepCtx, type PrepItem } from "@/protocol/printjobs";
@@ -141,5 +141,18 @@ describe("medium pills: repeat last, item note", () => {
     const job = buildPrepChit("Grill", pctx, [{ qty: 1, name: "Steak", mods: ["Rare"], note: "Gluten · no bun" }], 40);
     expect(job).toContain("   - Rare");
     expect(job).toContain("   * Gluten · no bun");
+  });
+});
+
+describe("fire now: absorbSentLines", () => {
+  it("marks only the fired family sent and leaves the other unsent lines alone", () => {
+    const c = check([line("sentA", { sent: true, trayNumber: 1, lineNumber: 1 }), line("fire"), line("fireMod", { kind: "Mo", parentKey: "fire", indentLevel: 1 }), line("later")]);
+    const fam = new Set(["fire", "fireMod"]);
+    const subset: Check = { ...c, checkNumber: "5", lines: c.lines.filter((l) => l.sent || fam.has(l.key)) };
+    const stamped = markRoundSent(subset);
+    const out = absorbSentLines(c, stamped, fam);
+    expect(out.lines.map((l) => [l.key, !!l.sent, l.trayNumber])).toEqual([["sentA", true, 1], ["fire", true, 1], ["fireMod", true, 1], ["later", false, undefined]]);
+    expect(out.traysSent).toBe(1);
+    expect(out.checkNumber).toBe("5");
   });
 });

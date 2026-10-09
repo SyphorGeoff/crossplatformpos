@@ -155,7 +155,7 @@ export function parseCheckLines(check: XmlDict, names: CheckNames): { lines: Che
     const common = { trayNumber: Number(r.tray) || undefined, lineNumber: Number(r.line) || undefined, sent: true as const };
     if (r.type === "T") {
       if (struck) continue;
-      tenders.push({ key: mintLineKey(), tenderId: r.tid, name: names.tenderName(r.tid), amount: r.ext, tip: r.tip, change: r.change, reference: r.reference, balanceRef: r.balanceRef, sent: true });
+      tenders.push({ key: mintLineKey(), tenderId: r.tid, name: names.tenderName(r.tid), amount: r.ext, tip: r.tip, change: r.change, reference: r.reference, balanceRef: r.balanceRef, ...common });
       continue;
     }
     const key = mintLineKey();

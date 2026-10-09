@@ -92,7 +92,7 @@ function LineRow({ line, selecting, checked, showGuest, onToggle, onQty, onRemov
       <div className="clmain">
         {selectable && <span className="clcheck">{checked ? "☑" : "☐"}</span>}
         {!!course && line.kind === "M" && <span className="clcourse" style={{ "--ch": courseHue(course) } as React.CSSProperties}>C{course}</span>}
-        {showGuest && line.kind === "M" && (
+        {(showGuest || line.appliedToGuests === "0") && line.kind === "M" && (
           <span className="clguest">{line.appliedToGuests === "0" ? "T" : `G${line.guestNumber ?? 1}`}</span>
         )}
         <span className="clqty">{line.quantity > 1 ? `${line.quantity}×` : ""}</span>

@@ -23,7 +23,7 @@ Last updated: 2026-10-08
 | Feature | Status | Notes |
 |---|---|---|
 | Offline Credit Card | Built | Non-online credit tenders post as plain tender lines via an amount pad |
-| Offline Credit Card Void | Partial | Unsent tenders can be voided on the payment screen; voiding an already-posted tender is not built |
+| Offline Credit Card Void | Built | Unsent tenders are removed; a posted tender (cash or offline card, pulled-back check) is voided with auth + reason as a negative Is_Void reversal, like iOS voidLineItem on a Type T line |
 | Gift Card Activation | Not started | Wire type exists (PrePaidIssue), no UI |
 | Gift Card Reload | Not started | Wire type exists (PrePaidReload), no UI |
 | Gift Card VOID Redemption | Not started | |
@@ -55,6 +55,7 @@ Last updated: 2026-10-08
 | Order an item with toppings | Not started | |
 | Modify an unsent item with toppings | Not started | |
 | Select multiple items and change course | Built | Edit Check → Change Course, or a 1-second press on a check line; sent lines re-post print_Sort_Order |
+| Revenue centre pills set the check's RC | Partial | Pills along the top of the order screen. Today they change the check's RC only while the check is empty (selectRc); with lines on the check they only switch the menu view. Wanted (Geoff 2026-10-09): pills replace the iOS Edit Check → Change Revenue Centre — re-assign the RC at any time, re-post the check, and switch the app to the new RC's settings (course picker/headers, screen-group filter, always-ask-for-tab, logout-after-payment, print routing). New check starts on the terminal's default RC. Master list O14–O18 |
 | Rollup Mod Prices feature | Not started | |
 | Show/Hide Inclusive Taxes feature | Not started | |
 | Order an item with commission / "My Commission" | Not started | |
@@ -88,6 +89,8 @@ Last updated: 2026-10-08
 | Create Tab From Table Layout feature | Not started | |
 | Check For Messages On Sign In feature | Not started | |
 | Send and receive a message (internal and email) | Not started | Only the outbound check-transfer notice exists |
+| KDS → POS broadcast message | Not started | Paul's clarified design (2026-10-09): the kitchen sends a note through the message API to all POS users; shown on the POS login screen; expires after ~10 min or when a user clears it. Not a fire |
+| Kitchen message from a sent line | Not started | Long-press a sent/fired check line → pills with default notes (e.g. Delay) sent to every printer/KDS that printed that item: a note chit on paper, a message document on the KDS. Pill list to confirm with Paul |
 | Manager transfer check from the manager menu | Not started | Transfer All button present, disabled |
 
 ## Current arc: long-press menu item

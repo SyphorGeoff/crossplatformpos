@@ -55,6 +55,13 @@ export interface TenderLine {
   reference?: string;       // room number / auth ref (Reference on the wire)
   balanceRef?: string;      // gift/loyalty remaining balance (Transaction_Ref)
   sent?: boolean;
+  trayNumber?: number;      // stamped when posted (void reversals point back here)
+  lineNumber?: number;
+  isVoid?: boolean;         // struck original, or the negative reversal line
+  voidPosId?: string;       // Void_POS_ID (reason) on the reversal
+  authEmpId?: string;       // AuthorizingEmployee_ID on the reversal
+  parentTrayNumber?: number; // reversal → the ORIGINAL tender's Tray_Number (Void_Parent_Tray_Number)
+  parentLineNumber?: number; // … and Line_Number (Void_Line_Item_ID)
 }
 
 export interface Check {
@@ -335,7 +342,7 @@ export function voidLine(check: Check, key: string, voidPosId: string, authEmpId
 
 /** Total applied by tenders so far (change is not applied; it's returned cash). */
 export const tenderApplied = (check: Check): number =>
-  check.tenders.reduce((sum, t) => sum + t.amount, 0);
+  check.tenders.filter((t) => !t.isVoid).reduce((sum, t) => sum + t.amount, 0); // struck originals and their reversals net out
 
 /** Balance still owed (subtotal − tenders applied). Tax deferred; see above. */
 export const balanceDue = (check: Check): number =>
@@ -349,6 +356,24 @@ export const isPaid = (check: Check): boolean =>
 /** Append a tender (payment) to the check. */
 export function addTender(check: Check, t: Omit<TenderLine, "key">): Check {
   return { ...check, tenders: [...check.tenders, { ...t, key: mintLineKey() }] };
+}
+
+/**
+ * Void a tender (iOS voidLineItem on a Type T line, FinancialCheckManager :9893+):
+ * an unsent one is simply removed; a POSTED one is struck and a negative
+ * reversal (amount and tip negated, Is_Void, Void_Line_Item_ID → original)
+ * goes out on the next post. Cash and offline cards alike.
+ */
+export function voidTenderLine(check: Check, key: string, voidPosId: string, authEmpId: string): Check {
+  const t = check.tenders.find((x) => x.key === key);
+  if (!t || t.isVoid) return check;
+  if (!t.sent) return removeTender(check, key);
+  const reversal: TenderLine = {
+    ...t, key: mintLineKey(), amount: -Math.abs(t.amount), tip: -Math.abs(t.tip || 0), change: 0,
+    isVoid: true, sent: false, voidPosId, authEmpId,
+    parentTrayNumber: t.trayNumber, parentLineNumber: t.lineNumber, trayNumber: undefined, lineNumber: undefined,
+  };
+  return { ...check, tenders: [...check.tenders.map((x) => (x.key === key ? { ...x, isVoid: true } : x)), reversal] };
 }
 
 export function removeTender(check: Check, key: string): Check {
@@ -439,6 +464,18 @@ export function effectiveCourse(line: CheckLine, itemDefault: number): number {
  *  pressZero). Modifiers follow their parent and never carry one themselves. */
 export function setCourse(check: Check, keys: Set<string>, course: number): Check {
   return { ...check, lines: check.lines.map((l) => (keys.has(l.key) && l.kind === "M" ? { ...l, course } : l)) };
+}
+
+/** Fire now: the posted subset's stamped lines (sent + tray/line numbers) replace
+ *  their originals; the other lines, including still-unsent ones, are untouched. */
+export function absorbSentLines(check: Check, stamped: Check, keys: Set<string>): Check {
+  const byKey = new Map(stamped.lines.filter((l) => keys.has(l.key)).map((l) => [l.key, l]));
+  return {
+    ...check,
+    checkNumber: stamped.checkNumber ?? check.checkNumber,
+    traysSent: Math.max(check.traysSent, stamped.traysSent),
+    lines: check.lines.map((l) => byKey.get(l.key) ?? l),
+  };
 }
 
 /** The latest live line of a menu item on the check (Repeat last pill). */
@@ -770,10 +807,12 @@ export function markRoundSent(check: Check, closed = false): Check {
   // so later void-offs / transfers can point back at it.
   const tray = check.traysSent + 1;
   let n = 0;
+  const lines = check.lines.map((l) => (l.sent ? l : { ...l, sent: true, trayNumber: tray, lineNumber: ++n }));
+  // tenders follow the items in the tray's numbering (buildFinancialCheck: items.length + i + 1)
   return {
     ...check,
-    lines: check.lines.map((l) => (l.sent ? l : { ...l, sent: true, trayNumber: tray, lineNumber: ++n })),
-    tenders: check.tenders.map((t) => ({ ...t, sent: true })),
+    lines,
+    tenders: check.tenders.map((t) => (t.sent ? t : { ...t, sent: true, trayNumber: tray, lineNumber: ++n })),
     traysSent: check.traysSent + 1,
     closed: closed || check.closed,
   };
