@@ -156,3 +156,27 @@ describe("fire now: absorbSentLines", () => {
     expect(out.checkNumber).toBe("5");
   });
 });
+
+describe("P13 / O15: tax exemption read-back and ChangeRVC record", () => {
+  it("parseExemptTaxGroups reads Is_Exempt=1 report groups off Tax_Group_Amt", async () => {
+    const { parseExemptTaxGroups } = await import("@/protocol/tables");
+    const dict = { Tax_Group_Amt: [
+      { Tax_Report_Group_POS_ID: { Is_Exempt: "1", _text: "2" }, Tax_Amount: "0.00" },
+      { Tax_Report_Group_POS_ID: { Is_Exempt: "0", _text: "3" }, Tax_Amount: "1.44" },
+      { Tax_Report_Group_POS_ID: "1", Tax_Amount: "0.14" },
+    ] };
+    expect(parseExemptTaxGroups(dict as never)).toEqual(["2"]);
+    expect(parseExemptTaxGroups({} as never)).toEqual([]);
+  });
+  it("changeRevenueCenter switches the RC and adds the hidden ChangeRVC record", async () => {
+    const { changeRevenueCenter } = await import("@/model/check");
+    const c = { ...check([line("a", { sent: true })]), checkNumber: "210010", revenueCenterId: "1" };
+    const out = changeRevenueCenter(c, { id: "4", name: "Pool" }, "Restaurant", "33", "9999", new Date(2026, 9, 13, 12, 5));
+    expect(out.revenueCenterId).toBe("4");
+    const rec = out.lines.find((l) => l.kind === "R")!;
+    expect(JSON.parse(rec.reference!)).toEqual({ type: "ChangeRVC", chk: 210010, oldRVC: "Restaurant", newRVC: "Pool", emp: 33, time: "2026-10-13 12:05" });
+    expect(rec.authEmpId).toBe("9999");
+    expect(rec.sent).toBeUndefined();
+    expect(changeRevenueCenter(out, { id: "4", name: "Pool" }, "Pool", "33")).toBe(out); // same RC → no-op
+  });
+});

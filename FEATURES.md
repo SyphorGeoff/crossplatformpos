@@ -89,9 +89,15 @@ Last updated: 2026-10-08
 | Create Tab From Table Layout feature | Not started | |
 | Check For Messages On Sign In feature | Not started | |
 | Send and receive a message (internal and email) | Not started | Only the outbound check-transfer notice exists |
-| KDS → POS broadcast message | Not started | Paul's clarified design (2026-10-09): the kitchen sends a note through the message API to all POS users; shown on the POS login screen; expires after ~10 min or when a user clears it. Not a fire |
+| KDS → POS broadcast message | Not started | Kitchen staff alert all staff via a new BULLETIN BOARD on the POS login screen, beside the pin pad (Geoff 2026-10-13); sent through the message API to all POS users; expires after ~10 min or when a user clears it. Not a fire |
 | Kitchen message from a sent line | Not started | Long-press a sent/fired check line → pills with default notes (e.g. Delay) sent to every printer/KDS that printed that item: a note chit on paper, a message document on the KDS. Pill list to confirm with Paul |
 | Manager transfer check from the manager menu | Not started | Transfer All button present, disabled |
+
+## Hot list — must be bulletproof before it ships
+
+| Item | Decision so far | Before it ships |
+|---|---|---|
+| Fire by waiter (Fire Course button) and KDS hold / unfired state (C07–C09) | Parked (Geoff 2026-10-13). Not every restaurant fires by waiter; the industry-standard flow is everything sent, then a "fire" item. The held/unfired status is a complication that must never appear at a site that doesn't use it, on either app. | Write a real spec, not Paul's MD. POS: add an optional revenue-centre flag (e.g. `fireCourse`); absent = no Fire Course button, headers show only pending/sent. KDS: already silent unless a printer carries `holdUnfiredCourses` — keep it that way. Decide whether "fire" also works as a plain menu item. Guard against the kitchen never making a held item because the server forgot. Optional on BOTH apps, default off. |
 
 ## Current arc: long-press menu item
 
@@ -103,9 +109,9 @@ up; prerequisites (like coursing) are built when a pill needs them.
 |---|---|---|
 | Popup: name, description, Order Item, Skip | Built | 2-second press, iOS MenuItemCellView parity |
 | Popup: Manage Qty / Remove Qty (86) | Built | See 86 row above |
-| Popup: Update Price / New Item (manager) | Not started | iOS definition edits |
-| 86: out-of-stock message to clocked-in staff | Not started | Awaiting go |
-| Coursing (prerequisite for course pills) | Built | POS: course model, Adding-to picker, headers/chips/tints, Ordering Mode, Change Course, chit + KDS Co lines, waiter Fire Course. KDS: held lines, fire document, panel fire chip, auto-fire. Awaiting live test |
+| Popup: Update Price / New Item (manager) | Parked | iOS definition edits; parked after the API expansion (Geoff 2026-10-13) until the API settles |
+| 86: out-of-stock message to clocked-in staff | Built | On a manager set-to-zero (Manage Qty 0 or 86 from here): one internal Post_Message per clocked-in employee, Subject "Menu Item out of Stock: {name}", like iOS sendMessageForZeroMenuItem |
+| Coursing (prerequisite for course pills) | Built (fire-by-waiter and KDS hold on the hot list, parked) | POS: course model, Adding-to picker, headers/chips/tints, Ordering Mode, Change Course, chit + KDS Co lines, waiter Fire Course. KDS: held lines, fire document, panel fire chip, auto-fire. Awaiting live test |
 | Pill: course chips / pre-pick course | Built | C1–C10 chips on the item popup ring the item into that course |
 | Pill: send to seat N | Built | Seat 1..N and Table pills ring to that seat |
 | Pill: Add Mods | Built | Shown when the item has a modifier chain; opens it |

@@ -84,8 +84,10 @@ export async function readCheck(
   if (!check || typeof check === "string") return null;
 
   const { lines, tenders } = parseCheckLines(check, names);
+  const exemptTaxGroups = parseExemptTaxGroups(check);
 
   return {
+    ...(exemptTaxGroups.length ? { exemptTaxGroups } : {}),
     id: textOf(findKey(check, "check_key")) || p.checkKey,
     checkNumber: textOf(findKey(check, "Check_No")) || p.checkNo,
     revenueCenterId: textOf(findKey(check, "RevenueCenter_POS_ID")),
@@ -95,6 +97,17 @@ export async function readCheck(
     guestCount: Number(textOf(check["Guest_Count"])) || 1,
     lines, tenders, traysSent: asList(findKey(check, "Tray")).length, openedAt: Date.now(),
   };
+}
+
+/** Tax exemptions ride the FinancialCheck as <Tax_Group_Amt><Tax_Report_Group_POS_ID Is_Exempt="1">
+ *  (parsePullBackCheck :14913-14923 → TaxManager removeTaxWithGroupPOS). */
+export function parseExemptTaxGroups(check: XmlDict): string[] {
+  return asList(findKey(check, "Tax_Group_Amt")).flatMap((g) => {
+    const trg = g["Tax_Report_Group_POS_ID"];
+    if (!trg || typeof trg === "string" || Array.isArray(trg)) return [];
+    const id = typeof trg._text === "string" ? trg._text.trim() : ""; // attribute + text element → {Is_Exempt, _text}
+    return trg["Is_Exempt"] === "1" && id ? [id] : [];
+  }).filter(Boolean);
 }
 
 /* ---- Pull-back line parsing (FinancialCheckManager loadCurrentFinancialCheck +

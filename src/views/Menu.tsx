@@ -50,7 +50,7 @@ import {
 } from "@/protocol/order";
 import { sendPayment, type GiftType, type LoyaltyType, type PaymentContext, type PaymentResult } from "@/protocol/payment";
 import { fetchOpenChecks, fetchUnfinalizedTenders, lockCheck, modifyLineItem, readCheck, unlockCheck, type OpenCheck } from "@/protocol/tables";
-import { absorbSentLines, addFireCourseRecord, addTransferCheckRecord, applyAutoGratuity, applyItemAdjustments, applyMovePlan, checkSubtotal, effectiveCourse, firedCourses, guestAssignment, highestGuestNumber, lastLineOf, lineExtended, repeatLastOf, setLineReference, markRoundSent, mergeInto, newCheck, removeLine, setCourse, splitToNewCheck, unsentLines, voidLine, voidTenderLine, type AutoGratDef, type Check, type CheckLine } from "@/model/check";
+import { absorbSentLines, addFireCourseRecord, addTransferCheckRecord, applyAutoGratuity, changeRevenueCenter, applyItemAdjustments, applyMovePlan, checkSubtotal, effectiveCourse, firedCourses, guestAssignment, highestGuestNumber, lastLineOf, lineExtended, repeatLastOf, setLineReference, markRoundSent, mergeInto, newCheck, removeLine, setCourse, splitToNewCheck, unsentLines, voidLine, voidTenderLine, type AutoGratDef, type Check, type CheckLine } from "@/model/check";
 import { computeCheckTax, grandTotal, taxGroupsForWire } from "@/model/tax";
 import { adjustCount, countFor, emptyCounts, stockRefusal, withServerCounts, type ItemCounts } from "@/model/itemcounts";
 import { fetchMenuItemCounters, removeMenuItemCounter, setMenuItemCounter } from "@/protocol/itemcounts";
@@ -72,8 +72,15 @@ const money = (price: string, askForPrice: boolean): string => {
   return !price || !Number.isFinite(n) ? "" : `$${n.toFixed(2)}`;
 };
 
-export default function Menu({ settings, onChangeStation }: { settings: Settings; onChangeStation: () => void }) {
-  const cat = useMemo<Catalog>(() => loadCatalog(), []);
+export default function Menu({ settings, defsVersion, refreshDefinitions, onChangeStation }: {
+  settings: Settings;
+  /** Bumped by App whenever a definitions pull changed a table: the catalog is rebuilt from the cache. */
+  defsVersion: number;
+  /** Revision-based definitions pull (App). Returns the names of the tables that changed. */
+  refreshDefinitions: (force?: boolean) => Promise<string[]>;
+  onChangeStation: () => void;
+}) {
+  const cat = useMemo<Catalog>(() => loadCatalog(), [defsVersion]);
   const init = useMemo(() => initialSelection(cat, settings.terminalPosId), [cat, settings.terminalPosId]);
   const { employee, clock, signIn, signOut, setClock, clockOut: endShift } = useEmployee();
 
@@ -159,21 +166,35 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
   const [pendingAuth, setPendingAuth] = useState<{ title: string; action: AuthAction; onOk: (a: Authorizer) => void } | null>(null);
   const [voidReason, setVoidReason] = useState<{ keys: string[]; auth: Authorizer } | null>(null);
   const [signingIn, setSigningIn] = useState(false);
+  // Definitions refresh on the login keypad (iOS LoginViewController viewDidAppear →
+  // updatedDefinitionsLogin:YES): every arrival at the keypad pulls the tables the
+  // server has revised since our cache; the terminal name re-runs it by hand
+  // (pressTerminalName → updateDefinitions). Changes land through defsVersion.
+  const [defsStatus, setDefsStatus] = useState("");
+  const pullDefs = async (force = false) => {
+    setDefsStatus("Updating definitions…");
+    try {
+      const changed = await refreshDefinitions(force);
+      setDefsStatus(changed.length ? `Updated: ${changed.join(", ")}` : "");
+    } catch (e) { console.warn("[defsync] keypad refresh failed — using cache:", e); setDefsStatus(""); }
+  };
+  useEffect(() => { if (!employee) void pullDefs(); }, [employee]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const ck = useCheck(init.rcId, settings.terminalPosId);
   const checkRef = useRef(ck.check); checkRef.current = ck.check; // always-current check for async flows
   const payTenders = useMemo(() => loadTenders().filter((t) => t.appliesToCheck && !t.hidden).sort((a, b) => a.sort - b.sort), []);
-  const store = useMemo(() => storeConfig(), []);
+  const store = useMemo(() => storeConfig(), [defsVersion]); // eslint-disable-line react-hooks/exhaustive-deps
   const tax = useMemo(() => computeCheckTax(cat, ck.check, taxExempt), [cat, ck.check, taxExempt]);
   const empJobs = useMemo(() => (employee ? jobsForEmployee(employee.id) : []), [employee]);
   const perms = useMemo(() => (employee ? permsForEmployee(employee.id) : null), [employee]);
-  const adjustmentDefs = useMemo(() => loadAdjustments(), []);
-  const adjDepts = useMemo(() => adjustmentDepartments(), []);
-  /** doesLineItemBelongToAdjustmentDepartment: no Adjustment_Department rows → any
-   *  item; otherwise the item's Category.Dept_POS_ID must be one of them. */
+  const adjustmentDefs = useMemo(() => loadAdjustments(), [defsVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+  const adjDepts = useMemo(() => adjustmentDepartments(), [defsVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+  /** doesLineItemBelongToAdjustmentDepartment (FinancialCheckManager :4157): an item
+   *  qualifies ONLY when an Adjustment_Department row pairs this adjustment with the
+   *  item's Category.Dept_POS_ID. No row → not eligible. Discounts require departments. */
   const inAdjDepartment = (adj: Adjustment, l: CheckLine): boolean => {
     const depts = adjDepts.get(adj.id);
-    if (!depts || depts.size === 0) return true;
+    if (!depts || depts.size === 0) return false;
     const mi = cat.miById.get(l.menuItemId);
     const dept = mi ? cat.catById.get(mi.categoryId)?.departmentId : undefined;
     return !!dept && depts.has(dept);
@@ -193,7 +214,7 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
     return next;
   };
   const voidDefs = useMemo(() => voidReasons(), []);
-  const empList = useMemo(() => employees(), []);
+  const empList = useMemo(() => employees(), [defsVersion]); // eslint-disable-line react-hooks/exhaustive-deps
   const rooms = useMemo(() => diningRooms(), []);
   const tables = useMemo(() => diningTables(), []);
   // The table's display number lives on the DiningTable definition (keyed by
@@ -221,11 +242,27 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
     [cat, current, query, searching, favorites],
   );
 
+  /** Browse another revenue centre's menu (chips). An EMPTY check simply takes that
+   *  RC; a check with lines keeps its RC until changeCheckRc (the iOS ChangeRVC path). */
   const selectRc = (id: string) => {
     setRcId(id); setQuery("");
     const r = rootScreenGroups(cat, id);
     setStack(r[0] ? [r[0]] : []);
     if (ck.check.lines.length === 0) ck.setRevenueCenter(id);
+  };
+  /** Change the CHECK's revenue centre at any time (CheckViewController pressChangeRevenueCenter):
+   *  manager auth ("ChangeRVC" = canEmployeeManager), the ChangeRVC audit record, taxes and
+   *  behaviour follow the new RC; it is posted with the next send. */
+  const changeCheckRc = (id: string) => {
+    if (ck.check.lines.length === 0) { selectRc(id); return; }
+    if (id === ck.check.revenueCenterId) { selectRc(id); return; }
+    requireAuth(false, "Authorize change revenue center", "manager", (auth) => {
+      const to = cat.rcById.get(id); if (!to || !employee) return;
+      const fromName = cat.rcById.get(ck.check.revenueCenterId)?.name ?? ck.check.revenueCenterId;
+      ck.update((c) => changeRevenueCenter(c, { id: to.id, name: to.name }, fromName, employee.id, auth.id));
+      selectRc(id);
+      setSendError(`Revenue center changed to ${to.name}`);
+    });
   };
   const selectTab = (sg: ScreenGroup) => { setQuery(""); setStack([sg]); };
   const enter = (sg: ScreenGroup) => setStack((s) => [...s, sg]);
@@ -244,6 +281,20 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
       const rows = await fetchMenuItemCounters(sessionCfg(), { businessDateId: bd, empPosId: employee.id });
       if (rows) setCounts(withServerCounts(rows));
     } catch { /* unreachable server: keep what we have */ }
+  };
+  /** 86 to zero → the iPad tells every clocked-in employee (MenuItemCountManager
+   *  sendMessageForZeroMenuItem): one internal message each, Subject
+   *  "Menu Item out of Stock: {name}". Same Post_Message wire as the transfer notice. */
+  const notifyOutOfStock = async (mi: MenuItem) => {
+    const ids = await fetchClockedInEmpIds(sessionCfg());
+    if (!ids) return;
+    for (const toEmpId of ids) {
+      void sendEmployeeNotice(sessionCfg(), {
+        fromEmpId: employee?.id ?? "", toEmpId,
+        subject: `Menu Item out of Stock: ${mi.name}`,
+        body: `Please note that the following menu item ${mi.name} is out of stock`,
+      });
+    }
   };
   const empIdForCounts = employee?.id ?? "";
   useEffect(() => { if (mode === "order" && empIdForCounts) void refreshCounts(); }, [mode, empIdForCounts]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -403,7 +454,15 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
       } catch { /* keep the local counter */ }
     })();
   }, [employee]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { setTaxExempt(new Set()); setEditing(false); setAddingCourse(0); }, [ck.check.id]);
+  // per check: the exemption set starts from what the server holds for it (P13), Edit closes, course picker resets
+  useEffect(() => { setTaxExempt(new Set(ck.check.exemptTaxGroups ?? [])); setEditing(false); setAddingCourse(0); }, [ck.check.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // …and the check remembers it, so a browser reload or a re-post keeps the exemption
+  useEffect(() => {
+    const cur = ck.check.exemptTaxGroups ?? [];
+    const next = [...taxExempt].sort();
+    if (cur.length === next.length && cur.every((id, i) => id === next[i])) return;
+    ck.update((c) => ({ ...c, exemptTaxGroups: next.length ? next : undefined }));
+  }, [taxExempt]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (mode !== "order") setAddingCourse(0); }, [mode]); // iOS resets courseNum on leaving the check screen
   // Arriving on the floor (sign-in landing, Tables, Query By Table): fresh occupancy, no stale status text
   useEffect(() => { if (mode === "floor" && employee) { setFloorStatus(""); void refreshOpenChecks(); } }, [mode, employee?.id]); // eslint-disable-line react-hooks/exhaustive-deps // per-check: reset tax exemption; leave Edit for the menu view when the check closes/switches
@@ -431,6 +490,23 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
     if (job?.mgrMenu && !job.managerServerMode) return "manager"; // LoginViewController.m:949 → Manager's Menu
     return job?.skipTable ? "order" : "floor";
   };
+
+  // sendUnSentChecks parity: a working check left with unsent items (app killed,
+  // page reloaded) is posted as soon as someone is signed in and clocked in. If
+  // the post fails the check is shown so nothing is ever silently lost.
+  const flushedRef = useRef(false);
+  useEffect(() => {
+    if (!employee || !clock) { flushedRef.current = false; return; }
+    if (flushedRef.current) return;
+    flushedRef.current = true;
+    const c = checkRef.current;
+    if (unsentLines(c).length === 0 && !c.tenders.some((t) => !t.sent)) return;
+    void (async () => {
+      const no = c.checkNumber ?? "";
+      if (await flushWorkingCheck()) { await releaseLock(); ck.reset(rcId); setSendError(""); setFloorStatus(`Unsent items on check ${no} were sent`); }
+      else setMode("order");
+    })();
+  }, [employee, clock]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!employee) { setSigningIn(false); return; }
@@ -476,27 +552,56 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
     setLockedCheck(null);
   };
 
-  /** Park the working check before leaving the order screen: fire any unsent
-   *  items (so it lands as an open tab on the server, pickable later) and drop
-   *  the local working copy + lock. A brand-new empty check parks to nothing. */
-  const parkCheck = async () => {
-    if (unsentLines(ck.check).length > 0) { setSending(true); await postCheck(false); setSending(false); }
+  /** sendUnSentChecks parity, used ONLY by the sign-in recovery: a working check
+   *  left with unsent lines / tenders (crash, failed send) is posted. false = the
+   *  post failed; the caller shows the check instead. */
+  const flushWorkingCheck = async (): Promise<boolean> => {
+    const c = checkRef.current;
+    if (unsentLines(c).length === 0 && !c.tenders.some((t) => !t.sent)) return true;
+    setSending(true); setSendError("");
+    const r = await postCheck(false, withAutoGrat());
+    setSending(false);
+    if (!r.ok) { setSendError(r.message || "Couldn't send the check — items kept."); return false; }
+    return true;
+  };
+
+  /** iOS unsentItemAlert ("Unsent Items — Please send or delete unsent items"):
+   *  there is NO way out of a check with unsent items — Tables, Tabs, Sign Out,
+   *  Quick sale, New tab/check, Manager's Menu all stop here. Only a crash or a
+   *  failed send can leave unsent items behind, and the sign-in flush recovers those. */
+  const [unsentAlert, setUnsentAlert] = useState(false);
+  const blockIfUnsent = (): boolean => {
+    const c = checkRef.current;
+    if (unsentLines(c).length === 0 && !c.tenders.some((t) => !t.sent)) return false;
+    setUnsentAlert(true);
+    return true;
+  };
+
+  /** Park the working check before leaving the order screen: drop the local
+   *  working copy + lock (the check is already on the server). Refused, with the
+   *  iOS alert, while anything is unsent. A brand-new empty check parks to nothing. */
+  const parkCheck = async (): Promise<boolean> => {
+    if (blockIfUnsent()) return false;
     await releaseLock();
     ck.reset(rcId); setSendError(""); setEditing(false);
+    return true;
   };
 
   /** Leave the ordering view for the floorplan. */
   const goToFloor = async () => {
-    await parkCheck();
+    if (!(await parkCheck())) return;
     setTransferMode(false); setMode("floor");
     void refreshOpenChecks();
   };
 
-  const quickSale = () => { void releaseLock(); setTransferMode(false); ck.reset(rcId); setSendError(""); setMode("order"); };
+  const quickSale = () => {
+    if (blockIfUnsent()) { setMode("order"); return; }
+    void releaseLock(); setTransferMode(false); ck.reset(rcId); setSendError(""); setMode("order");
+  };
 
   /** Open the Tabs list — every open check (counter tabs + tables), to pick up. */
   const goToTabs = async () => {
-    await parkCheck();
+    if (!(await parkCheck())) return;
     setTransferMode(false); setMode("tabs");
     void refreshOpenChecks();
   };
@@ -550,10 +655,7 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
    *  table check stays open on the server, resumable from the floor). Ends the
    *  session but keeps the shift (sign-out ≠ clock-out). */
   const doSignOut = async () => {
-    if (unsentLines(ck.check).length > 0) {
-      setSending(true); const r = await postCheck(false); setSending(false);
-      if (!r.ok) { setSendError(r.message || "Couldn't send the check — still signed in."); return; } // keep the check; don't lose items on a failed send
-    }
+    if (blockIfUnsent()) return;
     await releaseLock();
     ck.reset(rcId); setSendError(""); setTransferMode(false);
     signOut();
@@ -563,11 +665,8 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
    *  :16563-16603): fire anything unsent first, then load the clocked-in list and
    *  open the employee picker. Phase B runs from the picker on a fresh render. */
   const beginTransferCheck = async (kind: "person" | "personTable") => {
+    if (blockIfUnsent()) return;
     setSending(true); setSendError("");
-    if (unsentLines(ck.check).length > 0) {
-      const r = await postCheck(false);
-      if (!r.ok) { setSendError(r.message || "Couldn't send the check."); setSending(false); return; }
-    }
     setXferClocked(await fetchClockedInEmpIds(sessionCfg()));
     setSending(false); setXferPick(kind);
   };
@@ -604,7 +703,7 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
   /** Move the current (posted) check to another table — a re-POST of the
    *  FinancialCheck with a new DiningTable_POS_ID (recon D). */
   const startTransfer = async () => {
-    if (unsentLines(ck.check).length > 0) { setSending(true); const r = await postCheck(false); setSending(false); if (!r.ok) { setSendError(r.message); return; } }
+    if (blockIfUnsent()) return;
     setTransferMode(true); setMode("floor"); void refreshOpenChecks();
   };
   const transferTo = async (table: DiningTable) => {
@@ -627,6 +726,7 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
   /** Pick up (resume) any open check — a table check or a counter tab. Locks it,
    *  reads it back from the server, and loads it into the check panel. */
   const pickCheck = async (occ: OpenCheck, label = `check ${occ.checkNo}`): Promise<boolean> => {
+    if (blockIfUnsent()) { setMode("order"); return false; } // the working check's unsent items first
     setFloorLoading(true); setFloorStatus(`Opening ${label}…`);
     try {
       const bd = occ.businessDateId || (await ensureBd());
@@ -712,6 +812,7 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
 
   const openTableWithCovers = (table: DiningTable, covers: number) => {
     setCoverPrompt(null);
+    if (blockIfUnsent()) { setMode("order"); return; } // never over-write unsent items
     void releaseLock();
     // Bind to the table (DiningTable_POS_ID); leave Check_Name empty — it's a
     // separate custom label, not the table number (which comes from the def).
@@ -1087,7 +1188,7 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
       const picked = sel.size ? live.filter((l) => sel.has(l.key)) : live;
       if (picked.length === 0) { setSendError("No items to adjust"); return; }
       const inDept = picked.filter((l) => inAdjDepartment(adj, l));
-      if (inDept.length === 0) { setSendError(`No selected items belong to the ${adj.name} department`); return; }
+      if (inDept.length === 0) { setSendError(`${adj.name} does not apply to ${sel.size ? "the selected items" : "any item on this check"} (department)`); return; }
       const fresh = inDept.filter((it) => !ck.check.lines.some((l) => l.kind === "A" && l.parentKey === it.key && l.adjustmentId === adj.id && !l.isVoid));
       if (fresh.length === 0) { setSendError("Same discount can be only applied once to each item"); return; }
       const keys = fresh.map((l) => l.key);
@@ -1145,6 +1246,8 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
       usePin={store.usePin}
       lookup={(id) => { const e = empList.find((x) => x.id === id); return e ? { id: e.id, name: e.name, pin: e.pin } : null; }}
       onLogin={signIn}
+      status={defsStatus}
+      onTerminalName={() => void pullDefs(true)}
     />
   );
 
@@ -1163,8 +1266,8 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
     <div className="backdrop" onClick={() => setShowHub(false)}>
       <div className="hubbox" onClick={(e) => e.stopPropagation()}>
         <div className="hubtitle">{settings.storeName || settings.storeId} · {employee.name}</div>
-        <button className="hubrow" onClick={() => { setShowHub(false); setMgrStatus(""); setShowManager(true); }}>Functions</button>
-        <button className="hubrow" onClick={() => { setShowHub(false); onChangeStation(); }}>Change station</button>
+        <button className="hubrow" onClick={() => { setShowHub(false); if (blockIfUnsent()) return; setMgrStatus(""); setShowManager(true); }}>Functions</button>
+        <button className="hubrow" onClick={() => { setShowHub(false); if (blockIfUnsent()) return; onChangeStation(); }}>Change station</button>
         <button className="hubrow danger" onClick={() => { setShowHub(false); void doSignOut(); }}>Sign Out</button>
         <button className="hubrow ghost" onClick={() => setShowHub(false)}>Close</button>
       </div>
@@ -1196,6 +1299,17 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
   }
 
   /** Manager's Menu → Terminal: confirm before de-activating (rendered in BOTH the manager branch and the main screen). */
+  const unsentModal = unsentAlert ? (
+        <div className="backdrop" onClick={() => setUnsentAlert(false)}>
+          <div className="authbox" onClick={(e) => e.stopPropagation()}>
+            <div className="authtitle">Unsent Items</div>
+            <div className="authsub">Please send or delete unsent items</div>
+            <div className="mfactions">
+              <button className="mfbtn go" onClick={() => setUnsentAlert(false)}>OK</button>
+            </div>
+          </div>
+        </div>
+  ) : null;
   const terminalConfirm = confirmTerminal ? (
         <div className="backdrop" onClick={() => setConfirmTerminal(false)}>
           <div className="authbox" onClick={(e) => e.stopPropagation()}>
@@ -1215,14 +1329,15 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
         storeName={settings.storeName || settings.storeId} employeeName={employee.name} jobName={clock.jobName}
         status={mgrStatus} busy={mgrBusy}
         actions={{
-          queryByTable: () => { setMode("floor"); void refreshOpenChecks(); },
-          openChecks: () => { setMode("tabs"); void refreshOpenChecks(); },
+          queryByTable: () => { if (blockIfUnsent()) return; setMode("floor"); void refreshOpenChecks(); },
+          openChecks: () => { if (blockIfUnsent()) return; setMode("tabs"); void refreshOpenChecks(); },
           clockOut: () => void doClockOut(),
           terminal: () => setConfirmTerminal(true),
           exit: () => void doSignOut(),
         }}
       />
       {terminalConfirm}
+      {unsentModal}
     </>);
   }
 
@@ -1299,11 +1414,24 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
     void printTo(pr, text, { enterpriseCode: settings.enterpriseCode, storeId: settings.storeId, backup: backupPrinter(pr) });
   };
 
-  /** Print the current check now to the terminal's check printer (Print button). */
-  const doPrintCheck = () => {
+  /** Print the current check to the terminal's check printer (Print button).
+   *  Print is a Send & Stay first (Geoff 2026-10-13, iOS parity): any unsent lines
+   *  go to the kitchen/server before the guest check prints, so a printed check
+   *  can never exist for lines the server has not seen. A failed send prints nothing. */
+  const doPrintCheck = async () => {
     const pr = checkPrinter(settings.terminalPosId);
     if (!pr) { setSendError("No check printer assigned"); return; }
-    const text = buildReceiptText(ck.check.checkNumber ?? "", false, withAutoGrat());
+    let c: Check;
+    if (unsentLines(ck.check).length > 0 || ck.check.tenders.some((t) => !t.sent)) {
+      setSending(true); setSendError("");
+      const r = await postCheck(false, withAutoGrat());
+      setSending(false);
+      if (!r.ok) { setSendError(r.message); return; }
+      c = checkRef.current; // post-send state (this closure's ck.check is stale after the await)
+    } else {
+      c = withAutoGrat();
+    }
+    const text = buildReceiptText(c.checkNumber ?? "", false, c);
     lastReceiptRef.current = text;
     void printTo(pr, text, { enterpriseCode: settings.enterpriseCode, storeId: settings.storeId, backup: backupPrinter(pr) });
     setSendError(`Printing check to ${pr.name}`);
@@ -1351,9 +1479,10 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
    *  CheckMerge note), exactly the iPad's order. The current check then leaves us. */
   const doMerge = async (occ: OpenCheck, auth: Authorizer) => {
     if (!employee) return;
-    setMergePick(null); setSending(true); setSendError("");
+    setMergePick(null);
+    if (blockIfUnsent()) return;
+    setSending(true); setSendError("");
     try {
-      if (unsentLines(ck.check).length > 0) { const r0 = await postCheck(false); if (!r0.ok) { setSendError(r0.message); return; } }
       const { bd, checkNo: srcNo } = await ensureSession();
       if (occ.checkNo === srcNo) { setSendError("You cannot merge a check with itself."); return; }
       const dest0 = await loadSplitDest(occ);
@@ -1518,7 +1647,7 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
           nameForTable={(id) => tables.find((t) => t.id === id)?.name ?? id}
           nameForEmp={(id) => empList.find((e) => e.id === id)?.name ?? ""}
           onPick={(occ) => void pickCheck(occ)}
-          onNewTab={() => { void releaseLock(); ck.reset(rcId); setSendError(""); setMode("order"); }}
+          onNewTab={() => { if (blockIfUnsent()) { setMode("order"); return; } void releaseLock(); ck.reset(rcId); setSendError(""); setMode("order"); }}
           onRefresh={refreshOpenChecks}
           loading={floorLoading}
           status={floorStatus}
@@ -1541,7 +1670,7 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
         <div className="ident"><b>{settings.storeName || settings.storeId}</b><span>{settings.terminalName || settings.terminalPosId} · {employee.name}{ck.check.diningTableId ? ` · Table ${tableNumberOf(ck.check.diningTableId)}` : ""}</span></div>
         <div className="rcs">
           {cat.revenueCenters.map((rc) => (
-            <button key={rc.id} className={`rc ${rc.id === rcId ? "on" : ""}`} onClick={() => selectRc(rc.id)}>{rc.name}</button>
+            <button key={rc.id} className={`rc ${rc.id === rcId ? "on" : ""}`} onClick={() => changeCheckRc(rc.id)}>{rc.name}</button>
           ))}
         </div>
         <div className="tools">
@@ -1616,7 +1745,7 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
           onPay={() => withTabName(() => void openPay())}
           onSplit={(keys) => { setSel(keys); setSplitGuests(new Set()); }}
           onVoid={voidSelected}
-          onNewCheck={() => { ck.reset(rcId); setSendError(""); }}
+          onNewCheck={() => { if (blockIfUnsent()) return; ck.reset(rcId); setSendError(""); }}
           editing={editing}
           onEditingChange={setEditing}
           selectedKeys={sel}
@@ -1893,6 +2022,7 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
                       void (async () => {
                         const r = await setMenuItemCounter(sessionCfg(), { menuItemId: mi.id, counter: 0, authEmpId: auth.id });
                         setSendError(r.ok ? `${mi.name}: 86'd` : `86 failed: ${r.message}`);
+                        if (r.ok) void notifyOutOfStock(mi);
                         await refreshCounts();
                       })();
                     }); }}>
@@ -1971,6 +2101,7 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
             void (async () => {
               const r = await setMenuItemCounter(sessionCfg(), { menuItemId: mi.id, counter: v, authEmpId: auth.id });
               setSendError(r.ok ? (v === 0 ? `${mi.name}: sold out` : `${mi.name}: ${v} left`) : `Manage Qty failed: ${r.message}`);
+              if (r.ok && v === 0) void notifyOutOfStock(mi);
               await refreshCounts();
             })();
           }}
@@ -1978,6 +2109,7 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
       )}
 
       {terminalConfirm}
+      {unsentModal}
 
       {coursePick && (() => {
         const close = () => setCoursePick(null);
@@ -2087,7 +2219,7 @@ export default function Menu({ settings, onChangeStation }: { settings: Settings
             <div className="authtitle">Revenue center</div>
             <div className="mgrlist">
               {cat.revenueCenters.map((rc) => (
-                <button key={rc.id} className="mgrrow" onClick={() => { setShowRcPick(false); selectRc(rc.id); }}>{rc.name}</button>
+                <button key={rc.id} className="mgrrow" onClick={() => { setShowRcPick(false); changeCheckRc(rc.id); }}>{rc.name}</button>
               ))}
             </div>
             <button className="mfbtn ghost" onClick={() => setShowRcPick(false)}>Cancel</button>

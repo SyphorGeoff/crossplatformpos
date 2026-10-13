@@ -18,11 +18,15 @@ import type { Settings } from "@/state/useSettings";
 export interface LoginEmployee { id: string; name: string; pin: string; }
 const TAGLINE = "All new ways to do completely new things";
 
-export default function Login({ settings, lookup, usePin, onLogin }: {
+export default function Login({ settings, lookup, usePin, onLogin, status = "", onTerminalName }: {
   settings: Settings;
   lookup: (id: string) => LoginEmployee | null;
   usePin: boolean;
   onLogin: (emp: { id: string; name: string }) => void;
+  /** Definitions-refresh status shown under the prompt (iOS "updating" overlay). */
+  status?: string;
+  /** iOS pressTerminalName: the terminal name re-pulls definitions by hand. */
+  onTerminalName?: () => void;
 }) {
   const [phase, setPhase] = useState<"id" | "pin">("id");
   const [entry, setEntry] = useState("");
@@ -68,11 +72,12 @@ export default function Login({ settings, lookup, usePin, onLogin }: {
           : phase === "pin"
             ? <div className="loginprompt">{emp?.name}<br />Enter Security PIN</div>
             : <div className="loginprompt">Enter ID Followed by Security<br />PIN</div>}
+        {status ? <div className="loginstatus">{status}</div> : null}
       </div>
       <div className="loginfoot">
         <span className="lver">ver 1.0.0</span>
         <span className="ltag">{TAGLINE}</span>
-        <span className="lterm">{settings.terminalName || settings.terminalPosId}</span>
+        <span className="lterm" onClick={onTerminalName} role={onTerminalName ? "button" : undefined}>{settings.terminalName || settings.terminalPosId}</span>
       </div>
     </div>
   );

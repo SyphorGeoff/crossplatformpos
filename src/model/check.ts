@@ -77,6 +77,7 @@ export interface Check {
   businessDateId?: string;  // the BusinessDate_ID the server holds this check under (set on read-back) — every re-POST must use it
   traysSent: number;        // service rounds already POSTed (tray numbering)
   closed?: boolean;         // settled + closed (Is_Closed/Is_Settled on the wire)
+  exemptTaxGroups?: string[]; // tax report groups removed from this check (Tax_Group_Amt Is_Exempt=1; restored on pull-back like TaxManager removeTaxWithGroupPOS)
   openedAt: number;         // ms
 }
 
@@ -508,6 +509,15 @@ export function repeatLastOf(check: Check, menuItemId: string, now = Date.now())
 export function setLineReference(check: Check, key: string, text: string): Check {
   const t = text.trim();
   return { ...check, lines: check.lines.map((l) => (l.key === key ? { ...l, reference: t || undefined } : l)) };
+}
+
+/** Change Revenue Center on a check that already has lines (CheckViewController
+ *  ChangeRVC → FinancialCheckManager addChangeRVCReference): the RC changes and a
+ *  hidden {"type":"ChangeRVC"} record goes out with the next post. */
+export function changeRevenueCenter(check: Check, to: { id: string; name: string }, fromName: string, empId: string, authEmpId = "", now?: Date): Check {
+  if (check.revenueCenterId === to.id) return check;
+  const next = { ...check, revenueCenterId: to.id };
+  return addCommonSchemaRef(next, { type: "ChangeRVC", chk: asNum(check.checkNumber ?? ""), oldRVC: fromName, newRVC: to.name, emp: asNum(empId), time: stampNoSec(now) }, authEmpId);
 }
 
 /** Fire Course N: a SHOWN "FIRE COURSE N" note plus the hidden audit record
