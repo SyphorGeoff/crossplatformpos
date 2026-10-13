@@ -60,12 +60,17 @@ export async function httpRequest(
       data: init.body,
       responseType: "arraybuffer", // data arrives base64-encoded
     });
+    // Android CapacitorHttp parses an application/json reply into an object
+    // before honouring responseType (seen live 2026-10-13 with pos-version.json:
+    // data arrived as an object, not base64 → empty text → "Unexpected end of
+    // JSON input"). Re-serialise anything that is not the expected base64 string.
+    const parsed = res.data !== null && typeof res.data === "object" ? JSON.stringify(res.data) : null;
     const b64 = typeof res.data === "string" ? res.data : "";
     return {
       ok: res.status >= 200 && res.status < 300,
       status: res.status,
-      bytes: async () => b64ToBuffer(b64),
-      text: async () => new TextDecoder("utf-8").decode(b64ToBuffer(b64)),
+      bytes: async () => (parsed !== null ? new TextEncoder().encode(parsed).buffer as ArrayBuffer : b64ToBuffer(b64)),
+      text: async () => (parsed !== null ? parsed : new TextDecoder("utf-8").decode(b64ToBuffer(b64))),
     };
   }
   // DEV ONLY: absolute URLs relay through the Vite dev forwarder (vite.config.ts),
