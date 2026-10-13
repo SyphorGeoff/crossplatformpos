@@ -43,6 +43,7 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
   const [installed, setInstalled] = useState<InstalledVersion | null>(null);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const [updStatus, setUpdStatus] = useState("");
+  const [checkTick, setCheckTick] = useState(0); // bumped by the terminal-name press → re-check
   useEffect(() => {
     let alive = true;
     void installedVersion().then((v) => { if (alive) setInstalled(v); });
@@ -52,7 +53,7 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
       if (r.problem) setUpdStatus(`Update check failed: ${r.problem}`);
     });
     return () => { alive = false; };
-  }, [settings.enterpriseServerUrl]);
+  }, [settings.enterpriseServerUrl, checkTick]);
   /** Tap on the Update pill: ask for a manager on the keypad (toggle = cancel). */
   const askUpdate = () => {
     if (phase === "updId" || phase === "updPin") { reset(); setUpdStatus(""); return; }
@@ -140,7 +141,7 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
           {update ? <button className="lupd" onClick={askUpdate}>{phase === "updId" || phase === "updPin" ? "Cancel" : `Update to ${update.versionName}`}</button> : null}
         </span>
         <span className="ltag">{TAGLINE}</span>
-        <span className="lterm" onClick={onTerminalName} role={onTerminalName ? "button" : undefined}>{settings.terminalName || settings.terminalPosId}</span>
+        <span className="lterm" onClick={() => { setCheckTick((t) => t + 1); onTerminalName?.(); }} role={onTerminalName ? "button" : undefined}>{settings.terminalName || settings.terminalPosId}</span>
       </div>
     </div>
   );
