@@ -26,9 +26,10 @@ interface AppUpdatePlugin {
 
 const plugin = (): AppUpdatePlugin | undefined => capacitor()?.Plugins?.AppUpdate as AppUpdatePlugin | undefined;
 
-/** True only on the Android native build with the plugin compiled in. */
+/** True only on a native build with the plugin compiled in — i.e. Android: the
+ *  plugin is never added to the iOS target, so its presence is the platform gate. */
 export function canSelfUpdate(): boolean {
-  return isNative() && capacitor()?.getPlatform?.() === "android" && !!plugin();
+  return isNative() && !!plugin();
 }
 
 export async function installedVersion(): Promise<InstalledVersion | null> {
@@ -40,20 +41,26 @@ export async function installedVersion(): Promise<InstalledVersion | null> {
 const updateKitBase = (enterpriseServerUrl: string): string => `${enterpriseServerUrl.replace(/\/+$/, "")}/UpdateKit/`;
 export const updateManifestUrl = (enterpriseServerUrl: string): string => `${updateKitBase(enterpriseServerUrl)}pos-version.json`;
 
-/** The newer build the server offers, or null (up to date / not native / unreachable). */
-export async function checkForUpdate(enterpriseServerUrl: string): Promise<UpdateInfo | null> {
-  if (!canSelfUpdate() || !enterpriseServerUrl) return null;
+export type UpdateCheck =
+  | { update: UpdateInfo; problem?: undefined }
+  | { update: null; problem?: string };   // problem = why the check could not be made (shown on the keypad)
+
+/** The newer build the server offers. update=null with no problem = up to date
+ *  (or not a native build); with a problem = the check itself failed. */
+export async function checkForUpdate(enterpriseServerUrl: string): Promise<UpdateCheck> {
+  if (!canSelfUpdate() || !enterpriseServerUrl) return { update: null };
   const cur = await installedVersion();
-  if (!cur) return null;
+  if (!cur) return { update: null, problem: "installed version unknown" };
   try {
     const res = await httpRequest(updateManifestUrl(enterpriseServerUrl));
-    if (!res.ok) return null;
+    if (!res.ok) return { update: null, problem: `pos-version.json HTTP ${res.status}` };
     const j = JSON.parse(await res.text()) as Partial<UpdateInfo>;
     const code = Number(j.versionCode);
-    if (!Number.isFinite(code) || code <= cur.versionCode || !j.url) return null;
+    if (!Number.isFinite(code) || !j.url) return { update: null, problem: "pos-version.json malformed" };
+    if (code <= cur.versionCode) return { update: null };
     const url = /^https?:\/\//.test(j.url) ? j.url : updateKitBase(enterpriseServerUrl) + j.url;
-    return { versionCode: code, versionName: String(j.versionName ?? code), url };
-  } catch { return null; }
+    return { update: { versionCode: code, versionName: String(j.versionName ?? code), url } };
+  } catch (e) { return { update: null, problem: String((e as Error).message ?? e) }; }
 }
 
 export type InstallOutcome = "installing" | "permission" | "failed";

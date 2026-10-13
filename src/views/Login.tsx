@@ -43,7 +43,11 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
   useEffect(() => {
     let alive = true;
     void installedVersion().then((v) => { if (alive) setInstalled(v); });
-    void checkForUpdate(settings.enterpriseServerUrl).then((u) => { if (alive) setUpdate(u); });
+    void checkForUpdate(settings.enterpriseServerUrl).then((r) => {
+      if (!alive) return;
+      setUpdate(r.update);
+      if (r.problem) setUpdStatus(`Update check failed: ${r.problem}`);
+    });
     return () => { alive = false; };
   }, [settings.enterpriseServerUrl]);
   const doUpdate = async () => {
