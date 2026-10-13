@@ -57,7 +57,9 @@ registers both) and add to `android/app/src/main/AndroidManifest.xml`:
 
 The login keypad then shows the installed build (`v1.3 (4)`) and, when the
 enterprise server's `UpdateKit/pos-version.json` carries a higher
-`versionCode`, an **Update to x.y** button: the APK downloads to the app's cache
+`versionCode`, an **Update to x.y** button. Tapping it asks for a manager on the
+keypad (ID then PIN of an employee with a Mgr_Menu job; "Manager required"
+otherwise): the APK downloads to the app's cache
 and the Android package installer takes over (same keystore → installs over the
 running build, settings kept). First time, Android asks to allow installs from
 Aireus POS; tap Update again afterwards. Not possible on iOS (Apple) — the

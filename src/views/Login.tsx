@@ -19,17 +19,20 @@ import { checkForUpdate, installUpdate, installedVersion, type InstalledVersion,
 export interface LoginEmployee { id: string; name: string; pin: string; }
 const TAGLINE = "All new ways to do completely new things";
 
-export default function Login({ settings, lookup, usePin, onLogin, status = "", onTerminalName }: {
+export default function Login({ settings, lookup, usePin, onLogin, status = "", onTerminalName, isManager = () => false }: {
   settings: Settings;
   lookup: (id: string) => LoginEmployee | null;
   usePin: boolean;
   onLogin: (emp: { id: string; name: string }) => void;
+  /** Mgr_Menu job holder? The in-app Update is shielded by a manager ID + PIN on this keypad. */
+  isManager?: (empId: string) => boolean;
   /** Definitions-refresh status shown under the prompt (iOS "updating" overlay). */
   status?: string;
   /** iOS pressTerminalName: the terminal name re-pulls definitions by hand. */
   onTerminalName?: () => void;
 }) {
-  const [phase, setPhase] = useState<"id" | "pin">("id");
+  // "id"/"pin" = sign-in; "updId"/"updPin" = the same keypad authorising an app update
+  const [phase, setPhase] = useState<"id" | "pin" | "updId" | "updPin">("id");
   const [entry, setEntry] = useState("");
   const [emp, setEmp] = useState<LoginEmployee | null>(null);
   const [error, setError] = useState("");
@@ -50,6 +53,12 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
     });
     return () => { alive = false; };
   }, [settings.enterpriseServerUrl]);
+  /** Tap on the Update pill: ask for a manager on the keypad (toggle = cancel). */
+  const askUpdate = () => {
+    if (phase === "updId" || phase === "updPin") { reset(); setUpdStatus(""); return; }
+    setError(""); setEntry(""); setEmp(null); setPhase("updId");
+    setUpdStatus("");
+  };
   const doUpdate = async () => {
     if (!update) return;
     setUpdStatus("Downloading update…");
@@ -63,6 +72,20 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
 
   const enter = () => {
     if (!entry) return;
+    if (phase === "updId" || phase === "updPin") {
+      // Manager authorisation for the update: same local ID + PIN check as sign-in,
+      // plus the employee must hold a Mgr_Menu job. Nothing is signed in.
+      if (phase === "updId") {
+        const found = lookup(entry);
+        if (!found) { setError("Invalid ID"); setEntry(""); return; }
+        setError("");
+        if (!usePin) { authorised(found); return; }
+        setEmp(found); setPhase("updPin"); setEntry(""); return;
+      }
+      if (emp && entry === emp.pin) authorised(emp);
+      else { setError("Invalid Pin"); reset(); }
+      return;
+    }
     if (phase === "id") {
       const found = lookup(entry);
       if (!found) { setError("Invalid ID"); setEntry(""); return; }
@@ -73,6 +96,12 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
       if (entry === emp.pin) { onLogin({ id: emp.id, name: emp.name }); reset(); }
       else { setError("Invalid Pin"); reset(); }
     }
+  };
+
+  const authorised = (e: LoginEmployee) => {
+    reset();
+    if (!isManager(e.id)) { setError("Manager required"); return; }
+    void doUpdate();
   };
 
   const press = (k: string) => {
@@ -97,14 +126,18 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
           ? <div className="loginerr">{error}</div>
           : phase === "pin"
             ? <div className="loginprompt">{emp?.name}<br />Enter Security PIN</div>
-            : <div className="loginprompt">Enter ID Followed by Security<br />PIN</div>}
+            : phase === "updId"
+              ? <div className="loginprompt">Update to {update?.versionName}<br />Manager ID then PIN</div>
+              : phase === "updPin"
+                ? <div className="loginprompt">{emp?.name}<br />Manager PIN to update</div>
+                : <div className="loginprompt">Enter ID Followed by Security<br />PIN</div>}
         {status ? <div className="loginstatus">{status}</div> : null}
         {updStatus ? <div className="loginstatus">{updStatus}</div> : null}
       </div>
       <div className="loginfoot">
         <span className="lver">
           {installed ? `v${installed.versionName} (${installed.versionCode})` : "ver 1.0.0"}
-          {update ? <button className="lupd" onClick={() => void doUpdate()}>Update to {update.versionName}</button> : null}
+          {update ? <button className="lupd" onClick={askUpdate}>{phase === "updId" || phase === "updPin" ? "Cancel" : `Update to ${update.versionName}`}</button> : null}
         </span>
         <span className="ltag">{TAGLINE}</span>
         <span className="lterm" onClick={onTerminalName} role={onTerminalName ? "button" : undefined}>{settings.terminalName || settings.terminalPosId}</span>
