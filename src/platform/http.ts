@@ -20,6 +20,7 @@ export interface HttpResponse {
 
 interface CapacitorGlobal {
   isNativePlatform?: () => boolean;
+  getPlatform?: () => string; // "android" | "ios" | "web"
   Plugins?: {
     CapacitorHttp?: {
       request(opts: Record<string, unknown>): Promise<{ status: number; data: unknown }>;

@@ -12,8 +12,9 @@
  * since we render vector, not PNGs).
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Settings } from "@/state/useSettings";
+import { checkForUpdate, installUpdate, installedVersion, type InstalledVersion, type UpdateInfo } from "@/platform/appupdate";
 
 export interface LoginEmployee { id: string; name: string; pin: string; }
 const TAGLINE = "All new ways to do completely new things";
@@ -32,6 +33,27 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
   const [entry, setEntry] = useState("");
   const [emp, setEmp] = useState<LoginEmployee | null>(null);
   const [error, setError] = useState("");
+
+  // In-app update (Android native only): every arrival at the keypad asks the
+  // enterprise server's UpdateKit for a newer build; the version shown is the
+  // installed native build. iOS / web: no plugin → nothing shows.
+  const [installed, setInstalled] = useState<InstalledVersion | null>(null);
+  const [update, setUpdate] = useState<UpdateInfo | null>(null);
+  const [updStatus, setUpdStatus] = useState("");
+  useEffect(() => {
+    let alive = true;
+    void installedVersion().then((v) => { if (alive) setInstalled(v); });
+    void checkForUpdate(settings.enterpriseServerUrl).then((u) => { if (alive) setUpdate(u); });
+    return () => { alive = false; };
+  }, [settings.enterpriseServerUrl]);
+  const doUpdate = async () => {
+    if (!update) return;
+    setUpdStatus("Downloading update…");
+    const r = await installUpdate(update, (pct) => setUpdStatus(`Downloading update… ${pct}%`));
+    if (r.outcome === "installing") setUpdStatus("Follow the Android installer to finish");
+    else if (r.outcome === "permission") setUpdStatus("Allow installs from Aireus POS, then tap Update again");
+    else setUpdStatus(`Update failed: ${r.message ?? ""}`);
+  };
 
   const reset = () => { setPhase("id"); setEntry(""); setEmp(null); };
 
@@ -73,9 +95,13 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
             ? <div className="loginprompt">{emp?.name}<br />Enter Security PIN</div>
             : <div className="loginprompt">Enter ID Followed by Security<br />PIN</div>}
         {status ? <div className="loginstatus">{status}</div> : null}
+        {updStatus ? <div className="loginstatus">{updStatus}</div> : null}
       </div>
       <div className="loginfoot">
-        <span className="lver">ver 1.0.0</span>
+        <span className="lver">
+          {installed ? `v${installed.versionName} (${installed.versionCode})` : "ver 1.0.0"}
+          {update ? <button className="lupd" onClick={() => void doUpdate()}>Update to {update.versionName}</button> : null}
+        </span>
         <span className="ltag">{TAGLINE}</span>
         <span className="lterm" onClick={onTerminalName} role={onTerminalName ? "button" : undefined}>{settings.terminalName || settings.terminalPosId}</span>
       </div>
