@@ -99,6 +99,12 @@ Last updated: 2026-10-08
 |---|---|---|
 | Fire by waiter (Fire Course button) and KDS hold / unfired state (C07–C09) | Parked (Geoff 2026-10-13). Not every restaurant fires by waiter; the industry-standard flow is everything sent, then a "fire" item. The held/unfired status is a complication that must never appear at a site that doesn't use it, on either app. | Write a real spec, not Paul's MD. POS: add an optional revenue-centre flag (e.g. `fireCourse`); absent = no Fire Course button, headers show only pending/sent. KDS: already silent unless a printer carries `holdUnfiredCourses` — keep it that way. Decide whether "fire" also works as a plain menu item. Guard against the kitchen never making a held item because the server forgot. Optional on BOTH apps, default off. |
 
+## Server bugs (back office / HBroker) — fix later
+
+| Bug | Found | Effect on the POS | Status |
+|---|---|---|---|
+| Definition revision sequence not stamped on some tables: the "All" map reports 0 and the rows carry Revision_Seq 0 even after an edit. Confirmed on Adjustment_Department (Geoff 2026-10-13: added department Retail to "20% Gratuity", map stayed 0). Same shape on this store for DiningTable, Event, Language, Buttons. | 2026-10-13 | The POS cannot see these changes from the map, so, like iOS DefinitionManager, it re-pulls every 0-seq table on each revision sync (≈17 small pulls per keypad arrival) and compares rows to report them. Once the server stamps them the POS needs no change. | Open — server fix later |
+
 ## Current arc: long-press menu item
 
 Goal: the long-press popup on a menu tile, iOS base first, then the pills from
