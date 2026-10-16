@@ -31,8 +31,7 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
   /** iOS pressTerminalName: the terminal name re-pulls definitions by hand. */
   onTerminalName?: () => void;
 }) {
-  // "id"/"pin" = sign-in; "updId"/"updPin" = the same keypad authorising an app update
-  const [phase, setPhase] = useState<"id" | "pin" | "updId" | "updPin">("id");
+  const [phase, setPhase] = useState<"id" | "pin">("id");
   const [entry, setEntry] = useState("");
   const [emp, setEmp] = useState<LoginEmployee | null>(null);
   const [error, setError] = useState("");
@@ -57,11 +56,28 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
     });
     return () => { alive = false; };
   }, [settings.enterpriseServerUrl, checkTick]);
-  /** Tap on the Update pill: ask for a manager on the keypad (toggle = cancel). */
-  const askUpdate = () => {
-    if (phase === "updId" || phase === "updPin") { reset(); setUpdStatus(""); return; }
-    setError(""); setEntry(""); setEmp(null); setPhase("updId");
-    setUpdStatus("");
+  // The Update pill opens its OWN small ID + PIN modal (never the sign-in keypad,
+  // never signs anyone in, always asks the PIN), then the progress modal.
+  const [authOpen, setAuthOpen] = useState(false);
+  const [authPhase, setAuthPhase] = useState<"id" | "pin">("id");
+  const [authId, setAuthId] = useState("");
+  const [authEntry, setAuthEntry] = useState("");
+  const [authError, setAuthError] = useState("");
+  const askUpdate = () => { setAuthPhase("id"); setAuthId(""); setAuthEntry(""); setAuthError(""); setUpdStatus(""); setAuthOpen(true); };
+  const authPress = (k: string) => {
+    setAuthError("");
+    if (k === "Del") { setAuthEntry((e) => e.slice(0, -1)); return; }
+    if (k !== "Ent") { setAuthEntry((e) => (e + k).slice(0, 12)); return; }
+    if (!authEntry) return;
+    if (authPhase === "id") {
+      if (!lookup(authEntry)) { setAuthError("Invalid ID"); setAuthEntry(""); return; }
+      setAuthId(authEntry); setAuthEntry(""); setAuthPhase("pin"); return;
+    }
+    const found = lookup(authId);
+    if (!found || authEntry !== found.pin) { setAuthError("Invalid PIN"); setAuthPhase("id"); setAuthId(""); setAuthEntry(""); return; }
+    if (!isManager(found.id)) { setAuthError("Manager required"); setAuthPhase("id"); setAuthId(""); setAuthEntry(""); return; }
+    setAuthOpen(false);
+    void doUpdate();
   };
   const doUpdate = async () => {
     if (!update || progress) return;
@@ -81,20 +97,6 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
 
   const enter = () => {
     if (!entry) return;
-    if (phase === "updId" || phase === "updPin") {
-      // Manager authorisation for the update: same local ID + PIN check as sign-in,
-      // plus the employee must hold a Mgr_Menu job. Nothing is signed in.
-      if (phase === "updId") {
-        const found = lookup(entry);
-        if (!found) { setError("Invalid ID"); setEntry(""); return; }
-        setError("");
-        if (!usePin) { authorised(found); return; }
-        setEmp(found); setPhase("updPin"); setEntry(""); return;
-      }
-      if (emp && entry === emp.pin) authorised(emp);
-      else { setError("Invalid Pin"); reset(); }
-      return;
-    }
     if (phase === "id") {
       const found = lookup(entry);
       if (!found) { setError("Invalid ID"); setEntry(""); return; }
@@ -105,12 +107,6 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
       if (entry === emp.pin) { onLogin({ id: emp.id, name: emp.name }); reset(); }
       else { setError("Invalid Pin"); reset(); }
     }
-  };
-
-  const authorised = (e: LoginEmployee) => {
-    reset();
-    if (!isManager(e.id)) { setError("Manager required"); return; }
-    void doUpdate();
   };
 
   const press = (k: string) => {
@@ -132,9 +128,27 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
     </div>
   ) : null;
 
+  const authModal = authOpen && update ? (
+    <div className="backdrop" onClick={() => setAuthOpen(false)}>
+      <div className="authbox updauth" onClick={(e) => e.stopPropagation()}>
+        <div className="authtitle">Update to {update.versionName}</div>
+        <div className="authsub">{authPhase === "id" ? "Manager ID, then Ent" : `PIN for ${lookup(authId)?.name ?? authId}, then Ent`}</div>
+        <div className="loginentry small">{authEntry ? authEntry.replace(/./g, "•") : " "}</div>
+        {authError && <div className="loginerr">{authError}</div>}
+        <div className="loginkeys small">
+          {keys.map((k) => (
+            <button key={k} className={`lkey ${k === "Del" || k === "Ent" ? "word" : ""}`} onClick={() => authPress(k)}>{k}</button>
+          ))}
+        </div>
+        <div className="mfactions"><button className="mfbtn ghost" onClick={() => setAuthOpen(false)}>Cancel</button></div>
+      </div>
+    </div>
+  ) : null;
+
   return (
     <div className="login">
       {progressModal}
+      {authModal}
       <div className="loginhead">AIREUS</div>
       <div className="loginpad">
         <div className="loginentry">{entry ? entry.replace(/./g, "•") : " "}</div>
@@ -147,18 +161,14 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
           ? <div className="loginerr">{error}</div>
           : phase === "pin"
             ? <div className="loginprompt">{emp?.name}<br />Enter Security PIN</div>
-            : phase === "updId"
-              ? <div className="loginprompt">Update to {update?.versionName}<br />Manager ID then PIN</div>
-              : phase === "updPin"
-                ? <div className="loginprompt">{emp?.name}<br />Manager PIN to update</div>
-                : <div className="loginprompt">Enter ID Followed by Security<br />PIN</div>}
+            : <div className="loginprompt">Enter ID Followed by Security<br />PIN</div>}
         {status ? <div className="loginstatus">{status}</div> : null}
         {updStatus ? <div className="loginstatus">{updStatus}</div> : null}
       </div>
       <div className="loginfoot">
         <span className="lver">
           {installed ? `v${installed.versionName}` : "ver 1.0.0"}
-          {update ? <button className="lupd" disabled={!!progress && !progress.failed} onClick={askUpdate}>{phase === "updId" || phase === "updPin" ? "Cancel" : `Update to ${update.versionName}`}</button> : null}
+          {update ? <button className="lupd" disabled={!!progress && !progress.failed} onClick={askUpdate}>Update to {update.versionName}</button> : null}
         </span>
         <span className="ltag">{TAGLINE}</span>
         <span className="lterm" onClick={() => { setCheckTick((t) => t + 1); onTerminalName?.(); }} role={onTerminalName ? "button" : undefined}>{settings.terminalName || settings.terminalPosId}</span>

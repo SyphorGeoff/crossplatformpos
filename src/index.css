@@ -481,3 +481,7 @@ body { background: var(--cream); color: var(--ink); font-family: "Helvetica Neue
 .mgrmenu .ecfn.exit { background: var(--ink); color: var(--cream); border-color: var(--ink); }
 .mgrmenu .ecfn.exit .ecfnlabel { color: var(--cream); }
 .updbig { text-align: center; font-variant-numeric: tabular-nums; font-size: 44px; font-weight: 700; padding: 14px 0 6px; }
+.authbox.updauth { width: min(380px, 92vw); }
+.authbox.updauth .loginentry.small { font-size: 22px; min-height: 30px; margin: 8px 0 4px; }
+.authbox.updauth .loginkeys.small { gap: 6px; margin: 6px auto 0; }
+.authbox.updauth .loginkeys.small .lkey { font-size: 22px; padding: 10px 0; }
