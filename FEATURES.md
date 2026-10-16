@@ -68,7 +68,7 @@ Last updated: 2026-10-08
 | Receipt printer and order printer redirecting | Not started | |
 | Printer Selection for guest check and receipt | Not started | |
 | Receipt Printer Selection | Not started | |
-| Manual Print Group Selection in the manager menu | Not started | Manager menu button present, disabled |
+| Manual Print Group Selection in the manager menu | Out of scope | Manager-menu tile removed for good (Geoff 2026-10-16) |
 | Press and hold print with unsent items | Not started | |
 | Courses print on order chits | Built | Printer useCourse + course names, Others section, missing course = 6, guest-before-course |
 | Course override prints properly | Built | Line override wins over the item default on chit and KDS |
@@ -80,11 +80,11 @@ Last updated: 2026-10-08
 | Void a pay in / pay out | Not started | |
 | Use Refire | Done | Verified in the 2026-09-21 QA rerun |
 | Add / change / remove a countdown (86) | Built | 2-second press on a menu tile: Order Item, Manage Qty, Remove Qty; badge and sold-out tile. iOS out-of-stock message to clocked-in staff not yet added |
-| Open a closed check | Not started | Manager menu button present, disabled |
+| Open a closed check | Not started | Manager-menu tile kept, disabled until built |
 | Return Mode | Not started | |
-| Print Read (server read) | Not started | Manager menu button present, disabled |
+| Print Read (server read) | Out of scope | Terminal Read / Server Read tiles removed for good (Geoff 2026-10-16) |
 | Flash Report and Labor Summary | Not started | |
-| Log in to the back office from the manager menu | Not started | Manager menu button present, disabled |
+| Log in to the back office from the manager menu | Out of scope | Back Office tile removed for good (Geoff 2026-10-16) |
 | Logout After Payment feature | Built | Revenue center logoutAfterPayment returns to the login keypad after close |
 | Create Tab From Table Layout feature | Not started | |
 | Check For Messages On Sign In feature | Not started | |

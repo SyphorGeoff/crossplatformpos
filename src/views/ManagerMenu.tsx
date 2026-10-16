@@ -30,28 +30,18 @@ export interface ManagerMenuActions {
   exit: () => void;
 }
 
+// Removed for good (Geoff 2026-10-16): Back Office, Teams, Print Group On/Off, Printer Test,
+// Print Group Test, Drawer Assignment, Add Tips, Terminal Read, Server Read, Pulse Report,
+// Reports, Unposted Checks, Terminal. The iPad's grid had them; the cross-platform POS does not.
 const ORDER: { key: keyof ManagerMenuActions; label: string }[] = [
   { key: "queryByTable", label: "Query By Table" },
   { key: "openChecks", label: "Open Checks" },
   { key: "mergeChecks", label: "Merge Checks" },
   { key: "openClosedChecks", label: "Open Closed Checks" },
-  { key: "backOffice", label: "Back Office" },
   { key: "transferAll", label: "Transfer All" },
   { key: "clockOut", label: "Clock Out" },
-  { key: "teams", label: "Teams" },
   { key: "clockedInEmployees", label: "Clocked In Employees" },
-  { key: "printGroupOnOff", label: "Print Group On/Off" },
-  { key: "printerTest", label: "Printer Test" },
-  { key: "printGroupTest", label: "Print Group Test" },
   { key: "openEmptyCheck", label: "Open Empty Check" },
-  { key: "drawerAssignment", label: "Drawer Assignment" },
-  { key: "addTips", label: "Add Tips" },
-  { key: "terminalRead", label: "Terminal Read" },
-  { key: "serverRead", label: "Server Read" },
-  { key: "pulseReport", label: "Pulse Report" },
-  { key: "reports", label: "Reports" },
-  { key: "unpostedChecks", label: "Unposted Checks" },
-  { key: "terminal", label: "Terminal" },
 ];
 
 export default function ManagerMenu({ storeName, employeeName, jobName, status, busy, actions }: {
