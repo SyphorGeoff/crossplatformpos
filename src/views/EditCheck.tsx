@@ -28,7 +28,6 @@ export interface EditCheckActions {
   removeAllTax?: () => void;
   removeTax?: () => void;
   guestCount?: () => void;
-  memberLookup?: () => void;
   changePrice?: () => void;
   reprintLast?: () => void;
   sortGuest?: () => void;
@@ -99,7 +98,6 @@ export default function EditCheck(p: EditCheckProps) {
         <Fn glyph="⊘" label="Remove All Tax" onClick={a.removeAllTax} />
         <Fn glyph="⊘" label="Remove Tax" onClick={a.removeTax} />
         <Fn glyph="#" label="Guest Count" onClick={a.guestCount} />
-        <Fn glyph="☺" label="Member Lookup" onClick={a.memberLookup} />
 
         <Fn glyph="$" label="Change Price" onClick={a.changePrice} />
         <Fn glyph="⇄" label="Change Revenue Centre" onClick={a.changeRc} />

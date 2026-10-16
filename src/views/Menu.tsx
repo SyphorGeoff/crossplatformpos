@@ -1629,7 +1629,6 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     holdUnhold: sel.size ? () => { ck.holdUnhold(new Set(sel)); unselectAll(); } : undefined,
     sortGuest: () => setSortByGuest((s) => !s),
     textCheck: (ck.check.checkNumber && unsentLines(ck.check).length === 0) ? () => void doTextCheck() : undefined,
-    memberLookup: () => setMemberBox({ q: "", busy: false, msg: "", results: [] }),
     splitGuest: (ck.check.checkNumber && unsentLines(ck.check).length === 0 && employee)
       ? () => openSplit("chksplit", { id: employee.id, name: employee.name })
       : undefined,

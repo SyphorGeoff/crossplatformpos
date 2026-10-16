@@ -2,7 +2,7 @@
  * Top action strip (Paul's counter layout): navigation + check tools on the
  * left, the fire/settle actions as dark pills on the right. Presentation only —
  * every action is a callback the Menu wires to real behavior. Buttons whose
- * backing feature isn't built yet (Customer, Print) render disabled.
+ * backing feature isn't built yet render disabled. Customer (member lookup) removed for now (Geoff 2026-10-16).
  */
 
 export interface TopBarProps {
@@ -31,7 +31,6 @@ export default function TopBar(p: TopBarProps) {
         <button className="tbbtn" onClick={p.onTabs} disabled={p.sending}><i>❏</i>Tabs</button>
         <button className="tbbtn" onClick={p.onHub} disabled={p.sending}><i>◎</i>Dashboard</button>
         <button className={`tbbtn ${p.editing ? "on" : ""}`} onClick={p.onEdit} disabled={p.sending}><i>✎</i>Edit</button>
-        <button className="tbbtn" disabled title="Customer — coming soon"><i>☺</i>Customer</button>
         <button className="tbbtn" onClick={p.onPrint} disabled={p.sending || !p.onPrint} title={p.onPrint ? "Print check" : "Print — add items first"}><i>⎙</i>Print</button>
       </div>
       <div className="tbfire">
