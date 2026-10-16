@@ -43,6 +43,9 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
   const [installed, setInstalled] = useState<InstalledVersion | null>(null);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const [updStatus, setUpdStatus] = useState("");
+  // Full-screen progress from the moment the credentials pass until Android's own
+  // install sheet takes over (a silent download invites repeat taps).
+  const [progress, setProgress] = useState<{ pct: number | null; note: string; failed?: boolean } | null>(null);
   const [checkTick, setCheckTick] = useState(0); // bumped by the terminal-name press → re-check
   useEffect(() => {
     let alive = true;
@@ -61,12 +64,17 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
     setUpdStatus("");
   };
   const doUpdate = async () => {
-    if (!update) return;
-    setUpdStatus("Downloading update…");
-    const r = await installUpdate(update, (pct) => setUpdStatus(`Downloading update… ${pct}%`), setUpdStatus);
-    if (r.outcome === "installing") setUpdStatus("Follow the Android installer to finish");
-    else if (r.outcome === "permission") setUpdStatus("Installs from Aireus POS were not allowed — tap Update to try again");
-    else setUpdStatus(`Update failed: ${r.message ?? ""}`);
+    if (!update || progress) return;
+    setUpdStatus("");
+    setProgress({ pct: null, note: "Starting download…" });
+    const r = await installUpdate(
+      update,
+      (pct) => setProgress({ pct, note: "Downloading…" }),
+      (note) => setProgress({ pct: null, note }),
+    );
+    if (r.outcome === "installing") setProgress({ pct: 100, note: "Downloaded. Android will now ask to install — tap Install / Update on its sheet." });
+    else if (r.outcome === "permission") setProgress({ pct: null, note: "Installs from Aireus POS were not allowed. Tap Update to try again.", failed: true });
+    else setProgress({ pct: null, note: `Update failed: ${r.message ?? ""}`, failed: true });
   };
 
   const reset = () => { setPhase("id"); setEntry(""); setEmp(null); };
@@ -113,8 +121,20 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
   };
   const keys = ["7", "8", "9", "4", "5", "6", "1", "2", "3", "0", "Del", "Ent"];
 
+  const progressModal = progress && update ? (
+    <div className="backdrop">
+      <div className="authbox">
+        <div className="authtitle">Updating to {update.versionName}</div>
+        <div className="updbig">{progress.pct === null ? "…" : `${progress.pct}%`}</div>
+        <div className="authsub">{progress.note}</div>
+        {progress.failed && <div className="mfactions"><button className="mfbtn go" onClick={() => setProgress(null)}>OK</button></div>}
+      </div>
+    </div>
+  ) : null;
+
   return (
     <div className="login">
+      {progressModal}
       <div className="loginhead">AIREUS</div>
       <div className="loginpad">
         <div className="loginentry">{entry ? entry.replace(/./g, "•") : " "}</div>
@@ -138,7 +158,7 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
       <div className="loginfoot">
         <span className="lver">
           {installed ? `v${installed.versionName}` : "ver 1.0.0"}
-          {update ? <button className="lupd" onClick={askUpdate}>{phase === "updId" || phase === "updPin" ? "Cancel" : `Update to ${update.versionName}`}</button> : null}
+          {update ? <button className="lupd" disabled={!!progress && !progress.failed} onClick={askUpdate}>{phase === "updId" || phase === "updPin" ? "Cancel" : `Update to ${update.versionName}`}</button> : null}
         </span>
         <span className="ltag">{TAGLINE}</span>
         <span className="lterm" onClick={() => { setCheckTick((t) => t + 1); onTerminalName?.(); }} role={onTerminalName ? "button" : undefined}>{settings.terminalName || settings.terminalPosId}</span>

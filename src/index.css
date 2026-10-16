@@ -480,3 +480,4 @@ body { background: var(--cream); color: var(--ink); font-family: "Helvetica Neue
 .mgrmenu .ecfn { min-height: 72px; }
 .mgrmenu .ecfn.exit { background: var(--ink); color: var(--cream); border-color: var(--ink); }
 .mgrmenu .ecfn.exit .ecfnlabel { color: var(--cream); }
+.updbig { text-align: center; font-variant-numeric: tabular-nums; font-size: 44px; font-weight: 700; padding: 14px 0 6px; }

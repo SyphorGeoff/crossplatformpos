@@ -63,15 +63,24 @@ public class AppUpdatePlugin extends Plugin {
     call.resolve();
   }
 
+  /** One update at a time: a second install() while a download is running is
+   *  refused (2026-10-16: three overlapping downloads into the same file handed the
+   *  installer a half-written APK → "There was a problem parsing the package"). */
+  private static final java.util.concurrent.atomic.AtomicBoolean busy = new java.util.concurrent.atomic.AtomicBoolean(false);
+
   @PluginMethod
   public void install(PluginCall call) {
     final String url = call.getString("url", "");
     if (url == null || url.isEmpty()) { call.reject("url required"); return; }
+    if (!busy.compareAndSet(false, true)) { call.reject("update already in progress"); return; }
     new Thread(() -> {
       try {
         File dir = new File(getContext().getCacheDir(), "update");
         if (!dir.exists()) dir.mkdirs();
         File apk = new File(dir, "aireus-pos.apk");
+        File tmp = new File(dir, "aireus-pos.apk.part");
+        if (apk.exists()) apk.delete();
+        if (tmp.exists()) tmp.delete();
         HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
         conn.setConnectTimeout(15000);
         conn.setReadTimeout(60000);
@@ -80,7 +89,7 @@ public class AppUpdatePlugin extends Plugin {
         long total = conn.getContentLengthLong();
         long got = 0;
         int lastPct = -1;
-        try (InputStream in = conn.getInputStream(); FileOutputStream out = new FileOutputStream(apk)) {
+        try (InputStream in = conn.getInputStream(); FileOutputStream out = new FileOutputStream(tmp)) {
           byte[] buf = new byte[65536];
           int n;
           while ((n = in.read(buf)) > 0) {
@@ -96,7 +105,10 @@ public class AppUpdatePlugin extends Plugin {
               }
             }
           }
+          out.getFD().sync();
         }
+        if (total > 0 && got != total) { tmp.delete(); call.reject("download incomplete: " + got + " of " + total + " bytes"); return; }
+        if (!tmp.renameTo(apk)) { call.reject("could not finalise the download"); return; }
         Uri uri = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", apk);
         Intent i = new Intent(Intent.ACTION_VIEW);
         i.setDataAndType(uri, "application/vnd.android.package-archive");
@@ -107,6 +119,8 @@ public class AppUpdatePlugin extends Plugin {
         call.resolve(ret);
       } catch (Exception e) {
         call.reject("update failed: " + e.getMessage());
+      } finally {
+        busy.set(false);
       }
     }).start();
   }
