@@ -14,7 +14,7 @@
 
 import { useEffect, useState } from "react";
 import type { Settings } from "@/state/useSettings";
-import { checkForUpdate, installUpdate, installedVersion, type InstalledVersion, type UpdateInfo } from "@/platform/appupdate";
+import { checkForUpdate, installUpdate, installedVersion, reopenInstaller, type InstalledVersion, type UpdateInfo } from "@/platform/appupdate";
 
 export interface LoginEmployee { id: string; name: string; pin: string; }
 const TAGLINE = "All new ways to do completely new things";
@@ -119,6 +119,12 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
         <div className="authtitle">Updating to {update.versionName}</div>
         <div className="updbig">{progress.pct === null ? "…" : `${progress.pct}%`}</div>
         <div className="authsub">{progress.note}</div>
+        {progress.pct === 100 && !progress.failed && (
+          <div className="mfactions">
+            <button className="mfbtn ghost" onClick={() => setProgress(null)}>Cancel</button>
+            <button className="mfbtn go" onClick={() => void reopenInstaller().then((err) => { if (err) setProgress({ pct: null, note: `Installer: ${err}`, failed: true }); })}>Open installer</button>
+          </div>
+        )}
         {progress.failed && <div className="mfactions"><button className="mfbtn go" onClick={() => setProgress(null)}>OK</button></div>}
       </div>
     </div>

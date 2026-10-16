@@ -21,6 +21,7 @@ interface AppUpdatePlugin {
   canInstall(): Promise<{ ok: boolean }>;
   requestInstallPermission(): Promise<void>;
   install(opts: { url: string }): Promise<{ ok: boolean }>;
+  openInstaller(): Promise<void>;
   addListener(event: "progress", cb: (e: { pct: number }) => void): Promise<{ remove: () => void }> | { remove: () => void };
 }
 
@@ -79,4 +80,12 @@ export async function installUpdate(info: UpdateInfo, onProgress?: (pct: number)
       return r.ok ? { outcome: "installing" } : { outcome: "failed", message: "Installer did not open" };
     } finally { sub.remove(); }
   } catch (e) { return { outcome: "failed", message: String((e as Error).message ?? e) }; }
+}
+
+/** Re-open Android's install sheet for the APK already downloaded (the hand-off
+ *  can be dropped, e.g. under app pinning) — no new download. */
+export async function reopenInstaller(): Promise<string | null> {
+  const p = plugin();
+  if (!p) return "Not available on this platform";
+  try { await p.openInstaller(); return null; } catch (e) { return String((e as Error).message ?? e); }
 }

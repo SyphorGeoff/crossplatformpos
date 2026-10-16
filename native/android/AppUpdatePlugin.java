@@ -68,6 +68,27 @@ public class AppUpdatePlugin extends Plugin {
    *  installer a half-written APK → "There was a problem parsing the package"). */
   private static final java.util.concurrent.atomic.AtomicBoolean busy = new java.util.concurrent.atomic.AtomicBoolean(false);
 
+  /** Hand the downloaded APK to the Android package installer. Launched from the
+   *  ACTIVITY (not the application context + NEW_TASK, which Android can drop
+   *  silently — seen 2026-10-16: 100% downloaded, no install sheet). */
+  private void launchInstaller(File apk) {
+    Uri uri = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", apk);
+    Intent i = new Intent(Intent.ACTION_VIEW);
+    i.setDataAndType(uri, "application/vnd.android.package-archive");
+    i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+    android.app.Activity act = getActivity();
+    if (act != null) act.runOnUiThread(() -> act.startActivity(i));
+    else { i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getContext().startActivity(i); }
+  }
+
+  /** Re-open the installer for an APK already downloaded (no new download). */
+  @PluginMethod
+  public void openInstaller(PluginCall call) {
+    File apk = new File(new File(getContext().getCacheDir(), "update"), "aireus-pos.apk");
+    if (!apk.exists()) { call.reject("no downloaded update"); return; }
+    try { launchInstaller(apk); call.resolve(); } catch (Exception e) { call.reject("installer: " + e.getMessage()); }
+  }
+
   @PluginMethod
   public void install(PluginCall call) {
     final String url = call.getString("url", "");
@@ -109,11 +130,7 @@ public class AppUpdatePlugin extends Plugin {
         }
         if (total > 0 && got != total) { tmp.delete(); call.reject("download incomplete: " + got + " of " + total + " bytes"); return; }
         if (!tmp.renameTo(apk)) { call.reject("could not finalise the download"); return; }
-        Uri uri = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", apk);
-        Intent i = new Intent(Intent.ACTION_VIEW);
-        i.setDataAndType(uri, "application/vnd.android.package-archive");
-        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        getContext().startActivity(i);
+        launchInstaller(apk);
         JSObject ret = new JSObject();
         ret.put("ok", true);
         call.resolve(ret);
