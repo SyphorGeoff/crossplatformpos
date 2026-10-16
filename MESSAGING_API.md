@@ -195,3 +195,17 @@ Minimal, additive, iOS untouched:
 5. **Do not touch** the 5-second poll contract: the cross-platform POS will poll the same `Messages` call while signed in, and the broadcast call while on the keypad.
 
 Security notes for the server owner, out of this arc's scope: hardcoded SMTP credentials (`Mail.java:113,141-143`), Twilio SID/token (`TwilioAireus.java:67`), DB password in `web.xml:65,85`; `supporting/clearMessage.jsp` wipes a store's messages with no authentication.
+
+---
+
+## 8. Working set for the messaging arc (decisions, Geoff 2026-10-16)
+
+| # | Item | Decision |
+|---|---|---|
+| W1 | Messages not in the database | As designed. No change. |
+| W2 | Token checks commented out on `Post_Message` / `Mark_Messages_Read` | **Pinned as a bug.** The comment says "for backoffice messages" — something posts without a terminal token. Likely fix: validate the way the `Messages` fetch already does (terminal token OR the store-"0" back-office token), once the caller is identified. |
+| W3 | Send replies success even when SMS / email failed | Fire-and-forget is the intent, but do it correctly: return the Twilio error text when it is known, and return the generated `Message_ID`(s). In the arc. |
+| W4 | `Message_ID` collisions (millisecond-seeded Random per recipient) | Seed by nanosecond and leave it at that. In the arc. |
+| W5 | iOS sends `Events_ID`, server reads `Event_ID` | Server accepts both element names (no iOS change). In the arc. |
+| W6 | Broadcast (KDS → POS bulletin board) + idle-keypad fetch + clear | Proposed in §7.1–7.2; shape to be agreed before building. |
+
