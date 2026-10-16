@@ -55,3 +55,21 @@ describe("postMessageXml (MessagingManager.m sendMessage :201-258 element order)
     );
   });
 });
+
+// ---- broadcast lane (messaging arc F4) ----
+import { broadcastPostXml, broadcastRequestXml } from "@/protocol/messaging";
+
+describe("broadcast lane", () => {
+  it("fetch: Trans_Type=Messages, Terminal_POS_ID, type=Broadcast, no Emp_POS_ID", () => {
+    expect(broadcastRequestXml(cfg, "Broadcast")).toBe(
+      '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE Transactional_Request SYSTEM "Transactions/Post_Messages/Transactional_Request.dtd"><Transactional_Request Trans_Type="Messages"><ISIS_Ver>ver 1.0.0</ISIS_Ver><Store_ID>3</Store_ID><Security_Token>TOK</Security_Token><Terminal_POS_ID>21</Terminal_POS_ID><type>Broadcast</type></Transactional_Request>',
+    );
+  });
+  it("clear: type=ClearBroadcast + Source", () => {
+    expect(broadcastRequestXml(cfg, "ClearBroadcast", "77")).toContain("<type>ClearBroadcast</type><Source>77</Source></Transactional_Request>");
+  });
+  it("post: Broadcast=1, Terminal_POS_ID, Expires_On = now + minutes", () => {
+    const xml = broadcastPostXml(cfg, { subject: "Running behind", body: "15 min on entrées", minutes: 10 }, new Date(2026, 9, 16, 19, 38, 0));
+    expect(xml).toContain("<Send_Email>0</Send_Email><Send_SMS>0</Send_SMS><From_Employee_POS_ID></From_Employee_POS_ID><Broadcast>1</Broadcast><Terminal_POS_ID>21</Terminal_POS_ID><Subject>Running behind</Subject><Message_Body>15 min on entrées</Message_Body><Sent_On>2026-10-16 19:38:00</Sent_On><Expires_On>2026-10-16 19:48:00</Expires_On></Post_Message>");
+  });
+});

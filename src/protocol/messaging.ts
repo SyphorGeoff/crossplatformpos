@@ -180,3 +180,82 @@ export async function sendMessage(cfg: SessionConfig, p: OutgoingMessage): Promi
     return { ok: code === "100", message: textOf(findKey(parsed, "Status_Text")) || code || "No response", ids, smsResult: textOf(findKey(parsed, "SMS_Result")) };
   } catch (e) { return { ok: false, message: `server unreachable: ${String((e as Error).message ?? e)}`, ids: [], smsResult: "" }; }
 }
+
+/* =====================================================================
+ * Broadcasts — the store-wide notice board (messaging arc F4). Server side:
+ * Post_Message + Broadcast=1 (+Expires_On, Terminal_POS_ID); fetch with
+ * Trans_Type=Messages type=Broadcast (no Emp_POS_ID); ClearBroadcast records the
+ * FIRST terminal to clear (the hide itself is per terminal, on the device);
+ * RemoveBroadcast = the sender takes it down for everyone.
+ * ===================================================================== */
+
+export interface BroadcastNotice extends InboxMessage {
+  terminalPosId: string;  // sender terminal / KDS station (display)
+  expiresOn: string;      // "yyyy-MM-dd HH:mm:ss" server clock
+  ackTerminal: string;    // first terminal that cleared it ("" = unseen)
+  ackAt: string;
+}
+
+function parseBroadcastsXml(xml: string): BroadcastNotice[] {
+  const parsed = parseXmlResponse(xml);
+  if (findKey(parsed, "Message_Status") !== undefined) {
+    const code = textOf(findKey(parsed, "Status_Code"));
+    if (code !== "100") throw new Error(`${textOf(findKey(parsed, "Status_Text")) || "server error"} (${code || "?"})`);
+    return [];
+  }
+  const rows = findKey(parsed, "Message");
+  const list = Array.isArray(rows) ? rows : rows && typeof rows !== "string" ? [rows] : [];
+  return list.filter((r): r is XmlDict => typeof r !== "string").map((r) => {
+    const g = (k: string) => textOf(findKey(r, k));
+    return {
+      id: g("Message_ID"), fromEmpId: g("From_Employee_POS_ID"), fromName: g("From_Employee_Name"), toEmpId: g("To_Employee_POS_ID"),
+      subject: g("Subject"), body: g("Message_Body"), sentOn: g("Sent_On"), localNotified: g("LocalNotified") === "1",
+      eventId: g("Event_ID"), checkId: g("Check_ID"),
+      terminalPosId: g("Terminal_POS_ID"), expiresOn: g("Expires_On"), ackTerminal: g("Ack_Terminal"), ackAt: g("Ack_At"),
+    };
+  }).filter((m) => m.id);
+}
+
+/** `Trans_Type=Messages` with `type` and no Emp_POS_ID (broadcast lane). */
+export function broadcastRequestXml(cfg: SessionConfig, type: "Broadcast" | "ClearBroadcast" | "RemoveBroadcast", source = ""): string {
+  return `${XML_HEAD}${TRANS_DTD}<Transactional_Request Trans_Type="Messages">` +
+    el("ISIS_Ver", cfg.isisVer) + el("Store_ID", cfg.storeId) + el("Security_Token", cfg.token) +
+    el("Terminal_POS_ID", cfg.terminalPosId) + el("type", type) + (source ? el("Source", source) : "") + `</Transactional_Request>`;
+}
+
+export async function fetchBroadcasts(cfg: SessionConfig): Promise<BroadcastNotice[]> {
+  return parseBroadcastsXml(await postXml(apiServerAddress(cfg.enterpriseServerUrl), broadcastRequestXml(cfg, "Broadcast")));
+}
+
+/** Per-terminal clear: hides locally on the caller's side; the server records only the first. */
+export async function clearBroadcast(cfg: SessionConfig, id: string): Promise<void> {
+  try { await postXml(apiServerAddress(cfg.enterpriseServerUrl), broadcastRequestXml(cfg, "ClearBroadcast", id)); } catch { /* best effort */ }
+}
+
+/** The sender takes a notice down for everyone. */
+export async function removeBroadcast(cfg: SessionConfig, id: string): Promise<MessageResult> {
+  try {
+    const parsed = parseXmlResponse(await postXml(apiServerAddress(cfg.enterpriseServerUrl), broadcastRequestXml(cfg, "RemoveBroadcast", id)));
+    const code = textOf(findKey(parsed, "Status_Code"));
+    return { ok: code === "100", message: textOf(findKey(parsed, "Status_Text")) || code || "No response" };
+  } catch (e) { return { ok: false, message: `server unreachable: ${String((e as Error).message ?? e)}` }; }
+}
+
+/** Post a store-wide notice (Broadcast=1). `minutes` = lifetime (default 10). */
+export function broadcastPostXml(cfg: SessionConfig, p: { fromEmpId?: string; subject: string; body: string; minutes?: number }, now = new Date()): string {
+  const exp = new Date(now.getTime() + (p.minutes ?? 10) * 60_000);
+  return `${XML_HEAD}${DTD}<Post_Message>` +
+    el("ISIS_Ver", cfg.isisVer) + el("Store_ID", cfg.storeId) + el("Security_Token", cfg.token) +
+    el("Send_Email", "0") + el("Send_SMS", "0") + el("From_Employee_POS_ID", p.fromEmpId ?? "") +
+    el("Broadcast", "1") + el("Terminal_POS_ID", cfg.terminalPosId) +
+    el("Subject", p.subject) + el("Message_Body", p.body) + el("Sent_On", stamp(now)) + el("Expires_On", stamp(exp)) + `</Post_Message>`;
+}
+
+export async function sendBroadcast(cfg: SessionConfig, p: { fromEmpId?: string; subject: string; body: string; minutes?: number }): Promise<SendResult> {
+  try {
+    const parsed = parseXmlResponse(await postXml(apiServerAddress(cfg.enterpriseServerUrl), broadcastPostXml(cfg, p)));
+    const code = textOf(findKey(parsed, "Status_Code"));
+    const ids = textOf(findKey(parsed, "Message_IDs")).split(",").map((s) => s.trim()).filter(Boolean);
+    return { ok: code === "100", message: textOf(findKey(parsed, "Status_Text")) || code || "No response", ids, smsResult: "" };
+  } catch (e) { return { ok: false, message: `server unreachable: ${String((e as Error).message ?? e)}`, ids: [], smsResult: "" }; }
+}

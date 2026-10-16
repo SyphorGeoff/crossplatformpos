@@ -12,8 +12,10 @@
  * since we render vector, not PNGs).
  */
 
-import { useEffect, useState } from "react";
-import type { Settings } from "@/state/useSettings";
+import { useEffect, useRef, useState } from "react";
+import { ISIS_VER, type Settings } from "@/state/useSettings";
+import { loadJSON, saveJSON } from "@/platform/storage";
+import { clearBroadcast, fetchBroadcasts, type BroadcastNotice } from "@/protocol/messaging";
 import { checkForUpdate, installUpdate, installedVersion, reopenInstaller, type InstalledVersion, type UpdateInfo } from "@/platform/appupdate";
 
 export interface LoginEmployee { id: string; name: string; pin: string; }
@@ -32,6 +34,50 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
   onTerminalName?: () => void;
 }) {
   const [phase, setPhase] = useState<"id" | "pin">("id");
+
+  // Kitchen Board (messaging arc F4, approved mock 2026-10-16): the store's live
+  // broadcasts beside the keypad. Polled every 10 s while the keypad is up — the
+  // full tiny list each time. Clear hides a notice on THIS terminal only (a local
+  // cleared-ID set, pruned to what the server still lists, so it never grows) and
+  // tells the server once; the server records the first terminal to clear and the
+  // KDS shows "Seen" once. Expiry / the kitchen's Take down just drop it from the list.
+  const BOARD_MS = 10_000;
+  const CLEARED_KEY = "board.cleared.v1";
+  const [board, setBoard] = useState<BroadcastNotice[]>([]);
+  const cleared = useRef<Set<string>>(new Set(loadJSON<string[]>(CLEARED_KEY, [])));
+  const boardCfg = () => ({ enterpriseServerUrl: settings.enterpriseServerUrl, isisVer: ISIS_VER, storeId: settings.storeId, token: settings.token, terminalPosId: settings.terminalPosId });
+  useEffect(() => {
+    if (!settings.activated || !settings.token) return;
+    let alive = true;
+    let busy = false;
+    const tick = async () => {
+      if (busy) return; busy = true;
+      try {
+        const list = await fetchBroadcasts(boardCfg());
+        if (!alive) return;
+        const live = new Set(list.map((n) => n.id));
+        for (const id of [...cleared.current]) if (!live.has(id)) cleared.current.delete(id);
+        saveJSON(CLEARED_KEY, [...cleared.current]);
+        setBoard(list);
+      } catch { /* keep the last list */ }
+      finally { busy = false; }
+    };
+    void tick();
+    const t = window.setInterval(() => { void tick(); }, BOARD_MS);
+    return () => { alive = false; window.clearInterval(t); };
+  }, [settings.activated, settings.token, settings.storeId, settings.enterpriseServerUrl, settings.terminalPosId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const shown = board.filter((n) => !cleared.current.has(n.id));
+  const clearNotice = (id: string) => {
+    cleared.current.add(id); saveJSON(CLEARED_KEY, [...cleared.current]);
+    setBoard((b) => [...b]); // re-render
+    void clearBroadcast(boardCfg(), id);
+  };
+  const noticeFrom = (n: BroadcastNotice): string => {
+    if (n.fromName) { const [l, f] = n.fromName.split(","); return `${(f ?? "").trim()} ${(l ?? "").trim()}`.trim(); }
+    if (n.fromEmpId) { const e = lookup(n.fromEmpId); if (e) return e.name; }
+    return n.terminalPosId ? `Kitchen · ${n.terminalPosId}` : "Kitchen";
+  };
+  const hhmm = (s: string) => (s && s.length >= 16 ? s.slice(11, 16) : s);
   const [entry, setEntry] = useState("");
   const [emp, setEmp] = useState<LoginEmployee | null>(null);
   const [error, setError] = useState("");
@@ -152,6 +198,7 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
       {progressModal}
       {authModal}
       <div className="loginhead">AIREUS</div>
+      <div className="loginbody">
       <div className="loginpad">
         <div className="loginentry">{entry ? entry.replace(/./g, "•") : " "}</div>
         <div className="loginkeys">
@@ -166,6 +213,20 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
             : <div className="loginprompt">Enter ID Followed by Security<br />PIN</div>}
         {status ? <div className="loginstatus">{status}</div> : null}
         {updStatus ? <div className="loginstatus">{updStatus}</div> : null}
+      </div>
+      {shown.length > 0 && (
+        <aside className="bulletin">
+          <div className="bhead"><h2>Kitchen Board</h2><span>{shown.length} notice{shown.length === 1 ? "" : "s"}</span></div>
+          {shown.map((n) => (
+            <div key={n.id} className={`bitem ${/^86\b/i.test(n.subject) || /^86\b/i.test(n.body) ? "hot" : ""}`}>
+              <div className="bfrom">{noticeFrom(n)}</div><div className="btime">{hhmm(n.sentOn)}</div>
+              <div className="btext">{n.body || n.subject}</div>
+              <button className="bclear" onClick={() => clearNotice(n.id)}>Clear</button>
+            </div>
+          ))}
+          <div className="bexp">Notices clear themselves after 10 minutes</div>
+        </aside>
+      )}
       </div>
       <div className="loginfoot">
         <span className="lver">
