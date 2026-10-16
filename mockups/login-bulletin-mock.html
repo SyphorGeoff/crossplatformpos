@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Login keypad + bulletin board — APPROVED (Geoff 2026-10-16)</title>
+<style>
+:root {
+  --cream: #F5F1E8; --surface: #FBF8F2; --card: #FFFFFF;
+  --ink: #1A1A1A; --ink-soft: #4A4438; --ink-dim: #8A8271;
+  --gold: #C08A5E; --terra: #9B5E3B; --sage: #6F7559; --red: #8E2F2F; --green: #4F6B4A;
+  --line: rgba(26,26,26,.12); --line-soft: rgba(26,26,26,.08); --line-hard: rgba(26,26,26,.28);
+  --serif: "Hoefler Text", Georgia, "Times New Roman", serif;
+}
+html, body { height: 100%; margin: 0; }
+body { background: var(--cream); color: var(--ink); font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; }
+.login { position: fixed; inset: 0; background: var(--cream); color: var(--ink-soft); display: flex; flex-direction: column; align-items: center; padding: 28px 16px; }
+.loginhead { letter-spacing: .5em; font-size: 15px; color: var(--ink-dim); margin-top: 8px; padding-left: .5em; }
+.loginbody { flex: 1; width: 100%; display: flex; flex-direction: row-reverse; align-items: stretch; justify-content: center; gap: 48px; } /* keypad on the right for right-handers */
+.loginpad { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; width: min(420px, 92vw); }
+.loginentry { height: 30px; font-size: 24px; letter-spacing: 8px; color: var(--ink); }
+.loginkeys { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px 40px; width: 100%; }
+.lkey { background: none; border: none; color: var(--ink); font-size: 42px; font-weight: 200; padding: 14px 0; cursor: pointer; line-height: 1; text-align: center; }
+.lkey.word { font-size: 24px; font-weight: 300; color: var(--ink-soft); }
+.loginprompt { margin-top: 18px; font-size: 15px; color: var(--ink-dim); text-align: center; max-width: 240px; }
+.loginfoot { width: 100%; display: flex; justify-content: space-between; align-items: flex-end; font-size: 12px; color: var(--ink-dim); padding: 0 6px; }
+.loginfoot .ltag { color: var(--ink-dim); text-align: center; flex: 1; }
+.bulletin { width: min(400px, 40vw); display: flex; flex-direction: column; justify-content: center; gap: 12px; }
+.bhead { display: flex; align-items: baseline; justify-content: space-between; border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+.bhead h2 { margin: 0; font-family: var(--serif); font-size: 22px; font-weight: 700; color: var(--ink); }
+.bhead span { font-size: 11px; letter-spacing: .18em; color: var(--ink-dim); text-transform: uppercase; }
+.bitem { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; box-shadow: 0 2px 4px rgba(26,26,26,.06); display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; }
+.bitem.hot { border-color: var(--terra); }
+.bfrom { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-dim); }
+.btime { font-size: 11px; color: var(--ink-dim); text-align: right; }
+.btext { grid-column: 1 / -1; font-size: 16px; color: var(--ink); line-height: 1.3; }
+.bitem.hot .btext { font-weight: 600; }
+.bclear { grid-column: 1 / -1; justify-self: end; font: inherit; font-size: 12px; font-weight: 600; color: var(--ink-soft); background: none; border: 1px solid var(--line-hard); border-radius: 999px; padding: 4px 12px; cursor: pointer; }
+.bexp { font-size: 11px; color: var(--ink-dim); text-align: right; }
+</style>
+</head>
+<body>
+<div class="login">
+  <div class="loginhead">AIREUS</div>
+  <div class="loginbody">
+    <div class="loginpad">
+      <div class="loginentry"> </div>
+      <div class="loginkeys">
+        <button class="lkey">7</button><button class="lkey">8</button><button class="lkey">9</button>
+        <button class="lkey">4</button><button class="lkey">5</button><button class="lkey">6</button>
+        <button class="lkey">1</button><button class="lkey">2</button><button class="lkey">3</button>
+        <button class="lkey">0</button><button class="lkey word">Del</button><button class="lkey word">Ent</button>
+      </div>
+      <div class="loginprompt">Enter ID Followed by Security<br>PIN</div>
+    </div>
+    <aside class="bulletin">
+      <div class="bhead"><h2>Kitchen Board</h2><span>3 notices</span></div>
+      <div class="bitem hot"><div class="bfrom">Kitchen · Bar KDS</div><div class="btime">7:42 PM</div><div class="btext">86 Ribeye — out for the night</div><button class="bclear">Clear</button></div>
+      <div class="bitem"><div class="bfrom">Kitchen · KDS Dining</div><div class="btime">7:38 PM</div><div class="btext">Running 15 min behind on entrées, tell your tables</div><button class="bclear">Clear</button></div>
+      <div class="bitem"><div class="bfrom">Paul Manager</div><div class="btime">7:20 PM</div><div class="btext">Staff meeting after close, 5 minutes, everyone</div><button class="bclear">Clear</button></div>
+      <div class="bexp">Notices clear themselves after 10 minutes</div>
+    </aside>
+  </div>
+  <div class="loginfoot"><span>v1.19</span><span class="ltag">All new ways to do completely new things</span><span>Geoff 1</span></div>
+</div>
+</body>
+</html>

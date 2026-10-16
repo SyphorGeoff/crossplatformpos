@@ -63,7 +63,7 @@ Escape element text on the way out (`&`, `<`, `>`) in `getXML` — today a `<` i
 ### 2.3 `Transactional_Request.getTransXML` `case MESSAGE` (`:9893-9941`) — fetch
 
 - **F4 broadcast fetch**: new `type` value `Broadcast`: returns `<Messages>` of the store's messages with `broadcast=true` and not expired, regardless of `Emp_POS_ID`. Token validated as today (the KDS token or a POS terminal token both validate for the store).
-- **F4 clear**: new `type` value `ClearBroadcast` with `Source={Message_ID}`: marks that broadcast read (so the janitor drops it). Reply 100 "Broadcast cleared".
+- **F4 clear / ack** (decided with Geoff 2026-10-16): `type=ClearBroadcast` with `Source={Message_ID}` and the terminal in `Terminal_POS_ID`. **Clear is per terminal**: the POS hides the notice locally; the server does NOT remove the broadcast (other terminals still see it until expiry). The server records only the **first** ack (`ack_terminal`, `ack_at`) and ignores later ones, so the KDS sees exactly one state change per notice — "Seen · {terminal} · {time}" — however many terminals clear it. The broadcast fetch returns `Ack_Terminal` / `Ack_At`. The KDS's own "Take down" is a real store-wide removal (`type=RemoveBroadcast`, sender only).
 - **Default employee fetch**: unchanged, except it must ALSO return unexpired broadcasts? **No** — keep it exactly as today so iOS lists are unaffected; broadcasts are a separate fetch for the keypad only.
 - `getTOMESSXML` (`TransactionStore.java:1202-1223`) and `Message.getXML(empid, allEmps)` (`Message.java:127`): add `&& !expired(now)` to the unread filter so an expired-but-unread message never ships (F6).
 
