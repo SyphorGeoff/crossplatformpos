@@ -83,13 +83,9 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
     if (!update || progress) return;
     setUpdStatus("");
     setProgress({ pct: null, note: "Starting download…" });
-    const r = await installUpdate(
-      update,
-      (pct) => setProgress({ pct, note: "Downloading…" }),
-      (note) => setProgress({ pct: null, note }),
-    );
+    const r = await installUpdate(update, (pct) => setProgress({ pct, note: "Downloading…" }));
     if (r.outcome === "installing") setProgress({ pct: 100, note: "Downloaded. Android will now ask to install — tap Install / Update on its sheet." });
-    else if (r.outcome === "permission") setProgress({ pct: null, note: "Installs from Aireus POS were not allowed. Tap Update to try again.", failed: true });
+    else if (r.outcome === "permission") setProgress({ pct: null, note: "Allow installs from Aireus POS on the Android page that opened, then tap Update again.", failed: true });
     else setProgress({ pct: null, note: `Update failed: ${r.message ?? ""}`, failed: true });
   };
 

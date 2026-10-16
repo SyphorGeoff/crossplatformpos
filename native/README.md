@@ -62,7 +62,7 @@ keypad (ID then PIN of an employee with a Mgr_Menu job; "Manager required"
 otherwise): the APK downloads to the app's cache
 and the Android package installer takes over (same keystore → installs over the
 running build, settings kept). First time, Android asks to allow installs from
-Aireus POS; the download continues by itself when you come back. Not possible on iOS (Apple) — the
+Aireus POS; tap Update again afterwards. Not possible on iOS (Apple) — the
 plugin is absent there and the button never renders.
 
 `pos-version.json` (served from the same Tomcat `UpdateKit` folder as the APKs):

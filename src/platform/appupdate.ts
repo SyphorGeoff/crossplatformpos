@@ -65,36 +65,14 @@ export async function checkForUpdate(enterpriseServerUrl: string): Promise<Updat
 
 export type InstallOutcome = "installing" | "permission" | "failed";
 
-/** Resolves when the app has gone to the background and come back (the user
- *  returned from the Android settings page), or after two minutes. */
-function waitForReturn(): Promise<void> {
-  return new Promise((resolve) => {
-    let left = false;
-    const done = () => { document.removeEventListener("visibilitychange", h); clearTimeout(t); resolve(); };
-    const h = () => {
-      if (document.visibilityState === "hidden") left = true;
-      else if (left) done();
-    };
-    document.addEventListener("visibilitychange", h);
-    const t = setTimeout(done, 120000);
-  });
-}
-
-/** Download and hand to the installer. If installs from this app are not yet
- *  allowed, the Android page for that permission opens and the download starts
- *  by itself when the user comes back having allowed it — no second tap.
- *  "permission" = they came back without allowing it. */
-export async function installUpdate(info: UpdateInfo, onProgress?: (pct: number) => void, onNote?: (text: string) => void): Promise<{ outcome: InstallOutcome; message?: string }> {
+/** Download and hand to the installer. "permission" = installs from this app are
+ *  not yet allowed (first run only): the Android page for it was opened; the user
+ *  allows it there and taps Update again. */
+export async function installUpdate(info: UpdateInfo, onProgress?: (pct: number) => void): Promise<{ outcome: InstallOutcome; message?: string }> {
   const p = plugin();
   if (!p) return { outcome: "failed", message: "Not available on this platform" };
   try {
-    if (!(await p.canInstall()).ok) {
-      onNote?.("Allow installs from Aireus POS, then come back");
-      const back = waitForReturn();
-      await p.requestInstallPermission();
-      await back;
-      if (!(await p.canInstall()).ok) return { outcome: "permission" };
-    }
+    if (!(await p.canInstall()).ok) { await p.requestInstallPermission(); return { outcome: "permission" }; }
     const sub = await Promise.resolve(p.addListener("progress", (e) => onProgress?.(e.pct)));
     try {
       const r = await p.install({ url: info.url });
