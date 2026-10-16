@@ -99,6 +99,12 @@ Last updated: 2026-10-08
 |---|---|---|
 | Fire by waiter (Fire Course button) and KDS hold / unfired state (C07–C09) | Parked (Geoff 2026-10-13). Not every restaurant fires by waiter; the industry-standard flow is everything sent, then a "fire" item. The held/unfired status is a complication that must never appear at a site that doesn't use it, on either app. | Write a real spec, not Paul's MD. POS: add an optional revenue-centre flag (e.g. `fireCourse`); absent = no Fire Course button, headers show only pending/sent. KDS: already silent unless a printer carries `holdUnfiredCourses` — keep it that way. Decide whether "fire" also works as a plain menu item. Guard against the kitchen never making a held item because the server forgot. Optional on BOTH apps, default off. |
 
+## Pinned — standalone / offline mode ("the arc of arcs", Geoff 2026-10-16)
+
+| Item | Note |
+|---|---|
+| Dead network behaviour | Today a dead network keeps the cache and retries next time (iOS re-authorises only when the server is reachable). Standalone mode will own this: what the POS does with no server at all — orders, payments, queued posts, token/assignment handling. Not started; its own arc after messaging and make-it-a-combo. |
+
 ## Server bugs (back office / HBroker) — fix later
 
 | Bug | Found | Effect on the POS | Status |
