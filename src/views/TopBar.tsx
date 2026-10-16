@@ -20,6 +20,8 @@ export interface TopBarProps {
   canSendExit: boolean;  // Send — enabled whenever there's a check (re-confirms + exits even with no changes)
   canPay: boolean;
   sending: boolean;
+  onMessages?: () => void;
+  unread?: number;       // inbox badge (server-side unread = list length)
 }
 
 export default function TopBar(p: TopBarProps) {
@@ -32,6 +34,7 @@ export default function TopBar(p: TopBarProps) {
         <button className="tbbtn" onClick={p.onHub} disabled={p.sending}><i>◎</i>Dashboard</button>
         <button className={`tbbtn ${p.editing ? "on" : ""}`} onClick={p.onEdit} disabled={p.sending}><i>✎</i>Edit</button>
         <button className="tbbtn" onClick={p.onPrint} disabled={p.sending || !p.onPrint} title={p.onPrint ? "Print check" : "Print — add items first"}><i>⎙</i>Print</button>
+        {p.onMessages && <button className="tbbtn" onClick={p.onMessages} disabled={p.sending}><i>✉</i>Messages{p.unread ? <span className="tbbadge">{p.unread}</span> : null}</button>}
       </div>
       <div className="tbfire">
         <button className="tbpill" onClick={p.onSendStay} disabled={p.sending || !p.canSend}>Send &amp; Stay</button>

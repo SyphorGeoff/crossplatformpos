@@ -6,6 +6,7 @@
  */
 
 export interface ManagerMenuActions {
+  messages?: () => void;          // inbox (MessagesViewController via the manager menu's mail button)
   queryByTable?: () => void;      // table layout
   openChecks?: () => void;        // open checks list
   mergeChecks?: () => void;
@@ -34,6 +35,7 @@ export interface ManagerMenuActions {
 // Print Group Test, Drawer Assignment, Add Tips, Terminal Read, Server Read, Pulse Report,
 // Reports, Unposted Checks, Terminal. The iPad's grid had them; the cross-platform POS does not.
 const ORDER: { key: keyof ManagerMenuActions; label: string }[] = [
+  { key: "messages", label: "Messages" },
   { key: "queryByTable", label: "Query By Table" },
   { key: "openChecks", label: "Open Checks" },
   { key: "mergeChecks", label: "Merge Checks" },
@@ -44,8 +46,8 @@ const ORDER: { key: keyof ManagerMenuActions; label: string }[] = [
   { key: "openEmptyCheck", label: "Open Empty Check" },
 ];
 
-export default function ManagerMenu({ storeName, employeeName, jobName, status, busy, actions }: {
-  storeName: string; employeeName: string; jobName: string; status?: string; busy?: boolean; actions: ManagerMenuActions;
+export default function ManagerMenu({ storeName, employeeName, jobName, status, busy, actions, unread = 0 }: {
+  storeName: string; employeeName: string; jobName: string; status?: string; busy?: boolean; actions: ManagerMenuActions; unread?: number;
 }) {
   return (
     <div className="editcheck mgrmenu">
@@ -61,7 +63,7 @@ export default function ManagerMenu({ storeName, employeeName, jobName, status, 
           const fn = actions[key];
           return (
             <button key={key} className="ecfn" onClick={fn} disabled={!fn || busy} title={fn ? label : `${label} — not built yet`}>
-              <span className="ecfnlabel">{label}</span>
+              <span className="ecfnlabel">{label}{key === "messages" && unread ? <span className="tbbadge">{unread}</span> : null}</span>
             </button>
           );
         })}

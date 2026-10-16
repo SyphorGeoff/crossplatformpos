@@ -22,6 +22,9 @@ import ManagerAuth from "./ManagerAuth";
 import ClockInGate from "./ClockInGate";
 import TopBar from "./TopBar";
 import TabsView from "./TabsView";
+import MessagesView, { type ComposeTarget } from "./MessagesView";
+import { useMessages } from "@/state/useMessages";
+import { sendMessage, type InboxMessage } from "@/protocol/messaging";
 import EditCheck, { type EditCheckActions } from "./EditCheck";
 import SplitCheck, { type SplitKind, type SplitPlan } from "./SplitCheck";
 import NumberPad from "./NumberPad";
@@ -38,7 +41,7 @@ import {
   rootScreenGroups, searchItems, type Catalog, type ModifierStep,
 } from "@/model/menu";
 import {
-  adjustmentDepartments, adjustments as loadAdjustments, diningRooms, diningTables, employees, isNativeGift, isNativeLoyalty,
+  adjustmentDepartments, adjustments as loadAdjustments, diningRooms, diningTables, employeeJobs, employees, isNativeGift, isNativeLoyalty, jobs,
   storeConfig, tenders as loadTenders, voidReasons,
 } from "@/model/catalog";
 import type { Adjustment, DiningTable, Employee, Job, MenuItem, ScreenGroup } from "@/model/catalog";
@@ -115,7 +118,9 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
   const [sendError, setSendError] = useState("");
   const [bdid, setBdid] = useState("");
   const [showPay, setShowPay] = useState(false);
-  const [mode, setMode] = useState<"floor" | "order" | "tabs" | "manager">("order");
+  const [mode, setMode] = useState<"floor" | "order" | "tabs" | "manager" | "messages">("order");
+  const [modeBeforeMessages, setModeBeforeMessages] = useState<"floor" | "order" | "tabs" | "manager">("order");
+  const [toast, setToast] = useState<InboxMessage | null>(null); // the iOS local notification, in-app
   // 86 / item countdown (MenuItemCountManager): server counts + local rung offsets
   const [counts, setCounts] = useState<ItemCounts>(emptyCounts);
   const [itemPopup, setItemPopup] = useState<MenuItem | null>(null);                    // long-press popup
@@ -473,6 +478,35 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     enterpriseServerUrl: settings.enterpriseServerUrl, isisVer: ISIS_VER,
     storeId: settings.storeId, token: settings.token, terminalPosId: settings.terminalPosId,
   });
+
+  // Inbox (messaging arc F1): 5 s poll while signed in; a never-seen message pops a toast
+  // (the out-of-stock notice lands here — R43). Messages screen is an overlay mode that
+  // returns to wherever it was opened from; it never touches the working check.
+  const msgs = useMessages(sessionCfg, employee?.id ?? null, (m) => setToast(m));
+  useEffect(() => { if (!toast) return; const t = window.setTimeout(() => setToast(null), 8000); return () => window.clearTimeout(t); }, [toast]);
+  const openMessages = () => { if (mode !== "messages") setModeBeforeMessages(mode); setMode("messages"); setToast(null); };
+  const closeMessages = () => setMode(modeBeforeMessages);
+  const sendFromCompose = async (t: ComposeTarget): Promise<string> => {
+    if (!employee) return "Not signed in";
+    const base = { fromEmpId: employee.id, subject: t.subject, body: t.body };
+    const results = t.toEmpIds.length
+      ? await Promise.all(t.toEmpIds.map((toEmpId) => sendMessage(sessionCfg(), { ...base, toEmpId })))
+      : [await sendMessage(sessionCfg(), { ...base, email: t.email, phone: t.phone })];
+    const failed = results.filter((r) => !r.ok);
+    if (failed.length) return `Send failed: ${failed[0].message}`;
+    const sms = results.find((r) => r.smsResult)?.smsResult;
+    return t.toEmpIds.length ? `Sent to ${results.length} employee${results.length === 1 ? "" : "s"}` : sms && sms !== "Success" ? `Text: ${sms}` : "Sent";
+  };
+  // Check For Messages On Sign In (Job.check_for_messages_on_signin): once per sign-in,
+  // after the first poll, open the inbox if it has anything (LoginViewController.m:1065-1136).
+  const signInMsgChecked = useRef(false);
+  useEffect(() => {
+    if (!employee || !clock) { signInMsgChecked.current = false; return; }
+    if (signInMsgChecked.current || msgs.pollCount === 0) return;
+    signInMsgChecked.current = true;
+    const job = empJobs.find((j) => j.id === clock.jobId);
+    if (job?.checkForMessagesOnSignIn && msgs.messages.length > 0) openMessages();
+  }, [employee, clock, msgs.pollCount]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const ensureBd = async (): Promise<string> => {
     let bd = bdid;
@@ -1327,12 +1361,21 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
         </div>
   ) : null;
 
+  // In-app stand-in for the iOS local notification: tap = open the inbox; fades after 8 s.
+  const toastEl = toast ? (
+    <div className="msgtoast" onClick={openMessages}>
+      <div className="mtfrom">{toast.fromName ? toast.fromName.split(",").reverse().join(" ").trim() : (empList.find((e) => e.id === toast.fromEmpId)?.name ?? "Message")}</div>
+      <div className="mttext">{toast.subject ? `${toast.subject}: ${toast.body}` : toast.body}</div>
+    </div>
+  ) : null;
+
   if (mode === "manager") {
     return (<>
       <ManagerMenu
         storeName={settings.storeName || settings.storeId} employeeName={employee.name} jobName={clock.jobName}
-        status={mgrStatus} busy={mgrBusy}
+        status={mgrStatus} busy={mgrBusy} unread={msgs.unread}
         actions={{
+          messages: () => openMessages(),
           queryByTable: () => { if (blockIfUnsent()) return; setMode("floor"); void refreshOpenChecks(); },
           openChecks: () => { if (blockIfUnsent()) return; setTabsFromManager(true); setMode("tabs"); void refreshOpenChecks(); },
           clockOut: () => void doClockOut(),
@@ -1341,6 +1384,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
         }}
       />
       {terminalConfirm}
+      {toastEl}
       {unsentModal}
     </>);
   }
@@ -1348,6 +1392,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
   if (mode === "floor") {
     return (<>
       {coverPad}
+      {toastEl}
       {showHub && hubMenu}
       {showManager && perms && (
         <ManagerPanel
@@ -1366,6 +1411,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
         occupancy={occupancy}
         onPick={pickTable}
         onQuickSale={quickSale}
+        onMessages={openMessages} unread={msgs.unread}
         onRefresh={refreshOpenChecks}
         onSignOut={() => void doSignOut()}
         onDashboard={() => setShowHub(true)}
@@ -1637,6 +1683,32 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     transferItem: canTransferItem ? () => requireAuth(false, "Authorize transfer item", "transfer", (a) => openSplit("lixfer", a, new Set(sel))) : undefined,
   };
 
+  if (mode === "messages") {
+    const mgrJobs = empJobs.some((j) => j.mgrMenu) ? jobs().filter((j) => !j.timeclockOnly).map((j) => ({ id: j.id, name: j.name })) : [];
+    return (
+      <div className="pos">
+        <TopBar
+          onLogout={() => void doSignOut()} onTables={() => { closeMessages(); void goToFloor(); }} onTabs={() => { closeMessages(); void goToTabs(); }}
+          onHub={() => setShowHub(true)} onEdit={() => {}} editing={false}
+          onSendStay={() => {}} onSend={() => {}} onPay={() => {}}
+          canSend={false} canSendExit={false} canPay={false} sending={false}
+          onMessages={closeMessages} unread={msgs.unread}
+        />
+        <MessagesView
+          messages={msgs.messages} loading={msgs.loading} error={msgs.error}
+          empName={(id) => empList.find((e) => e.id === id)?.name ?? ""}
+          employees={empList.filter((e) => e.id !== employee.id).map((e) => ({ id: e.id, name: e.name }))}
+          jobs={mgrJobs}
+          employeesInJob={(jobId) => employeeJobs().filter((ej) => ej.jobId === jobId).map((ej) => ej.empId)}
+          onBack={closeMessages} onRefresh={() => void msgs.refresh()}
+          onMarkRead={(id) => void msgs.markRead(id)} onMarkAllRead={() => void msgs.markAllRead()}
+          onSend={sendFromCompose}
+        />
+        {showHub && hubMenu}
+      </div>
+    );
+  }
+
   if (mode === "tabs") {
     return (
       <div className="pos">
@@ -1645,6 +1717,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
           onHub={() => setShowHub(true)} onEdit={() => {}} editing={false}
           onSendStay={() => {}} onSend={() => {}} onPay={() => {}}
           canSend={false} canSendExit={false} canPay={false} sending={floorLoading}
+          onMessages={openMessages} unread={msgs.unread}
         />
         <TabsView
           openChecks={openChecks}
@@ -1674,6 +1747,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
         onPrint={ck.check.lines.length ? () => withTabName(() => void doPrintCheck()) : undefined}
         onSendStay={() => withTabName(() => void doSendStay())} onSend={() => withTabName(() => void doSend2())} onPay={() => withTabName(() => void openPay())}
         canSend={unsentLines(ck.check).length > 0} canSendExit={ck.check.lines.length > 0} canPay={ck.check.lines.length > 0} sending={sending}
+        onMessages={openMessages} unread={msgs.unread}
       />
       <div className="subbar">
         <div className="ident"><b>{settings.storeName || settings.storeId}</b><span>{settings.terminalName || settings.terminalPosId} · {employee.name}{ck.check.diningTableId ? ` · Table ${tableNumberOf(ck.check.diningTableId)}` : ""}</span></div>
@@ -1797,6 +1871,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
         <NumberPad title="Enter Price" sub={pricePrompt.item.name} mode="money" onOk={finishPrice} onCancel={() => setPricePrompt(null)} />
       )}
       {coverPad}
+      {toastEl}
       {tabNamePrompt && (
         <div className="backdrop" onClick={() => setTabNamePrompt(null)}>
           <div className="authbox" onClick={(e) => e.stopPropagation()}>

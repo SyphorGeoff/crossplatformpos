@@ -87,8 +87,8 @@ Last updated: 2026-10-08
 | Log in to the back office from the manager menu | Out of scope | Back Office tile removed for good (Geoff 2026-10-16) |
 | Logout After Payment feature | Built | Revenue center logoutAfterPayment returns to the login keypad after close |
 | Create Tab From Table Layout feature | Not started | |
-| Check For Messages On Sign In feature | Not started | BUG (Geoff 2026-10-16): the out-of-stock notice is sent but never RECEIVED/shown on Android, where iOS pops the alert — first deliverable of the messaging arc |
-| Send and receive a message (internal and email) | Not started | Only the outbound check-transfer notice exists |
+| Check For Messages On Sign In feature | Built | Job.check_for_messages_on_signin: after the first poll at sign-in, the inbox opens when it has messages. Awaiting live test |
+| Send and receive a message (internal and email) | Built | Inbox: 5 s poll while signed in (Messages fetch), badge on the top bar / floor / Manager's Menu, list sortable by Sent / Subject / From, detail with Done = Mark_Messages_Read, Mark All Read, toast for a never-seen message (the out-of-stock alert, R43) + LocalNotified. Compose: Internal (one employee, or jobs for manager-menu jobs, one Post_Message per employee), Email, Text. Awaiting live test |
 | KDS → POS broadcast message | Not started | Kitchen staff alert all staff via a new BULLETIN BOARD on the POS login screen, beside the pin pad (Geoff 2026-10-13); sent through the message API to all POS users; expires after ~10 min or when a user clears it. Not a fire |
 | Kitchen message from a sent line | Not started | Long-press a sent/fired check line → pills with default notes (e.g. Delay) sent to every printer/KDS that printed that item: a note chit on paper, a message document on the KDS. Pill list to confirm with Paul |
 | Manager transfer check from the manager menu | Not started | Transfer All button present, disabled |

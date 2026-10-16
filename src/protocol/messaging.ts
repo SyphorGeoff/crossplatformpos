@@ -6,7 +6,7 @@
  * link to the web receipt (mobile/aireuspay). Success = Status_Code=="100".
  */
 
-import { apiServerAddress, findKey, parseXmlResponse, postXml, textOf } from "./hbroker";
+import { apiServerAddress, findKey, parseXmlResponse, postXml, textOf, type XmlDict } from "./hbroker";
 import { escapeXml, type SessionConfig } from "./order";
 
 const XML_HEAD = '<?xml version="1.0" encoding="UTF-8"?>';
@@ -71,4 +71,112 @@ export async function sendEmployeeNotice(cfg: SessionConfig, p: { fromEmpId: str
     const code = textOf(findKey(parsed, "Status_Code"));
     return { ok: code === "100", message: textOf(findKey(parsed, "Status_Text")) || code || "No response" };
   } catch (e) { return { ok: false, message: `server unreachable: ${String((e as Error).message ?? e)}` }; }
+}
+
+/* =====================================================================
+ * Inbox (messaging arc F1/F2, MESSAGING_API.md §3–§4; iOS MessagingManager.m)
+ * ===================================================================== */
+
+const TRANS_DTD = '<!DOCTYPE Transactional_Request SYSTEM "Transactions/Post_Messages/Transactional_Request.dtd">';
+const READ_DTD = '<!DOCTYPE Mark_Messages_Read SYSTEM "Transactions/Post_Messages/Mark_Messages_Read.dtd">';
+
+/** One inbox message as the `Messages` fetch returns it (Message.java:128-164). */
+export interface InboxMessage {
+  id: string;             // Message_ID
+  fromEmpId: string;      // From_Employee_POS_ID
+  fromName: string;       // From_Employee_Name ("Last,First") when the sender is a known employee, else ""
+  toEmpId: string;
+  subject: string;
+  body: string;
+  sentOn: string;         // Sent_On as the sender stamped it
+  localNotified: boolean; // LocalNotified "1" — a device already popped it
+  eventId: string;
+  checkId: string;
+}
+
+/** Fetch my unread messages (MessagingManager.m:95-100). `type`/`source` = the
+ *  LocalNotified variant (:180-186). Byte order matches iOS. */
+export function messagesRequestXml(cfg: SessionConfig, empPosId: string, opts: { type?: string; source?: string } = {}): string {
+  const extra = opts.type ? el("type", opts.type) + el("Source", opts.source ?? "") : "";
+  return `${XML_HEAD}${TRANS_DTD}<Transactional_Request Trans_Type="Messages">` +
+    el("ISIS_Ver", cfg.isisVer) + el("Store_ID", cfg.storeId) + el("Security_Token", cfg.token) +
+    el("Emp_POS_ID", empPosId) + extra + `</Transactional_Request>`;
+}
+
+/** Parse `<Messages><Message>…</Message>…</Messages>`. Tolerates the empty reply
+ *  (`<Messages></Messages>`), ISIS_Version vs ISIS_Ver, and the two element
+ *  orders the server emits. A Message_Status reply (e.g. 400 Invalid Token) throws. */
+export function parseMessagesXml(xml: string): InboxMessage[] {
+  const parsed = parseXmlResponse(xml);
+  const status = findKey(parsed, "Message_Status");
+  if (status !== undefined) {
+    const code = textOf(findKey(parsed, "Status_Code"));
+    const text = textOf(findKey(parsed, "Status_Text"));
+    if (code !== "100") throw new Error(`${text || "server error"} (${code || "?"})`);
+    return [];
+  }
+  const rows = findKey(parsed, "Message");
+  const list = Array.isArray(rows) ? rows : rows && typeof rows !== "string" ? [rows] : [];
+  return list
+    .filter((r): r is XmlDict => typeof r !== "string")
+    .map((r) => {
+      const g = (k: string) => textOf(findKey(r, k));
+      return {
+        id: g("Message_ID"), fromEmpId: g("From_Employee_POS_ID"), fromName: g("From_Employee_Name"),
+        toEmpId: g("To_Employee_POS_ID"), subject: g("Subject"), body: g("Message_Body"), sentOn: g("Sent_On"),
+        localNotified: g("LocalNotified") === "1", eventId: g("Event_ID"), checkId: g("Check_ID"),
+      };
+    })
+    .filter((m) => m.id);
+}
+
+export async function fetchMessages(cfg: SessionConfig, empPosId: string): Promise<InboxMessage[]> {
+  return parseMessagesXml(await postXml(apiServerAddress(cfg.enterpriseServerUrl), messagesRequestXml(cfg, empPosId)));
+}
+
+/** Tell the server a device has popped this message (iOS :171-195). Fire and forget. */
+export async function setLocalNotified(cfg: SessionConfig, empPosId: string, messageId: string): Promise<void> {
+  try { await postXml(apiServerAddress(cfg.enterpriseServerUrl), messagesRequestXml(cfg, empPosId, { type: "LocalNotified", source: messageId })); }
+  catch { /* best effort */ }
+}
+
+/** Mark one message read (MessagingManager.m:378-383): one Message_ID per request,
+ *  no Emp_POS_ID. The server processes only the first ID it finds. */
+export function markReadXml(cfg: SessionConfig, messageId: string): string {
+  return `${XML_HEAD}${READ_DTD}<Mark_Messages_Read>` +
+    el("ISIS_Ver", cfg.isisVer) + el("Store_ID", cfg.storeId) + el("Security_Token", cfg.token) +
+    el("Message_ID", messageId) + `</Mark_Messages_Read>`;
+}
+
+export async function markRead(cfg: SessionConfig, messageId: string): Promise<MessageResult> {
+  try {
+    const parsed = parseXmlResponse(await postXml(apiServerAddress(cfg.enterpriseServerUrl), markReadXml(cfg, messageId)));
+    const code = textOf(findKey(parsed, "Status_Code"));
+    return { ok: code === "100", message: textOf(findKey(parsed, "Status_Text")) || code || "No response" };
+  } catch (e) { return { ok: false, message: `server unreachable: ${String((e as Error).message ?? e)}` }; }
+}
+
+/** Generic send (MessagingManager.m sendMessage :201-258), exact iOS element order:
+ *  ISIS_Ver, Store_ID, Security_Token, Send_Email[+Email_Address] | Send_Email 0,
+ *  Send_SMS[+Phone_Number] | Send_SMS 0, From, [To + Send_Internal 1], Subject, Body, Sent_On. */
+export interface OutgoingMessage { fromEmpId: string; toEmpId?: string; email?: string; phone?: string; subject: string; body: string; }
+export function postMessageXml(cfg: SessionConfig, p: OutgoingMessage, now = new Date()): string {
+  const email = p.email?.trim() ? el("Send_Email", "1") + el("Email_Address", p.email.trim()) : el("Send_Email", "0");
+  const sms = p.phone?.trim() ? el("Send_SMS", "1") + el("Phone_Number", p.phone.trim()) : el("Send_SMS", "0");
+  const to = p.toEmpId ? el("To_Employee_POS_ID", p.toEmpId) + el("Send_Internal", "1") : "";
+  return `${XML_HEAD}${DTD}<Post_Message>` +
+    el("ISIS_Ver", cfg.isisVer) + el("Store_ID", cfg.storeId) + el("Security_Token", cfg.token) +
+    email + sms + el("From_Employee_POS_ID", p.fromEmpId) + to +
+    el("Subject", p.subject) + el("Message_Body", p.body) + el("Sent_On", stamp(now)) + `</Post_Message>`;
+}
+
+/** Send result; `ids` / `smsResult` arrive once the server returns them (arc F8). */
+export interface SendResult extends MessageResult { ids: string[]; smsResult: string; }
+export async function sendMessage(cfg: SessionConfig, p: OutgoingMessage): Promise<SendResult> {
+  try {
+    const parsed = parseXmlResponse(await postXml(apiServerAddress(cfg.enterpriseServerUrl), postMessageXml(cfg, p)));
+    const code = textOf(findKey(parsed, "Status_Code"));
+    const ids = textOf(findKey(parsed, "Message_IDs")).split(",").map((s) => s.trim()).filter(Boolean);
+    return { ok: code === "100", message: textOf(findKey(parsed, "Status_Text")) || code || "No response", ids, smsResult: textOf(findKey(parsed, "SMS_Result")) };
+  } catch (e) { return { ok: false, message: `server unreachable: ${String((e as Error).message ?? e)}`, ids: [], smsResult: "" }; }
 }

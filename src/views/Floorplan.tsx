@@ -21,6 +21,8 @@ export interface FloorplanProps {
   occupancy: Map<string, OpenCheck>;
   onPick: (table: DiningTable, occ?: OpenCheck) => void;
   onQuickSale: () => void;
+  onMessages?: () => void;
+  unread?: number;
   onRefresh: () => void;
   onSignOut: () => void;
   onDashboard: () => void;         // iOS Dashboard (functions: clock in/out, no sale, …)
@@ -64,6 +66,7 @@ export default function Floorplan(p: FloorplanProps) {
         <div className="tools">
           <button className="station" onClick={p.onRefresh} disabled={p.loading}>{p.loading ? "…" : "Refresh"}</button>
           <button className="station" onClick={p.onQuickSale}>Quick sale</button>
+          {p.onMessages && <button className="station" onClick={p.onMessages}>Messages{p.unread ? <span className="tbbadge">{p.unread}</span> : null}</button>}
           <button className="station" onClick={p.onDashboard}>Dashboard</button>
           <button className="station" onClick={p.onSignOut}>Sign Out</button>
         </div>

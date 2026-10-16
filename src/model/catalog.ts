@@ -438,6 +438,7 @@ export interface Job {
   skipTable: boolean;       // Skip_Table (counter/quick job — no default dining room)
   stopClockInChit: boolean; // isStopClockInChit — suppress the clock-in chit print
   seeAllChecks: boolean;
+  checkForMessagesOnSignIn: boolean; // check_for_messages_on_signin (Job.m:234) — auto-open the inbox at sign-in when it has messages
   enableBreak: boolean;
   breakLength: number;
   _raw: DefRow;
@@ -463,6 +464,7 @@ export function jobs(): Job[] {
     skipTable: s(r, "Skip_Table") === "1",
     stopClockInChit: s(r, "job_backup6") === "1",  // isStopClockInChit — suppress the clock-in chit
     seeAllChecks: s(r, "see_All_Checks") === "1",
+    checkForMessagesOnSignIn: s(r, "check_for_messages_on_signin") === "1",
     enableBreak: s(r, "enable_Break") === "1",
     breakLength: Number(s(r, "break_Length")) || 0,
     _raw: r,
