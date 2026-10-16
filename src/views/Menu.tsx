@@ -124,6 +124,8 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
   const [addingCourse, setAddingCourse] = useState(0);
   const [coursePick, setCoursePick] = useState<{ mode: "adding" } | { mode: "lines"; keys: string[] } | null>(null);
   const [showHub, setShowHub] = useState(false);
+  const [tabsFromManager, setTabsFromManager] = useState(false); // Open Checks opened from the Manager's Menu → back goes there
+  const [tabsMineOnly, setTabsMineOnly] = useState(true);        // open-checks list: mine (default) or everyone's (job see_All_Checks)
   const [editing, setEditing] = useState(false);
   const [sel, setSel] = useState<Set<string>>(new Set()); // selected line keys in Edit mode
   const [adjPick, setAdjPick] = useState<null | "discount" | "service">(null);
@@ -602,7 +604,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
   /** Open the Tabs list — every open check (counter tabs + tables), to pick up. */
   const goToTabs = async () => {
     if (!(await parkCheck())) return;
-    setTransferMode(false); setMode("tabs");
+    setTabsFromManager(false); setTransferMode(false); setMode("tabs");
     void refreshOpenChecks();
   };
 
@@ -1267,6 +1269,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     <div className="backdrop" onClick={() => setShowHub(false)}>
       <div className="hubbox" onClick={(e) => e.stopPropagation()}>
         <div className="hubtitle">{settings.storeName || settings.storeId} · {employee.name}</div>
+        <button className="hubrow" onClick={() => { setShowHub(false); void goToTabs(); }}>Open checks</button>
         <button className="hubrow" onClick={() => { setShowHub(false); if (blockIfUnsent()) return; setMgrStatus(""); setShowManager(true); }}>Functions</button>
         <button className="hubrow" onClick={() => { setShowHub(false); if (blockIfUnsent()) return; onChangeStation(); }}>Change station</button>
         <button className="hubrow danger" onClick={() => { setShowHub(false); void doSignOut(); }}>Sign Out</button>
@@ -1331,7 +1334,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
         status={mgrStatus} busy={mgrBusy}
         actions={{
           queryByTable: () => { if (blockIfUnsent()) return; setMode("floor"); void refreshOpenChecks(); },
-          openChecks: () => { if (blockIfUnsent()) return; setMode("tabs"); void refreshOpenChecks(); },
+          openChecks: () => { if (blockIfUnsent()) return; setTabsFromManager(true); setMode("tabs"); void refreshOpenChecks(); },
           clockOut: () => void doClockOut(),
           terminal: () => setConfirmTerminal(true),
           exit: () => void doSignOut(),
@@ -1652,6 +1655,11 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
           onRefresh={refreshOpenChecks}
           loading={floorLoading}
           status={floorStatus}
+          onBack={tabsFromManager ? () => { setTabsFromManager(false); setMode("manager"); } : undefined}
+          myEmpId={employee.id}
+          mineOnly={tabsMineOnly}
+          canSeeAll={!!clock && !!empJobs.find((j) => j.id === clock.jobId)?.seeAllChecks}
+          onToggleMine={() => setTabsMineOnly((v) => !v)}
         />
         {showHub && hubMenu}
       </div>

@@ -479,3 +479,4 @@ body { background: var(--cream); color: var(--ink); font-family: "Helvetica Neue
 .mgrmenu { height: 100vh; }
 .mgrmenu .ecfn { min-height: 72px; }
 .mgrmenu .ecfn.exit { background: var(--ink); color: var(--cream); border-color: var(--ink); }
+.mgrmenu .ecfn.exit .ecfnlabel { color: var(--cream); }

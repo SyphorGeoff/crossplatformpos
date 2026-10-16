@@ -63,9 +63,9 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
   const doUpdate = async () => {
     if (!update) return;
     setUpdStatus("Downloading update…");
-    const r = await installUpdate(update, (pct) => setUpdStatus(`Downloading update… ${pct}%`));
+    const r = await installUpdate(update, (pct) => setUpdStatus(`Downloading update… ${pct}%`), setUpdStatus);
     if (r.outcome === "installing") setUpdStatus("Follow the Android installer to finish");
-    else if (r.outcome === "permission") setUpdStatus("Allow installs from Aireus POS, then tap Update again");
+    else if (r.outcome === "permission") setUpdStatus("Installs from Aireus POS were not allowed — tap Update to try again");
     else setUpdStatus(`Update failed: ${r.message ?? ""}`);
   };
 

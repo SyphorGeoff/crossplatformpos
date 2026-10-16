@@ -16,6 +16,14 @@ export interface TabsViewProps {
   onRefresh: () => void;
   loading: boolean;
   status?: string;
+  /** Opened from the Manager's Menu → a way back to it. */
+  onBack?: () => void;
+  /** Open-checks visibility: default = only the signed-in employee's checks; a job
+   *  with see_All_Checks may toggle to everyone's (Geoff 2026-10-16). */
+  myEmpId: string;
+  mineOnly: boolean;
+  canSeeAll: boolean;
+  onToggleMine: () => void;
 }
 
 function statusOf(oc: OpenCheck): { label: string; cls: string } {
@@ -26,13 +34,17 @@ function statusOf(oc: OpenCheck): { label: string; cls: string } {
 }
 
 export default function TabsView(p: TabsViewProps) {
-  const rows = [...p.openChecks].sort((a, b) => (b.lastModified || "").localeCompare(a.lastModified || ""));
+  const rows = [...p.openChecks]
+    .filter((oc) => !p.mineOnly || oc.empPosId === p.myEmpId)
+    .sort((a, b) => (b.lastModified || "").localeCompare(a.lastModified || ""));
 
   return (
     <div className="tabsview">
       <div className="tabshead">
-        <h1>Open Tabs</h1>
+        <h1>{p.mineOnly ? "My Open Checks" : "All Open Checks"}</h1>
         <div className="tabstools">
+          {p.onBack && <button className="tbbtn" onClick={p.onBack}>‹ Manager's Menu</button>}
+          {p.canSeeAll && <button className="tbbtn" onClick={p.onToggleMine}>{p.mineOnly ? "See All" : "See Mine"}</button>}
           <button className="tbbtn" onClick={p.onRefresh} disabled={p.loading}>{p.loading ? "…" : "Refresh"}</button>
           <button className="tbpill" onClick={p.onNewTab}>New tab</button>
         </div>
@@ -56,7 +68,7 @@ export default function TabsView(p: TabsViewProps) {
             </button>
           );
         })}
-        {rows.length === 0 && !p.loading && <div className="empty">No open tabs.</div>}
+        {rows.length === 0 && !p.loading && <div className="empty">{p.mineOnly ? "No open checks of yours." : "No open checks."}</div>}
       </div>
     </div>
   );
