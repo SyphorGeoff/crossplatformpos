@@ -15,6 +15,7 @@ export interface EditCheckActions {
   unselectAll?: () => void;
   splitItem?: () => void;
   transferCheck?: () => void;
+  mergeCheck?: () => void;      // this check INTO another open check (Geoff 2026-10-16: its own tile)
   searchMenu?: () => void;
   changeRc?: () => void;
   // — not yet built (render disabled until wired to the iOS behavior) —
@@ -84,6 +85,7 @@ export default function EditCheck(p: EditCheckProps) {
       <div className="ecgrid">
         <Fn glyph="✎" label="Name Tab" onClick={a.nameTab} />
         <Fn glyph="↪" label="Transfer Check" onClick={a.transferCheck} />
+        <Fn glyph="⧉" label="Merge Checks" onClick={a.mergeCheck} />
         <Fn glyph="↗" label="Transfer Item" onClick={a.transferItem} />
         <Fn glyph="☐" label="Unselect All" onClick={a.unselectAll} />
         <Fn glyph="⋔" label={`Split Item${n}`} onClick={a.splitItem} />

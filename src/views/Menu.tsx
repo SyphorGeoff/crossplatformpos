@@ -1602,6 +1602,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
       : undefined,
     selectAll, unselectAll,
     transferCheck: ck.check.lines.length ? () => setXferPick("menu") : undefined, // Person / Table / Person And Table / Merge
+    mergeCheck: ck.check.lines.length ? () => requireAuth(false, "Authorize merge checks", "transfer", (a) => { setMergePick(a); void refreshOpenChecks(); }) : undefined,
     searchMenu: () => { setEditing(false); },                                  // back to the menu (search lives there)
     changeRc: () => requireAuth(false, "Authorize change revenue center", "manager", () => setShowRcPick(true)),
     nameTab: () => { const v = window.prompt("Name this tab:", ck.check.tableName); if (v !== null) ck.setTable(v.trim()); },
