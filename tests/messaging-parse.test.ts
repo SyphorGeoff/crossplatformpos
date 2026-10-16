@@ -23,3 +23,17 @@ describe("parseMessagesXml", () => {
     expect(() => parseMessagesXml('<Message_Status Status_Code="400"><ISIS_Ver>1.0</ISIS_Ver><Status_Text>Invalid Token</Status_Text></Message_Status>')).toThrow(/Invalid Token/);
   });
 });
+
+import { fetchBroadcasts } from "@/protocol/messaging";
+describe("broadcast parse (via fetchBroadcasts on a stubbed transport)", () => {
+  it("drops rows without Broadcast=1 — an un-updated server returns the plain message list", async () => {
+    const xml = "<Messages><Message><Message_ID>1</Message_ID><Subject>old</Subject></Message><Message><Message_ID>2</Message_ID><Subject>86</Subject><Message_Body>86 Ribeye</Message_Body><Broadcast>1</Broadcast><Terminal_POS_ID>Bar KDS</Terminal_POS_ID></Message></Messages>";
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(xml, { status: 200 })) as typeof fetch;
+    try {
+      const list = await fetchBroadcasts({ enterpriseServerUrl: "https://x", isisVer: "v", storeId: "3", token: "T", terminalPosId: "21" });
+      expect(list.map((n) => n.id)).toEqual(["2"]);
+      expect(list[0].terminalPosId).toBe("Bar KDS");
+    } finally { globalThis.fetch = origFetch; }
+  });
+});

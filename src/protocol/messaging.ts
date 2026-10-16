@@ -194,6 +194,7 @@ export interface BroadcastNotice extends InboxMessage {
   expiresOn: string;      // "yyyy-MM-dd HH:mm:ss" server clock
   ackTerminal: string;    // first terminal that cleared it ("" = unseen)
   ackAt: string;
+  broadcast: boolean;     // the server marked it Broadcast=1 (only the updated server does)
 }
 
 function parseBroadcastsXml(xml: string): BroadcastNotice[] {
@@ -212,8 +213,9 @@ function parseBroadcastsXml(xml: string): BroadcastNotice[] {
       subject: g("Subject"), body: g("Message_Body"), sentOn: g("Sent_On"), localNotified: g("LocalNotified") === "1",
       eventId: g("Event_ID"), checkId: g("Check_ID"),
       terminalPosId: g("Terminal_POS_ID"), expiresOn: g("Expires_On"), ackTerminal: g("Ack_Terminal"), ackAt: g("Ack_At"),
+      broadcast: g("Broadcast") === "1",
     };
-  }).filter((m) => m.id);
+  }).filter((m) => m.id && m.broadcast); // an un-updated server answers with the plain message list — ignore it
 }
 
 /** `Trans_Type=Messages` with `type` and no Emp_POS_ID (broadcast lane). */

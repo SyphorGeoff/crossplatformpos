@@ -89,7 +89,7 @@ Last updated: 2026-10-08
 | Create Tab From Table Layout feature | Not started | |
 | Check For Messages On Sign In feature | Built | Job.check_for_messages_on_signin: after the first poll at sign-in, the inbox opens when it has messages. Awaiting live test |
 | Send and receive a message (internal and email) | Built | Inbox: 5 s poll while signed in (Messages fetch), badge on the top bar / floor / Manager's Menu, list sortable by Sent / Subject / From, detail with Done = Mark_Messages_Read, Mark All Read, toast for a never-seen message (the out-of-stock alert, R43) + LocalNotified. Compose: Internal (one employee, or jobs for manager-menu jobs, one Post_Message per employee), Email, Text. Awaiting live test |
-| KDS → POS broadcast message | Not started | Kitchen staff alert all staff via a new BULLETIN BOARD on the POS login screen, beside the pin pad (Geoff 2026-10-13); sent through the message API to all POS users; expires after ~10 min or when a user clears it. Not a fire |
+| KDS → POS broadcast message | Built | Kitchen Board on the login keypad (10 s poll of the store's broadcasts; Clear = this terminal only, first clear recorded by the server once; 10 min expiry); KDS Floor bar sends Slow the floor / Last call / Note / 86 item and shows Seen once. Needs the HBroker change set deployed (MESSAGING_ARC_SPEC.md) |
 | Kitchen message from a sent line | Not started | Long-press a sent/fired check line → pills with default notes (e.g. Delay) sent to every printer/KDS that printed that item: a note chit on paper, a message document on the KDS. Pill list to confirm with Paul |
 | Manager transfer check from the manager menu | Not started | Transfer All button present, disabled |
 
