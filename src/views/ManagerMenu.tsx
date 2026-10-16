@@ -2,7 +2,7 @@
  * Manager's Menu — where a Mgr_Menu job lands after login (LoginViewController.m:949-953:
  * isManager && !managerServerMode → managerMenuViewController). Buttons follow the
  * iOS ManagerMenuViewController order; functions this port hasn't built render
- * disabled. Exit returns to the login screen (pressCancel :616-620).
+ * disabled. Sign Out (pill, top) returns to the login screen (pressCancel :616-620).
  */
 
 export interface ManagerMenuActions {
@@ -59,6 +59,8 @@ export default function ManagerMenu({ storeName, employeeName, jobName, status, 
 }) {
   return (
     <div className="editcheck mgrmenu">
+      {/* Sign Out as a pill up top, like every other screen (Geoff 2026-10-16); no Exit tile */}
+      <div className="mgrtop"><button className="tbbtn" onClick={actions.exit} disabled={busy}><i>‹</i>Sign Out</button></div>
       <div className="echead">
         <div className="eckicker">{storeName.toUpperCase()} · MANAGER</div>
         <h1>Manager's Menu</h1>
@@ -73,7 +75,6 @@ export default function ManagerMenu({ storeName, employeeName, jobName, status, 
             </button>
           );
         })}
-        <button className="ecfn exit" onClick={actions.exit} disabled={busy}><span className="ecfnlabel">Exit</span></button>
       </div>
     </div>
   );
