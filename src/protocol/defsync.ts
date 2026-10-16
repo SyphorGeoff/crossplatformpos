@@ -69,6 +69,10 @@ function statusOf(parsed: XmlDict): { code: string; text: string } | null {
   return { code, text };
 }
 
+/** Pull one definition table directly, ignoring the revision map (e.g. Terminals for
+ *  the assignment check — a re-assignment does not bump the Terminal revision). */
+export const pullTable = (cfg: SyncConfig, name: string): Promise<DefRow[]> => pullDefinition(cfg, name);
+
 /** Pull one definition fully (Current_Revision_Seq=0) and return its rows. */
 async function pullDefinition(cfg: SyncConfig, name: string): Promise<DefRow[]> {
   const xml = buildDefinitionRequest({
