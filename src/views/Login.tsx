@@ -137,7 +137,7 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
       </div>
       <div className="loginfoot">
         <span className="lver">
-          {installed ? `v${installed.versionName} (${installed.versionCode})` : "ver 1.0.0"}
+          {installed ? `v${installed.versionName}` : "ver 1.0.0"}
           {update ? <button className="lupd" onClick={askUpdate}>{phase === "updId" || phase === "updPin" ? "Cancel" : `Update to ${update.versionName}`}</button> : null}
         </span>
         <span className="ltag">{TAGLINE}</span>

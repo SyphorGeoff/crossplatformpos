@@ -55,7 +55,7 @@ registers both) and add to `android/app/src/main/AndroidManifest.xml`:
 <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 ```
 
-The login keypad then shows the installed build (`v1.3 (4)`) and, when the
+The login keypad then shows the installed build (`v1.3`) and, when the
 enterprise server's `UpdateKit/pos-version.json` carries a higher
 `versionCode`, an **Update to x.y** button. Tapping it asks for a manager on the
 keypad (ID then PIN of an employee with a Mgr_Menu job; "Manager required"
