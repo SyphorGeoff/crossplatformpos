@@ -11,6 +11,7 @@ import Menu from "./views/Menu";
 import { ISIS_VER, useSettings } from "./state/useSettings";
 import { DefinitionError, fullSync, loadSeqMap, incrementalSync, type SyncConfig } from "./protocol/defsync";
 import { requestStandardToken } from "./protocol/activation";
+import { terminalUidOnServer } from "./model/catalog";
 
 export default function App() {
   const { settings, update } = useSettings();
@@ -67,6 +68,7 @@ export default function App() {
         if (hasData) { const changed = await incrementalSync(syncCfg(), onProg); if (changed.length) setDefsVersion((v) => v + 1); }
         else { await fullSync(syncCfg(), onProg); setDefsVersion((v) => v + 1); }
         lastSyncAt.current = Date.now();
+        checkStillAssigned();
       } catch (e) { console.warn("[defsync] launch sync failed — using cache:", e); setLine(`Sync error: ${String((e as Error).message ?? e)} — using cache`); }
       setPhase("ready");
       launch.resolve();
@@ -76,6 +78,19 @@ export default function App() {
   /** Revision-based pull of any table the server has moved past our cache.
    *  Waits for the launch flow (fresh token) first; a pull that just ran at
    *  launch is not repeated. Returns the definition names that changed. */
+  /** guidMatch (TerminalConfigManager.m:520): after any definitions pull, if the
+   *  server now holds a different device GUID for our terminal, another device
+   *  took it (e.g. the iPad activated as "Geoff 1") — this one is no longer
+   *  assigned and must return to the assignment flow. Returns true when we were
+   *  dropped. */
+  const checkStillAssigned = useCallback((): boolean => {
+    const uid = terminalUidOnServer(settings.terminalPosId);
+    if (!uid || uid === settings.terminalUid) return false;
+    console.warn(`[terminal] guidMatch fail — my GUID ${settings.terminalUid}, server has ${uid} on terminal ${settings.terminalPosId}; re-assignment required`);
+    update({ activated: false, token: "" });
+    return true;
+  }, [settings.terminalPosId, settings.terminalUid, update]);
+
   const refreshDefinitions = useCallback(async (force = false): Promise<string[]> => {
     await launch.promise;
     if (!force && Date.now() - lastSyncAt.current < 5000) return [];
@@ -98,8 +113,9 @@ export default function App() {
     }
     lastSyncAt.current = Date.now();
     if (changed.length) setDefsVersion((v) => v + 1);
+    if (checkStillAssigned()) return [];
     return changed;
-  }, [launch, syncCfg, settings.enterpriseServerUrl, settings.storeId, settings.terminalPosId, settings.terminalUid, settings.enterpriseCode, update]);
+  }, [launch, checkStillAssigned, syncCfg, settings.enterpriseServerUrl, settings.storeId, settings.terminalPosId, settings.terminalUid, settings.enterpriseCode, update]);
 
   if (!settings.activated) {
     return <Setup initial={settings} onDone={(patch) => update(patch)} />;

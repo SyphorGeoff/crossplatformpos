@@ -547,6 +547,15 @@ export function screenChains(): ScreenChain[] {
   }));
 }
 
+/** The device GUID the server currently has on a terminal (Terminal.Terminal_UID),
+ *  "" when unknown. TerminalConfigManager guidMatch compares it with this device's
+ *  GUID on every login-screen appearance: a mismatch means another device was
+ *  assigned to this terminal, and the app drops back to the assignment flow. */
+export function terminalUidOnServer(terminalPosId: string): string {
+  const r = loadDefRows("Terminal").find((row) => s(row, "POS_ID") === terminalPosId);
+  return r ? s(r, "Terminal_UID") : "";
+}
+
 export function terminals(): Terminal[] {
   return loadDefRows("Terminal").filter(alive).map((r) => ({
     id: s(r, "POS_ID"),
