@@ -208,4 +208,5 @@ Security notes for the server owner, out of this arc's scope: hardcoded SMTP cre
 | W4 | `Message_ID` collisions (millisecond-seeded Random per recipient) | Seed by nanosecond and leave it at that. In the arc. |
 | W5 | iOS sends `Events_ID`, server reads `Event_ID` | Server accepts both element names (no iOS change). In the arc. |
 | W6 | Broadcast (KDS → POS bulletin board) + idle-keypad fetch + clear | Proposed in §7.1–7.2; shape to be agreed before building. |
+| W7 | Unread messages never expire (only read ones are purged, hourly) | **Expire unread messages after 48 hours** (Geoff 2026-10-16). Server: the janitor also drops messages whose `Sent_On` is older than 48 h; `Sent_On` is client-stamped and may be absent, so the server should stamp a `Received_On` of its own when the message is stored and expire on that. Broadcasts keep their own shorter `Expires_On`. In the arc. |
 
