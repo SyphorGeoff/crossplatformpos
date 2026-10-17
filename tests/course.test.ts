@@ -180,3 +180,17 @@ describe("P13 / O15: tax exemption read-back and ChangeRVC record", () => {
     expect(changeRevenueCenter(out, { id: "4", name: "Pool" }, "Pool", "33")).toBe(out); // same RC → no-op
   });
 });
+
+// ---- kitchen note chit (messaging arc F5) ----
+import { buildNoteChit } from "@/protocol/printjobs";
+describe("buildNoteChit", () => {
+  it("prints NOTE, the note text and the item it refers to, for the check", () => {
+    const ctx = { checkNo: "210036", server: "Furio Corso", guests: 2, rcName: "Restaurant", tabLabel: "TBL: 6", date: "2026-10-16", time: "7:42" };
+    const job = buildNoteChit("Hot Line", ctx, "Delay 10 min", "Ribeye 12oz", 40);
+    expect(job).toContain("NOTE");
+    expect(job).toContain("CHECKNUM: 210036");
+    expect(job).toContain("Delay 10 min");
+    expect(job).toContain("re: Ribeye 12oz");
+    expect(job).toContain("TBL: 6");
+  });
+});

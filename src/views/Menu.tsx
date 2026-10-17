@@ -32,7 +32,7 @@ import ManagerMenu from "./ManagerMenu";
 import { checkHtmlUrl, sendEmployeeNotice, sendTextCheck } from "@/protocol/messaging";
 import { memberLookup, type Member } from "@/protocol/memberlookup";
 import { backupPrinter, checkPrinter, checkWrapper, prepPrintersForGroups, printers as loadPrinters, type Printer } from "@/model/printers";
-import { buildClockChit, buildCustomerCheck, buildFireChit, buildPrepChit, type CheckLineOut, type CourseOpts, type PrepCtx, type PrepItem } from "@/protocol/printjobs";
+import { buildClockChit, buildCustomerCheck, buildFireChit, buildNoteChit, buildPrepChit, type CheckLineOut, type CourseOpts, type PrepCtx, type PrepItem } from "@/protocol/printjobs";
 import { printTo } from "@/platform/print";
 import { DRAWER_KICK } from "@/platform/escpos";
 import { buildKdsOrderJson, sendKdsOrder, type KdsItem } from "@/protocol/kdsorder";
@@ -98,6 +98,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
   const [pricePrompt, setPricePrompt] = useState<{ item: MenuItem; steps: ModifierStep[]; guest: { guestNumber: number; appliedToGuests?: string }; opts: RingOpts } | null>(null);
   const [overridePad, setOverridePad] = useState<{ key: string; name: string; amount: number } | null>(null); // manager "Override price" pill
   const [notePad, setNotePad] = useState<{ key: string; name: string; chips: string[]; text: string } | null>(null); // "Allergen note" pill
+  const [kitchenNote, setKitchenNote] = useState<{ key: string; name: string; text: string } | null>(null); // long-press on a SENT line → note to its stations (F5)
   const [fireNowKey, setFireNowKey] = useState<string | null>(null); // "Fire now" pill: fires once the rung line is in state
   // Pairs Well With (MenuItem_Affinity_POS_ID): iOS asks before ringing — Order / Description / Skip
   const [pairing, setPairing] = useState<{ mi: MenuItem; paired: MenuItem; opts: RingOpts; showDesc: boolean } | null>(null);
@@ -1045,7 +1046,40 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     if (store.useSyphor) return;
     const l = ck.check.lines.find((x) => x.key === key);
     if (!l || l.kind !== "M") return;
+    // A SENT item: the kitchen-note pills (Delay / Rush / Remake / Allergy / custom), with
+    // Change course still reachable from the same sheet. An unsent item: the course chooser, as before.
+    if (l.sent && !l.isVoid && !l.transferOut) { setKitchenNote({ key, name: l.description, text: "" }); return; }
     setCoursePick({ mode: "lines", keys: [key] });
+  };
+
+  /** Kitchen note (messaging arc F5, Geoff 2026-10-16): a NEW order for this check carrying
+   *  one type "R" reference line, sent to EXACTLY the stations the referenced item routes to
+   *  (its print groups → this terminal's printers): the KDS merges it into the existing
+   *  ticket as a highlighted line; a paper station gets a NOTE chit. */
+  const sendKitchenNote = async (key: string, text: string) => {
+    const l = ck.check.lines.find((x) => x.key === key);
+    if (!l || !employee) return;
+    const checkNo = ck.check.checkNumber ?? "";
+    const buckets = bucketByPrinter([l]);
+    if (buckets.size === 0) { setSendError(`No kitchen station prints ${l.description}`); return; }
+    const now = new Date();
+    const note = `NOTE: ${text} · ${l.description}`;
+    let n = 0;
+    for (const { printer } of buckets.values()) {
+      n++;
+      if (printer.isKDS) {
+        const items: KdsItem[] = [{
+          lineitemkey: `${ck.check.id}:note:${key}:${now.getTime()}`, quantity: "", description: note, amount: "",
+          guestNumber: "", indentLevel: 0, reference: "", type: "R", isVoid: "0",
+        }];
+        const json = buildKdsOrderJson(uuid(), kdsHeaderFor(checkNo, printer, now), items, { tax: tax.taxTotal.toFixed(2), total: grandTotal(checkSubtotal(ck.check), tax).toFixed(2) });
+        void sendKdsOrder(printer, json);
+      } else {
+        const job = buildNoteChit(printer.name, prepCtxFor(checkNo, now), text, l.description, printer.charsPerLine, printer.printCourseRed);
+        void printTo(printer, job, { enterpriseCode: settings.enterpriseCode, storeId: settings.storeId, backup: backupPrinter(printer) });
+      }
+    }
+    setSendError(`Note sent to ${n} station${n === 1 ? "" : "s"}: ${text}`);
   };
 
   /** Build the customer-check receipt text for the current check. */
@@ -2145,6 +2179,28 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
                 <button className="mgrrow" onClick={() => { close(); tapItem(mi, opts); }}>Skip<span>just {mi.name}</span></button>
               </div>
               <button className="mfbtn ghost" onClick={close}>Cancel</button>
+            </div>
+          </div>
+        );
+      })()}
+      {kitchenNote && (() => {
+        const close = () => setKitchenNote(null);
+        const fire = (text: string) => { const { key } = kitchenNote; close(); void sendKitchenNote(key, text); };
+        const pills = ["Delay 5 min", "Delay 10 min", "Delay 15 min", "Delay 30 min", "Rush", "Remake", "Allergy — check with the server"];
+        return (
+          <div className="backdrop" onClick={close}>
+            <div className="authbox" onClick={(e) => e.stopPropagation()}>
+              <div className="authtitle">Note to the kitchen</div>
+              <div className="authsub">{kitchenNote.name} · goes to the stations that printed it</div>
+              <div className="itempills" aria-label="Kitchen note">
+                {pills.map((t) => (<button key={t} style={{ "--ch": 28 } as React.CSSProperties} onClick={() => fire(t)}>{t}</button>))}
+              </div>
+              <input className="ctable" placeholder="Custom note" value={kitchenNote.text} onChange={(e) => setKitchenNote((k) => k && ({ ...k, text: e.target.value }))} />
+              <div className="mfactions">
+                <button className="mfbtn ghost" onClick={close}>Cancel</button>
+                <button className="mfbtn ghost" onClick={() => { const { key } = kitchenNote; close(); setCoursePick({ mode: "lines", keys: [key] }); }}>Change course…</button>
+                <button className="mfbtn go" disabled={!kitchenNote.text.trim()} onClick={() => fire(kitchenNote.text.trim())}>Send note</button>
+              </div>
             </div>
           </div>
         );

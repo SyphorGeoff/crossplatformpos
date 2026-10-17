@@ -127,6 +127,30 @@ export function buildFireChit(printerName: string, ctx: PrepCtx, course: number,
   return d.toString();
 }
 
+/** Kitchen note chit (messaging arc F5): the waiter long-pressed a SENT item and
+ *  sent a note to the stations that printed it. "*** NOTE ***", the note, the item. */
+export function buildNoteChit(printerName: string, ctx: PrepCtx, note: string, itemName: string, cpl = 40, red = false): string {
+  const base = cpl === 40 || cpl === 31 || cpl === 32 ? 42 : cpl;
+  const width = cpl === 31 ? 20 : Math.floor(base / 2);
+  const d = new PrintDoc(width);
+  d.raw(FONT_PREP);
+  if (red) d.centeredRed("NOTE"); else d.centered("NOTE");
+  if (printerName) d.centered(printerName);
+  d.centered(`CHECKNUM: ${ctx.checkNo || "-"}`);
+  d.two(serverShort(ctx.server), `Gst:${ctx.guests}`);
+  d.sep("=");
+  d.centeredRed(ctx.rcName);
+  if (ctx.tabLabel) d.centeredRed(ctx.tabLabel);
+  d.sep("=");
+  d.line(note);
+  d.line(`   re: ${itemName}`);
+  d.sep("=");
+  d.two(ctx.date, ctx.time);
+  d.feed(2);
+  d.cut();
+  return d.toString();
+}
+
 export interface CheckLineOut { qty: number; name: string; amount: number; indent: number; isMod: boolean; }
 export interface CheckCtx {
   headerLines: string[]; trailerLines: string[];
