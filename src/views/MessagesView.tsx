@@ -149,7 +149,7 @@ function Compose({ p, onClose }: { p: MessagesViewProps; onClose: () => void }) 
             </select>
             {p.jobs.length > 0 && (
               <>
-                <label className="msglbl">Or every clocked-in employee in</label>
+                <label className="msglbl">Or everyone who holds the job</label>
                 <div className="msgjobs">
                   {p.jobs.map((j) => (
                     <button key={j.id} className={`tbbtn ${jobIds.has(j.id) ? "on" : ""}`}

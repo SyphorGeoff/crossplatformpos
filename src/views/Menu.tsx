@@ -498,16 +498,6 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     const sms = results.find((r) => r.smsResult)?.smsResult;
     return t.toEmpIds.length ? `Sent to ${results.length} employee${results.length === 1 ? "" : "s"}` : sms && sms !== "Success" ? `Text: ${sms}` : "Sent";
   };
-  // Check For Messages On Sign In (Job.check_for_messages_on_signin): once per sign-in,
-  // after the first poll, open the inbox if it has anything (LoginViewController.m:1065-1136).
-  const signInMsgChecked = useRef(false);
-  useEffect(() => {
-    if (!employee || !clock) { signInMsgChecked.current = false; return; }
-    if (signInMsgChecked.current || msgs.pollCount === 0) return;
-    signInMsgChecked.current = true;
-    const job = empJobs.find((j) => j.id === clock.jobId);
-    if (job?.checkForMessagesOnSignIn && msgs.messages.length > 0) openMessages();
-  }, [employee, clock, msgs.pollCount]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const ensureBd = async (): Promise<string> => {
     let bd = bdid;
@@ -563,6 +553,19 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     })();
     return () => { cancelled = true; };
   }, [employee, clock]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Check For Messages On Sign In (Job.check_for_messages_on_signin): once per sign-in,
+  // after the first poll, open the inbox if it has anything (LoginViewController.m:1065-1136).
+  // Declared AFTER the landing effect on purpose: both fire in the commit that sets the
+  // clock, and the later effect's setMode wins.
+  const signInMsgChecked = useRef(false);
+  useEffect(() => {
+    if (!employee || !clock) { signInMsgChecked.current = false; return; }
+    if (signInMsgChecked.current || msgs.pollCount === 0) return;
+    signInMsgChecked.current = true;
+    const job = empJobs.find((j) => j.id === clock.jobId);
+    if (job?.checkForMessagesOnSignIn && msgs.messages.length > 0) openMessages();
+  }, [employee, clock, msgs.pollCount]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Resolve BusinessDate_ID and a check number, assigning the number once. */
   const ensureSession = async (): Promise<{ bd: string; checkNo: string }> => {
@@ -1323,12 +1326,20 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
   );
 
   // While checking the server for an existing shift.
+  // In-app stand-in for the iOS local notification: tap = open the inbox; fades after 8 s.
+  const toastEl = toast ? (
+    <div className="msgtoast" onClick={openMessages}>
+      <div className="mtfrom">{toast.fromName ? toast.fromName.split(",").reverse().join(" ").trim() : (empList.find((e) => e.id === toast.fromEmpId)?.name ?? "Message")}</div>
+      <div className="mttext">{toast.subject ? `${toast.subject}: ${toast.body}` : toast.body}</div>
+    </div>
+  ) : null;
+
   if (!clock && signingIn) return (
-    <div className="login"><div className="loginpad"><div className="loginprompt">Signing in…</div></div></div>
+    <div className="login"><div className="loginpad"><div className="loginprompt">Signing in…</div></div>{toastEl}</div>
   );
   // Gate ordering on clock-in (job → clock-in → default dining room).
   if (!clock) return (
-    <ClockInGate employee={employee} jobs={empJobs} rooms={rooms} onClockIn={clockInPost} onCommit={commitShift} onCancel={signOut} />
+    <>{toastEl}<ClockInGate employee={employee} jobs={empJobs} rooms={rooms} onClockIn={clockInPost} onCommit={commitShift} onCancel={signOut} /></>
   );
 
   // Dashboard (iOS DashboardViewController / check-screen dashboardButton) —
@@ -1395,13 +1406,6 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
         </div>
   ) : null;
 
-  // In-app stand-in for the iOS local notification: tap = open the inbox; fades after 8 s.
-  const toastEl = toast ? (
-    <div className="msgtoast" onClick={openMessages}>
-      <div className="mtfrom">{toast.fromName ? toast.fromName.split(",").reverse().join(" ").trim() : (empList.find((e) => e.id === toast.fromEmpId)?.name ?? "Message")}</div>
-      <div className="mttext">{toast.subject ? `${toast.subject}: ${toast.body}` : toast.body}</div>
-    </div>
-  ) : null;
 
   if (mode === "manager") {
     return (<>
@@ -1769,6 +1773,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
           onToggleMine={() => setTabsMineOnly((v) => !v)}
         />
         {showHub && hubMenu}
+        {toastEl}
       </div>
     );
   }

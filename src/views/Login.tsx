@@ -45,7 +45,8 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
   const CLEARED_KEY = "board.cleared.v1";
   const [board, setBoard] = useState<BroadcastNotice[]>([]);
   const cleared = useRef<Set<string>>(new Set(loadJSON<string[]>(CLEARED_KEY, [])));
-  const boardCfg = () => ({ enterpriseServerUrl: settings.enterpriseServerUrl, isisVer: ISIS_VER, storeId: settings.storeId, token: settings.token, terminalPosId: settings.terminalPosId });
+  // Terminal_POS_ID on the broadcast lane is a display label (the KDS shows "Seen · {it}"), so send the terminal's NAME.
+  const boardCfg = () => ({ enterpriseServerUrl: settings.enterpriseServerUrl, isisVer: ISIS_VER, storeId: settings.storeId, token: settings.token, terminalPosId: settings.terminalName || settings.terminalPosId });
   useEffect(() => {
     if (!settings.activated || !settings.token) return;
     let alive = true;
