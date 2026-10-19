@@ -167,4 +167,4 @@ In the hourly pass, drop a message when `isRead`, OR `expiresAt != 0 && now > ex
 3. POS keypad bulletin + KDS sender (F4).
 4. Kitchen note F5: POS pills + pqserver note document + KDS rendering + paper chit.
 
-Test rows to add to MASTER_TEST_LIST: M01 poll/badge, M02 list/detail/mark read, M03 Mark All Read, M04 send internal (employee), M05 send to job (no duplicates), M06 send email, M07 send SMS, M08 check-for-messages-on-sign-in, M09 out-of-stock alert pops (R43), M10 broadcast appears on every keypad within 10 s and clears / expires, M11 unread expires after 48 h (server), M12 kitchen note on the KDS ticket and paper chit.
+Test rows to add to MASTER_TEST_LIST: N01 poll/badge, N02 list/detail/mark read, N03 Mark All Read, N04 send internal (employee), N05 send to job (no duplicates), N06 send email, N07 send SMS, N08 check-for-messages-on-sign-in, N09 out-of-stock alert pops (R43), N10 broadcast appears on every keypad within 10 s and clears / expires, N11 unread expires after 48 h (server), N12 kitchen note on the KDS ticket and paper chit.
