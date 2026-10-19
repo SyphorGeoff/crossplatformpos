@@ -50,6 +50,7 @@ export default function App() {
     if (!settings.activated || started.current) return;
     started.current = true;
     const hasData = Object.keys(loadSeqMap()).length > 0;
+    setPhase(hasData ? "ready" : "syncing"); // activation inside the session: hold Menu until the full load lands
     void (async () => {
       // The Standard session token minted at activation expires (daily) — every
       // live call needs a valid one, so re-request it at launch, the way iOS does

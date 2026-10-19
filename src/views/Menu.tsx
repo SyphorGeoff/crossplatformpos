@@ -190,7 +190,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
 
   const ck = useCheck(init.rcId, settings.terminalPosId);
   const checkRef = useRef(ck.check); checkRef.current = ck.check; // always-current check for async flows
-  const payTenders = useMemo(() => loadTenders().filter((t) => t.appliesToCheck && !t.hidden).sort((a, b) => a.sort - b.sort), []);
+  const payTenders = useMemo(() => loadTenders().filter((t) => t.appliesToCheck && !t.hidden).sort((a, b) => a.sort - b.sort), [defsVersion]); // eslint-disable-line react-hooks/exhaustive-deps
   const store = useMemo(() => storeConfig(), [defsVersion]); // eslint-disable-line react-hooks/exhaustive-deps
   const tax = useMemo(() => computeCheckTax(cat, ck.check, taxExempt), [cat, ck.check, taxExempt]);
   const empJobs = useMemo(() => (employee ? jobsForEmployee(employee.id) : []), [employee]);
@@ -221,10 +221,10 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     if (next !== ck.check) ck.update(() => next);
     return next;
   };
-  const voidDefs = useMemo(() => voidReasons(), []);
+  const voidDefs = useMemo(() => voidReasons(), [defsVersion]); // eslint-disable-line react-hooks/exhaustive-deps
   const empList = useMemo(() => employees(), [defsVersion]); // eslint-disable-line react-hooks/exhaustive-deps
-  const rooms = useMemo(() => diningRooms(), []);
-  const tables = useMemo(() => diningTables(), []);
+  const rooms = useMemo(() => diningRooms(), [defsVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+  const tables = useMemo(() => diningTables(), [defsVersion]); // eslint-disable-line react-hooks/exhaustive-deps
   // The table's display number lives on the DiningTable definition (keyed by
   // DiningTable_POS_ID) — NOT in Check_Name, which is a separate custom label.
   const tableNumberOf = (dtId?: string): string => (dtId ? tables.find((t) => t.id === dtId)?.name ?? "" : "");
