@@ -913,7 +913,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
       checkNo, server: employee?.name ?? "", guests: ck.check.guestCount, rcName: currentRc()?.name ?? "",
       tabLabel: ck.check.diningTableId ? `TBL: ${tableNumberOf(ck.check.diningTableId)}` : `TAB:${ck.check.tableName ? ` ${ck.check.tableName}` : ""}`,
       date: `${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())}`,
-      time: `${hr}:${p2(now.getMinutes())}`, refire,
+      time: `${hr}:${p2(now.getMinutes())}`, refire, itemSpacing: store.chitItemSpacing,
     };
   };
   const prepItemsFor = (printer: Printer, lines: CheckLine[]): PrepItem[] => {

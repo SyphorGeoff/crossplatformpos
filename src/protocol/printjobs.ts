@@ -11,7 +11,37 @@ import { FONT_PREP, PrintDoc } from "@/platform/escpos";
 const money = (n: number) => `$${n.toFixed(2)}`;
 
 export interface PrepItem { qty: number; name: string; mods: string[]; seat?: string; held?: boolean; course?: number; guest?: number; note?: string; }
-export interface PrepCtx { checkNo: string; server: string; guests: number; rcName: string; tabLabel: string; date: string; time: string; refire?: boolean; }
+export interface PrepCtx { checkNo: string; server: string; guests: number; rcName: string; tabLabel: string; date: string; time: string; refire?: boolean; itemSpacing?: boolean; /* Store.chit_item_spacing */ }
+
+const padTo = (s: string, n: number) => (s.length >= n ? s.slice(0, n) : s + " ".repeat(n - s.length));
+
+/** One prep-chit item line exactly as PrintManager parseMenuItem lays it out (:13016-13124),
+ *  in the double-wide font: a 3-wide qty column + space, the name cut or padded to a FIXED
+ *  width (13 when the printer prints seats, else 16), then " S1" / "  T". Never wraps, so
+ *  the seat always sits on the item's own line. */
+export function prepItemText(qty: string, name: string, seat: string | undefined, seats: boolean): string {
+  const nameWidth = seats ? 13 : 16;
+  const body = padTo(name, nameWidth);
+  const tag = seats && seat ? (seat === "T" ? "  T" : ` ${seat}`) : "";
+  return padTo(qty, 3) + " " + body + tag;
+}
+
+/** Modifier under its item: blank qty column, the name cut to the item width, printed red
+ *  (parseMenuItem: every isModifier line goes through printLineInRed). */
+export function prepModText(name: string, seats: boolean): string {
+  return "    " + padTo(name, seats ? 13 : 16).trimEnd();
+}
+
+/** Items of one chit run: optional blank line ahead of each item (Store.chit_item_spacing),
+ *  the fixed-column item line, red modifiers, then the note. */
+function prepLines(d: PrintDoc, items: PrepItem[], seats: boolean, spacing: boolean): void {
+  for (const it of items) {
+    if (spacing) d.line("");
+    d.line(prepItemText(String(it.qty), it.name, it.seat, seats));
+    for (const m of it.mods) d.lineRed(prepModText(m, seats));
+    if (it.note) d.line(`   * ${it.note}`);   // the line's Reference (allergen / server note)
+  }
+}
 /** Course-header rules for one printer (PrintManager :5297-5320 + :5416-5472). */
 export interface CourseOpts {
   useCourse: boolean;          // Printer.useCourse
@@ -84,12 +114,8 @@ export function buildPrepChit(printerName: string, ctx: PrepCtx, items: PrepItem
       const text = courseHeaderText(run.header, width);
       if (courses?.red) d.centeredRed(text); else d.centered(text);
     }
-    for (const it of run.items) {
-      // includeSeat printers append the seat (S1 / T) to the item name (PrintManager.m:13116-13124).
-      d.item(String(it.qty), it.seat ? `${it.name}  ${it.seat}` : it.name);
-      for (const m of it.mods) d.line(`   - ${m}`);
-      if (it.note) d.line(`   * ${it.note}`);   // the line's Reference (allergen / server note)
-    }
+    // includeSeat printers carry a seat on every item (PrintManager.m:5248); the column layout follows it
+    prepLines(d, run.items, items.some((i) => !!i.seat), !!ctx.itemSpacing);
   }
   d.sep("=");
   d.two(ctx.date, ctx.time);
@@ -115,11 +141,7 @@ export function buildFireChit(printerName: string, ctx: PrepCtx, course: number,
   d.centeredRed(ctx.rcName);
   if (ctx.tabLabel) d.centeredRed(ctx.tabLabel);
   d.sep("=");
-  for (const it of items) {
-    d.item(String(it.qty), it.seat ? `${it.name}  ${it.seat}` : it.name);
-    for (const m of it.mods) d.line(`   - ${m}`);
-    if (it.note) d.line(`   * ${it.note}`);
-  }
+  prepLines(d, items, items.some((i) => !!i.seat), !!ctx.itemSpacing);
   d.sep("=");
   d.two(ctx.date, ctx.time);
   d.feed(2);

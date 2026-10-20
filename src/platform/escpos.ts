@@ -89,6 +89,12 @@ export class PrintDoc {
     else this.buf += ALIGN_C + s + LF + ALIGN_L;
     return this;
   }
+  // Left-aligned red line (printLineInRed on an item/modifier line); same color rule.
+  lineRed(s: string): this {
+    if (this.width <= 32) this.buf += RED_ON + s + LF + RED_OFF;
+    else this.buf += s + LF;
+    return this;
+  }
   big(s: string): this { this.buf += SIZE_DOUBLE + s + SIZE_NORMAL + LF; return this; }
   bold(s: string): this { this.buf += BOLD_ON + s + BOLD_OFF + LF; return this; }
   sep(ch = "="): this { this.buf += rule(this.width, ch) + LF; return this; }

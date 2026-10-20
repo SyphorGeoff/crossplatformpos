@@ -139,7 +139,7 @@ describe("medium pills: repeat last, item note", () => {
   });
   it("the chit prints the note under the item", () => {
     const job = buildPrepChit("Grill", pctx, [{ qty: 1, name: "Steak", mods: ["Rare"], note: "Gluten · no bun" }], 40);
-    expect(job).toContain("   - Rare");
+    expect(job).toContain("    Rare");   // modifier: blank qty column, red, no dash (parseMenuItem)
     expect(job).toContain("   * Gluten · no bun");
   });
 });

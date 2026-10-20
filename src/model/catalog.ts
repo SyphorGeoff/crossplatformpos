@@ -349,6 +349,7 @@ export interface StoreConfig {
   allowRefire: boolean;       // Allow_Refire && !hide_Edit_Refire (CheckViewController.m:4516)
   maxCheckAmount: number;     // max_check_amount (Store getMax_check_amount; 1,000,000 when unset)
   printCourseLine: boolean;   // print_Course_Line — always print course headers on prep chits
+  chitItemSpacing: boolean;   // chit_item_spacing — a blank line ahead of every item on prep chits
   useSyphor: boolean;         // use_Syphor — hides the course chooser on check lines
 }
 const nativeProcessor = (v: string) => /isis|aireus/i.test(v);
@@ -359,6 +360,7 @@ export function storeConfig(): StoreConfig {
     allowRefire: s(r, "Allow_Refire") === "1" && s(r, "hide_Edit_Refire") !== "1",
     maxCheckAmount: Number(s(r, "max_check_amount")) > 0 ? Number(s(r, "max_check_amount")) : 1_000_000,
     printCourseLine: s(r, "print_Course_Line") === "1",
+    chitItemSpacing: s(r, "chit_item_spacing") === "1",
     useSyphor: s(r, "use_Syphor") === "1",
     enterpriseId: s(r, "Enterprise_ID"),
     imageServerUrl: s(r, "ImageServerURL"),

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { center, twoCol, itemLine, rule, PrintDoc, INIT, CUT, ESC } from "@/platform/escpos";
-import { buildPrepChit, buildCustomerCheck, buildClockChit } from "@/protocol/printjobs";
+import { prepItemText, prepModText, buildPrepChit, buildCustomerCheck, buildClockChit } from "@/protocol/printjobs";
 import { buildKdsOrderJson } from "@/protocol/kdsorder";
 
 describe("escpos formatting", () => {
@@ -34,7 +34,7 @@ describe("prep chit", () => {
   it("lists items with qty and modifiers, no prices, CHECKNUM header", () => {
     const job = buildPrepChit("Bar Printer", ctx, [{ qty: 2, name: "Latte", mods: ["Oat milk"] }], 32);
     expect(job).toContain("Latte");
-    expect(job).toContain("- Oat milk");
+    expect(job).toContain("    Oat milk");
     expect(job).toContain("CHECKNUM: 200001");
     expect(job).toContain("Furio C");    // first name + last initial
     expect(job).not.toContain("$");
@@ -108,5 +108,30 @@ describe("clock chit", () => {
     expect(job).toContain("Bartender");
     expect(job).toContain("$12.30/hr");
     expect(job.startsWith(ESC + "@")).toBe(true);
+  });
+});
+
+describe("prep chit item layout (PrintManager parseMenuItem)", () => {
+  const ctx = { checkNo: "200036", server: "Furio Corso", guests: 1, rcName: "Restaurant", tabLabel: "TBL: 25", date: "2026-10-20", time: "2:22" };
+  it("keeps the seat on the item's line: name cut to 13 when the printer prints seats", () => {
+    expect(prepItemText("1", "Aged T Bone Steak", "S1", true)).toBe("1   Aged T Bone S S1");
+    expect(prepItemText("1", "Artisan Board", "S1", true)).toBe("1   Artisan Board S1");
+    expect(prepItemText("1", "Fries", "T", true)).toBe("1   Fries          T");
+  });
+  it("uses the 16-wide name column when the printer has no seats", () => {
+    expect(prepItemText("2", "Aged T Bone Steak", undefined, false)).toBe("2   Aged T Bone Stea");
+  });
+  it("prints modifiers red under the qty column, no dash", () => {
+    expect(prepModText("Med Rare", true)).toBe("    Med Rare");
+    const job = buildPrepChit("Coffee Printer 134", ctx, [{ qty: 1, name: "Aged T Bone Steak", mods: ["Med Rare"], seat: "S1" }], 31);
+    expect(job).toContain(ESC + "r\x01" + "    Med Rare\n" + ESC + "r\x00");
+    expect(job).not.toContain("- Med Rare");
+  });
+  it("puts a blank line ahead of every item when the store's chit_item_spacing is on", () => {
+    const items = [{ qty: 1, name: "Artisan Board", mods: [], seat: "S1" }, { qty: 1, name: "NY Cheesecake", mods: [], seat: "S1" }];
+    const packed = buildPrepChit("P", ctx, items, 31);
+    const spaced = buildPrepChit("P", { ...ctx, itemSpacing: true }, items, 31);
+    expect(spaced.split("\n").length).toBe(packed.split("\n").length + 2);
+    expect(spaced).toContain("\n\n1   Artisan Board S1\n");
   });
 });
