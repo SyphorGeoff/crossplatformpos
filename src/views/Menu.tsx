@@ -537,7 +537,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
 
   useEffect(() => {
     if (!employee) { setSigningIn(false); return; }
-    if (clock) { setFloorRoomId(clock.defaultRoomId); setMode(landingMode(employee.id, clock.jobId)); return; } // stored shift → straight in, by the JOB
+    if (clock) { setFloorRoomId(clock.defaultRoomId); setMode(landingMode(employee.id, clock.jobId)); return; } // shift already confirmed this session (server or a clock-in just posted)
     let cancelled = false;
     setSigningIn(true);
     void (async () => {

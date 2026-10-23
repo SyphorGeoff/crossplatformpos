@@ -130,5 +130,5 @@ Notes on each:
 
 ## 9. KDS side (crossplatformkds, separate work)
 - Parse `course`, `fired`, and `header.fire`. Unfired lines render in a hold color and do not count toward timers. A `fire` document flips matching lines live and re-sorts them as a new arrival.
-- KDS-only remote fire: a fire chip on the chit releases held lines on that panel. KDS-only auto-fire: a per-station timer does the same. Neither talks to the POS, and they are not in this spec.
+- KDS-only remote fire and auto-fire: REMOVED 2026-10-20 (Geoff). The KDS never releases a held course on its own; only the POS fire document does.
 - Multi-station note: fire state is per panel. A second panel holding the same order releases only on its own chip, timer, or the POS fire document.
