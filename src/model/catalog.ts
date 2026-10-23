@@ -61,7 +61,7 @@ export interface RevenueCenter {
   screenGroupFilter: boolean; // enable_screen_group_filter=="1"
   alwaysAskForTab: boolean;   // Always_Ask_For_Tab — a tab name is required before send / pay / print
   disableAutoGrat: boolean;   // rc_backup15 (isDisable_AutoGrat)
-  timeoutActive: boolean;     // rc_backup1 ≠ "0" (isTimeoutActive) — the terminal's default RC can switch the idle timeout off
+  timeoutActive: boolean;     // backup1 ≠ "0" (isTimeoutActive) — the terminal's default RC can switch the idle timeout off
   logoutAfterPayment: boolean; // logoutAfterPayment — back to the login keypad once the check closes
   showCourse: boolean;        // showCourse — "C{n}" course labels on the check lines
   useCourseButtons: boolean;  // rc_backup21 — course chooser while ordering (ItemsTableVC course bar)
@@ -187,7 +187,7 @@ export function revenueCenters(): RevenueCenter[] {
     screenGroupFilter: s(r, "enable_screen_group_filter") === "1",
     alwaysAskForTab: s(r, "Always_Ask_For_Tab") === "1" || s(r, "always_Ask_For_Tab") === "1",
     disableAutoGrat: s(r, "rc_backup15") === "1",
-    timeoutActive: s(r, "rc_backup1") !== "0",
+    timeoutActive: (s(r, "backup1") || s(r, "rc_backup1")) !== "0",   // served as backup1 (only rc_backup6+ carry the prefix)
     logoutAfterPayment: s(r, "logoutAfterPayment") === "1" || s(r, "Logout_After_Payment") === "1",
     showCourse: s(r, "showCourse") === "1",
     useCourseButtons: s(r, "rc_backup21") === "1",
