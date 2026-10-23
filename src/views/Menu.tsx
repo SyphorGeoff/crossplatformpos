@@ -59,6 +59,8 @@ import { adjustCount, countFor, emptyCounts, stockRefusal, withServerCounts, typ
 import { fetchMenuItemCounters, removeMenuItemCounter, setMenuItemCounter } from "@/protocol/itemcounts";
 import ItemTile from "./ItemTile";
 import { loadJSON, saveJSON } from "@/platform/storage";
+
+const IDLE_KEY = "idle.last.v1"; // last touch while signed in (ms epoch)
 import { courseHue } from "./CheckPanel";
 
 /* Muted "food" tile tones (Sr_Simulator counter palette). Index 0/blank = the
@@ -716,17 +718,43 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     signOut();
   };
   const idleFireRef = useRef(idleFire); idleFireRef.current = idleFire;
-  useEffect(() => {
+  const idleSecs = (): number => {
     const secs = store.terminalTimeoutSec;
     const rcOk = cat.rcById.get(init.rcId)?.timeoutActive ?? true;
-    if (!employee || !(secs > 10) || !rcOk) return;
-    let t = 0;
-    const arm = () => { window.clearTimeout(t); t = window.setTimeout(() => { void idleFireRef.current(); }, secs * 1000); };
+    return secs > 10 && rcOk ? secs : 0;
+  };
+  useEffect(() => {
+    const secs = idleSecs();
+    if (!employee || !secs) return;
+    // Last touch is also written to storage: a backgrounded WebView runs no timers, so the
+    // resume path (below) and a cold launch (sweep on mount) judge the gap from this stamp.
+    let t = 0, lastWrite = 0;
+    const stamp = () => { const now = Date.now(); if (now - lastWrite > 5000) { lastWrite = now; saveJSON(IDLE_KEY, now); } };
+    const arm = () => { stamp(); window.clearTimeout(t); t = window.setTimeout(() => { void idleFireRef.current(); }, secs * 1000); };
+    const onVis = () => {
+      if (document.visibilityState === "hidden") { lastWrite = 0; stamp(); return; }
+      // Back from the background / a long sleep: the gap counts as idle time.
+      const last = loadJSON<number>(IDLE_KEY, 0);
+      if (last && Date.now() - last >= secs * 1000) void idleFireRef.current(); else arm();
+    };
     const events: Array<keyof WindowEventMap> = ["pointerdown", "keydown", "touchstart", "wheel"];
     for (const ev of events) window.addEventListener(ev, arm, { capture: true, passive: true });
+    document.addEventListener("visibilitychange", onVis);
     arm();
-    return () => { window.clearTimeout(t); for (const ev of events) window.removeEventListener(ev, arm, { capture: true }); };
+    return () => { window.clearTimeout(t); document.removeEventListener("visibilitychange", onVis); for (const ev of events) window.removeEventListener(ev, arm, { capture: true }); };
   }, [employee, store.terminalTimeoutSec, init.rcId, cat]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Cold launch after a long sleep (process killed while backgrounded): the stored working
+  // check gets the same sweep BEFORE the sign-in recovery could post its unsent lines.
+  useEffect(() => {
+    const secs = idleSecs();
+    const last = loadJSON<number>(IDLE_KEY, 0);
+    if (!secs || !last || Date.now() - last < secs * 1000) return;
+    const c = checkRef.current;
+    if (unsentLines(c).length === 0) return;
+    const { check: swept, keepCheck } = sweepUnsentForIdle(c, [store.gcMenuItemId, store.gcReloadMenuItemId]);
+    if (keepCheck) ck.update(() => swept); else ck.reset(rcId);
+    saveJSON(IDLE_KEY, 0);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Transfer Check → Person / Person And Table, phase A (transferToPerson
    *  :16563-16603): fire anything unsent first, then load the clocked-in list and
