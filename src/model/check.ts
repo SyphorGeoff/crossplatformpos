@@ -147,6 +147,23 @@ export function addModifierLine(
 }
 
 /** Remove a line and any modifiers hanging off it (unsent lines only). */
+/** iPad idle timeout (CheckViewController idleTimerExceeded :10381-10420): every unsent
+ *  line goes — menu items with their modifiers, and adjustments — EXCEPT unsent gift-card
+ *  sale / reload items, which stay. `keepCheck` says whether anything is left worth keeping
+ *  (a sent line, or a kept gift-card line); otherwise the check is dropped. */
+export function sweepUnsentForIdle(check: Check, gcItemIds: string[]): { check: Check; keepCheck: boolean } {
+  const gc = new Set(gcItemIds.filter(Boolean));
+  const drop = new Set<string>();
+  for (const l of check.lines) {
+    if (l.sent) continue;
+    if (l.kind === "M" && gc.has(l.menuItemId)) continue;
+    if (l.kind === "M" || l.kind === "A") drop.add(l.key);
+  }
+  const lines = check.lines.filter((l) => !drop.has(l.key) && !(l.parentKey && drop.has(l.parentKey)));
+  const keepCheck = lines.some((l) => l.sent || (l.kind === "M" && gc.has(l.menuItemId)));
+  return { check: { ...check, lines }, keepCheck };
+}
+
 export function removeLine(check: Check, key: string): Check {
   return { ...check, lines: check.lines.filter((l) => l.key !== key && l.parentKey !== key) };
 }

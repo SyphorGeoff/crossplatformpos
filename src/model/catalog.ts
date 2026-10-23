@@ -61,6 +61,7 @@ export interface RevenueCenter {
   screenGroupFilter: boolean; // enable_screen_group_filter=="1"
   alwaysAskForTab: boolean;   // Always_Ask_For_Tab — a tab name is required before send / pay / print
   disableAutoGrat: boolean;   // rc_backup15 (isDisable_AutoGrat)
+  timeoutActive: boolean;     // rc_backup1 ≠ "0" (isTimeoutActive) — the terminal's default RC can switch the idle timeout off
   logoutAfterPayment: boolean; // logoutAfterPayment — back to the login keypad once the check closes
   showCourse: boolean;        // showCourse — "C{n}" course labels on the check lines
   useCourseButtons: boolean;  // rc_backup21 — course chooser while ordering (ItemsTableVC course bar)
@@ -186,6 +187,7 @@ export function revenueCenters(): RevenueCenter[] {
     screenGroupFilter: s(r, "enable_screen_group_filter") === "1",
     alwaysAskForTab: s(r, "Always_Ask_For_Tab") === "1" || s(r, "always_Ask_For_Tab") === "1",
     disableAutoGrat: s(r, "rc_backup15") === "1",
+    timeoutActive: s(r, "rc_backup1") !== "0",
     logoutAfterPayment: s(r, "logoutAfterPayment") === "1" || s(r, "Logout_After_Payment") === "1",
     showCourse: s(r, "showCourse") === "1",
     useCourseButtons: s(r, "rc_backup21") === "1",
@@ -350,6 +352,9 @@ export interface StoreConfig {
   maxCheckAmount: number;     // max_check_amount (Store getMax_check_amount; 1,000,000 when unset)
   printCourseLine: boolean;   // print_Course_Line — always print course headers on prep chits
   chitItemSpacing: boolean;   // chit_item_spacing — a blank line ahead of every item on prep chits
+  terminalTimeoutSec: number; // terminalTimeout ("iPad Timeout", seconds; 0 = off, iOS ignores ≤ 10)
+  gcMenuItemId: string;       // gC_MenuItem_POS_ID — gift-card sale item (kept by the idle sweep)
+  gcReloadMenuItemId: string; // gC_Reload_MenuItem_POS_ID
   useSyphor: boolean;         // use_Syphor — hides the course chooser on check lines
 }
 const nativeProcessor = (v: string) => /isis|aireus/i.test(v);
@@ -361,6 +366,9 @@ export function storeConfig(): StoreConfig {
     maxCheckAmount: Number(s(r, "max_check_amount")) > 0 ? Number(s(r, "max_check_amount")) : 1_000_000,
     printCourseLine: s(r, "print_Course_Line") === "1",
     chitItemSpacing: s(r, "chit_item_spacing") === "1",
+    terminalTimeoutSec: Number(s(r, "terminalTimeout")) || 0,
+    gcMenuItemId: s(r, "gC_MenuItem_POS_ID"),
+    gcReloadMenuItemId: s(r, "gC_Reload_MenuItem_POS_ID"),
     useSyphor: s(r, "use_Syphor") === "1",
     enterpriseId: s(r, "Enterprise_ID"),
     imageServerUrl: s(r, "ImageServerURL"),

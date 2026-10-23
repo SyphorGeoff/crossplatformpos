@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { splitToNewCheck, checkSubtotal, generateCheckKey, newCheck, type Check, type CheckLine } from "@/model/check";
+import { splitToNewCheck, checkSubtotal, generateCheckKey, newCheck, sweepUnsentForIdle, type Check, type CheckLine } from "@/model/check";
 
 describe("generateCheckKey (iOS numeric key)", () => {
   it("is a 7-digit numeric string", () => {
@@ -73,5 +73,28 @@ describe("splitToNewCheck", () => {
     const parent = dest.lines.find((l) => l.menuItemId === "100")!;
     const mod = dest.lines.find((l) => l.menuItemId === "999")!;
     expect(mod.parentKey).toBe(parent.key); // parent link remapped to the new key
+  });
+});
+
+describe("idle timeout sweep (iPad idleTimerExceeded)", () => {
+  const base = (): Check => ({ id: "1", revenueCenterId: "1", tableName: "", guestCount: 1, lines: [], tenders: [], traysSent: 1, openedAt: 0 } as unknown as Check);
+  const line = (key: string, kind: string, extra: Partial<CheckLine> = {}): CheckLine => ({ key, kind, menuItemId: "", description: key, quantity: 1, amount: 1, indentLevel: 0, ...extra } as CheckLine);
+  it("drops unsent items with their modifiers and unsent adjustments, keeps sent lines", () => {
+    const c = { ...base(), lines: [line("a", "M", { sent: true }), line("b", "M"), line("bm", "Mo", { parentKey: "b" }), line("adj", "A"), line("sadj", "A", { sent: true })] };
+    const r = sweepUnsentForIdle(c, ["99"]);
+    expect(r.check.lines.map((l) => l.key)).toEqual(["a", "sadj"]);
+    expect(r.keepCheck).toBe(true);
+  });
+  it("keeps unsent gift-card lines and counts them as worth keeping", () => {
+    const c = { ...base(), lines: [line("g", "M", { menuItemId: "99" }), line("b", "M")] };
+    const r = sweepUnsentForIdle(c, ["99", ""]);
+    expect(r.check.lines.map((l) => l.key)).toEqual(["g"]);
+    expect(r.keepCheck).toBe(true);
+  });
+  it("an all-unsent check sweeps to nothing and is not kept", () => {
+    const c = { ...base(), lines: [line("b", "M"), line("c", "M")] };
+    const r = sweepUnsentForIdle(c, []);
+    expect(r.check.lines).toEqual([]);
+    expect(r.keepCheck).toBe(false);
   });
 });

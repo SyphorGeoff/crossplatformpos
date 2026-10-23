@@ -53,7 +53,7 @@ import {
 } from "@/protocol/order";
 import { sendPayment, type GiftType, type LoyaltyType, type PaymentContext, type PaymentResult } from "@/protocol/payment";
 import { fetchOpenChecks, fetchUnfinalizedTenders, lockCheck, modifyLineItem, readCheck, unlockCheck, type OpenCheck } from "@/protocol/tables";
-import { absorbSentLines, addFireCourseRecord, addTransferCheckRecord, applyAutoGratuity, changeRevenueCenter, applyItemAdjustments, applyMovePlan, checkSubtotal, effectiveCourse, firedCourses, guestAssignment, highestGuestNumber, lastLineOf, lineExtended, repeatLastOf, setLineReference, markRoundSent, mergeInto, newCheck, removeLine, setCourse, splitToNewCheck, unsentLines, voidLine, voidTenderLine, type AutoGratDef, type Check, type CheckLine } from "@/model/check";
+import { absorbSentLines, sweepUnsentForIdle, addFireCourseRecord, addTransferCheckRecord, applyAutoGratuity, changeRevenueCenter, applyItemAdjustments, applyMovePlan, checkSubtotal, effectiveCourse, firedCourses, guestAssignment, highestGuestNumber, lastLineOf, lineExtended, repeatLastOf, setLineReference, markRoundSent, mergeInto, newCheck, removeLine, setCourse, splitToNewCheck, unsentLines, voidLine, voidTenderLine, type AutoGratDef, type Check, type CheckLine } from "@/model/check";
 import { computeCheckTax, grandTotal, taxGroupsForWire } from "@/model/tax";
 import { adjustCount, countFor, emptyCounts, stockRefusal, withServerCounts, type ItemCounts } from "@/model/itemcounts";
 import { fetchMenuItemCounters, removeMenuItemCounter, setMenuItemCounter } from "@/protocol/itemcounts";
@@ -700,6 +700,33 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     ck.reset(rcId); setSendError(""); setTransferMode(false);
     signOut();
   };
+
+  /** iPad idle timeout (Store.terminalTimeout, resetIdleTimer / idleTimerExceeded): no touch
+   *  for N seconds while signed in → unsent lines are thrown away (gift-card lines kept), an
+   *  empty check is dropped, a check with sent lines is unlocked (and re-posted if a kept
+   *  gift-card line is still unsent), then back to the keypad. Off when the store value is
+   *  ≤ 10 or the terminal's default RC has rc_backup1 = "0". */
+  const idleFire = async () => {
+    const c = checkRef.current;
+    const { check: swept, keepCheck } = sweepUnsentForIdle(c, [store.gcMenuItemId, store.gcReloadMenuItemId]);
+    if (swept.lines.length !== c.lines.length) ck.update(() => swept);
+    if (keepCheck && unsentLines(swept).length > 0) await postCheck(false, swept);
+    await releaseLock();
+    ck.reset(rcId); setSendError(""); setTransferMode(false); setUnsentAlert(false);
+    signOut();
+  };
+  const idleFireRef = useRef(idleFire); idleFireRef.current = idleFire;
+  useEffect(() => {
+    const secs = store.terminalTimeoutSec;
+    const rcOk = cat.rcById.get(init.rcId)?.timeoutActive ?? true;
+    if (!employee || !(secs > 10) || !rcOk) return;
+    let t = 0;
+    const arm = () => { window.clearTimeout(t); t = window.setTimeout(() => { void idleFireRef.current(); }, secs * 1000); };
+    const events: Array<keyof WindowEventMap> = ["pointerdown", "keydown", "touchstart", "wheel"];
+    for (const ev of events) window.addEventListener(ev, arm, { capture: true, passive: true });
+    arm();
+    return () => { window.clearTimeout(t); for (const ev of events) window.removeEventListener(ev, arm, { capture: true }); };
+  }, [employee, store.terminalTimeoutSec, init.rcId, cat]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Transfer Check → Person / Person And Table, phase A (transferToPerson
    *  :16563-16603): fire anything unsent first, then load the clocked-in list and
