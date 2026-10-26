@@ -1376,6 +1376,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
       onLogin={signIn}
       status={defsStatus}
       onTerminalName={() => void pullDefs(true)}
+      onResetTerminal={onChangeStation}
       isManager={(id) => jobsForEmployee(id).some((j) => j.mgrMenu)}
     />
   );

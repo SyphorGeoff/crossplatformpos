@@ -21,13 +21,14 @@ import { checkForUpdate, installUpdate, installedVersion, reopenInstaller, type 
 export interface LoginEmployee { id: string; name: string; pin: string; }
 const TAGLINE = "All new ways to do completely new things";
 
-export default function Login({ settings, lookup, usePin, onLogin, status = "", onTerminalName, isManager = () => false }: {
+export default function Login({ settings, lookup, usePin, onLogin, status = "", onTerminalName, onResetTerminal, isManager = () => false }: {
   settings: Settings;
   lookup: (id: string) => LoginEmployee | null;
   usePin: boolean;
   onLogin: (emp: { id: string; name: string }) => void;
   /** Mgr_Menu job holder? The in-app Update is shielded by a manager ID + PIN on this keypad. */
   isManager?: (empId: string) => boolean;
+  onResetTerminal?: () => void;   // manager-gated: drop the activation and go back to the enterprise sign-in
   /** Definitions-refresh status shown under the prompt (iOS "updating" overlay). */
   status?: string;
   /** iOS pressTerminalName: the terminal name re-pulls definitions by hand. */
@@ -110,7 +111,16 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
   const [authId, setAuthId] = useState("");
   const [authEntry, setAuthEntry] = useState("");
   const [authError, setAuthError] = useState("");
-  const askUpdate = () => { setAuthPhase("id"); setAuthId(""); setAuthEntry(""); setAuthError(""); setUpdStatus(""); setAuthOpen(true); };
+  const [authPurpose, setAuthPurpose] = useState<"update" | "reset">("update");
+  const [confirmReset, setConfirmReset] = useState(false);
+  const askUpdate = () => { setAuthPurpose("update"); setAuthPhase("id"); setAuthId(""); setAuthEntry(""); setAuthError(""); setUpdStatus(""); setAuthOpen(true); };
+  // Reset terminal: press and HOLD the terminal name (1.5 s) → manager ID + PIN → confirm.
+  const askReset = () => { if (!onResetTerminal) return; setAuthPurpose("reset"); setAuthPhase("id"); setAuthId(""); setAuthEntry(""); setAuthError(""); setAuthOpen(true); };
+  const holdTimer = useRef<number | null>(null);
+  const holdFired = useRef(false);
+  const termDown = () => { holdFired.current = false; if (holdTimer.current) window.clearTimeout(holdTimer.current); holdTimer.current = window.setTimeout(() => { holdFired.current = true; holdTimer.current = null; askReset(); }, 1500); };
+  const termUp = () => { if (holdTimer.current) { window.clearTimeout(holdTimer.current); holdTimer.current = null; } };
+  const termClick = () => { if (holdFired.current) { holdFired.current = false; return; } setCheckTick((t) => t + 1); onTerminalName?.(); };
   const authPress = (k: string) => {
     setAuthError("");
     if (k === "Del") { setAuthEntry((e) => e.slice(0, -1)); return; }
@@ -124,6 +134,7 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
     if (!found || authEntry !== found.pin) { setAuthError("Invalid PIN"); setAuthPhase("id"); setAuthId(""); setAuthEntry(""); return; }
     if (!isManager(found.id)) { setAuthError("Manager required"); setAuthPhase("id"); setAuthId(""); setAuthEntry(""); return; }
     setAuthOpen(false);
+    if (authPurpose === "reset") { setConfirmReset(true); return; }
     void doUpdate();
   };
   const doUpdate = async () => {
@@ -177,10 +188,22 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
     </div>
   ) : null;
 
-  const authModal = authOpen && update ? (
+  const resetModal = confirmReset ? (
+    <div className="backdrop" onClick={() => setConfirmReset(false)}>
+      <div className="authbox updauth" onClick={(e) => e.stopPropagation()}>
+        <div className="authtitle">Re-activate this terminal?</div>
+        <div className="authsub">{settings.terminalName || settings.terminalPosId} will be signed out of the enterprise and asked to sign in again.</div>
+        <div className="mfactions">
+          <button className="mfbtn ghost" onClick={() => setConfirmReset(false)}>Cancel</button>
+          <button className="mfbtn go" onClick={() => { setConfirmReset(false); onResetTerminal?.(); }}>Re-activate</button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+  const authModal = authOpen && (authPurpose === "reset" || update) ? (
     <div className="backdrop" onClick={() => setAuthOpen(false)}>
       <div className="authbox updauth" onClick={(e) => e.stopPropagation()}>
-        <div className="authtitle">Update to {update.versionName}</div>
+        <div className="authtitle">{authPurpose === "reset" ? "Reset terminal" : `Update to ${update?.versionName}`}</div>
         <div className="authsub">{authPhase === "id" ? "Manager ID, then Ent" : `PIN for ${lookup(authId)?.name ?? authId}, then Ent`}</div>
         <div className="loginentry small">{authEntry ? authEntry.replace(/./g, "•") : " "}</div>
         {authError && <div className="loginerr">{authError}</div>}
@@ -198,6 +221,7 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
     <div className="login">
       {progressModal}
       {authModal}
+      {resetModal}
       <div className="loginhead">AIREUS</div>
       <div className="loginbody">
       <div className="loginpad">
@@ -235,7 +259,7 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
           {update ? <button className="lupd" disabled={!!progress && !progress.failed} onClick={askUpdate}>Update to {update.versionName}</button> : null}
         </span>
         <span className="ltag">{TAGLINE}</span>
-        <span className="lterm" onClick={() => { setCheckTick((t) => t + 1); onTerminalName?.(); }} role={onTerminalName ? "button" : undefined}>{settings.terminalName || settings.terminalPosId}</span>
+        <span className="lterm" onClick={termClick} onPointerDown={termDown} onPointerUp={termUp} onPointerLeave={termUp} onPointerCancel={termUp} onContextMenu={(e) => e.preventDefault()} role="button">{settings.terminalName || settings.terminalPosId}</span>
       </div>
     </div>
   );
