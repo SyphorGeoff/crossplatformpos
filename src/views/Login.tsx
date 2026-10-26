@@ -255,7 +255,7 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
       </div>
       <div className="loginfoot">
         <span className="lver">
-          {installed ? `v${installed.versionName}` : "ver 1.0.0"}
+          {installed ? `v${installed.versionName}` : `v${__APP_VERSION__}`}
           {update ? <button className="lupd" disabled={!!progress && !progress.failed} onClick={askUpdate}>Update to {update.versionName}</button> : null}
         </span>
         <span className="ltag">{TAGLINE}</span>

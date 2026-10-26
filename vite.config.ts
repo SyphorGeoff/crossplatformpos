@@ -1,4 +1,7 @@
 import { defineConfig, type Plugin } from "vite";
+import { readFileSync } from "node:fs";
+// One version for the web build: package.json "version" (keep it equal to the APK versionName at each release).
+const APP_VERSION = (JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")) as { version: string }).version;
 import { fileURLToPath } from "node:url";
 import net from "node:net";
 import react from "@vitejs/plugin-react";
@@ -80,6 +83,7 @@ function devPrintRelay(): Plugin {
 export default defineConfig({
   plugins: [react(), devForwarder(), devPrintRelay()],
   base: "./",
+  define: { __APP_VERSION__: JSON.stringify(APP_VERSION) },
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
   test: { environment: "node", include: ["tests/**/*.test.ts"] },
 } as Parameters<typeof defineConfig>[0]);
