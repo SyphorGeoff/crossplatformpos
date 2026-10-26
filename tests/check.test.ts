@@ -5,7 +5,8 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { splitToNewCheck, checkSubtotal, generateCheckKey, newCheck, sweepUnsentForIdle, type Check, type CheckLine } from "@/model/check";
+import { splitToNewCheck, checkSubtotal, generateCheckKey, newCheck, sweepUnsentForIdle, addItemLine, addModifierLine, removeLine, descendantKeys, markRoundSent, stopTimedLine, timedMinutes, timedCost, isTimedRunning, runningTimedLines, TIMED_ACTIVE, TIMED_COMPLETE, type Check, type CheckLine } from "@/model/check";
+import type { MenuItem } from "@/model/catalog";
 
 describe("generateCheckKey (iOS numeric key)", () => {
   it("is a 7-digit numeric string", () => {
@@ -96,5 +97,46 @@ describe("idle timeout sweep (iPad idleTimerExceeded)", () => {
     const r = sweepUnsentForIdle(c, []);
     expect(r.check.lines).toEqual([]);
     expect(r.keepCheck).toBe(false);
+  });
+});
+
+describe("mods of mods (nested modifier chains)", () => {
+  const item = (id: string, name: string): MenuItem => ({ id, name, price: "0", modChainId: "", askForPrice: false, isTimedItem: false } as unknown as MenuItem);
+  it("a modifier's modifier sits under the modifier, after the modifier's own subtree, and is removed with it", () => {
+    let c = newCheck("1", "21");
+    c = addItemLine(c, item("1", "Steak Dinner"), "steak");
+    c = addModifierLine(c, "steak", item("2", "Baked Potato"), 0, 1, "potato");
+    c = addModifierLine(c, "potato", item("3", "Sour Cream"), 0.5, 2, "sour");
+    c = addModifierLine(c, "potato", item("4", "Butter"), 0, 2, "butter");
+    c = addModifierLine(c, "steak", item("5", "Medium"), 0, 1, "temp");   // a sibling of the potato goes AFTER the potato's children
+    expect(c.lines.map((l) => `${l.key}@${l.indentLevel}`)).toEqual(["steak@0", "potato@1", "sour@2", "butter@2", "temp@1"]);
+    expect(descendantKeys(c.lines, "steak")).toEqual(new Set(["potato", "sour", "butter", "temp"]));
+    const r = removeLine(c, "potato");
+    expect(r.lines.map((l) => l.key)).toEqual(["steak", "temp"]);
+  });
+});
+
+describe("timed items (Stop Timer)", () => {
+  const timed = { id: "77", name: "Pool Table", price: "0.50", modChainId: "", askForPrice: false, isTimedItem: true } as unknown as MenuItem;
+  it("rings at $0 with the active reference and cannot be stopped before it is sent", () => {
+    const c = addItemLine(newCheck("1", "21"), timed, "pool");
+    const l = c.lines[0];
+    expect(l.amount).toBe(0); expect(l.reference).toBe(TIMED_ACTIVE); expect(isTimedRunning(l)).toBe(true);
+    expect(timedMinutes(l)).toBeNull();
+    expect(stopTimedLine(c, "pool", 5, "9999")).toBe(c);
+  });
+  it("prices by whole minutes rounded up and re-adds the item as a new unsent line, voiding the running one", () => {
+    let c = addItemLine(newCheck("1", "21"), timed, "pool");
+    c = markRoundSent(c);
+    const sentAt = c.lines[0].sentAt!;
+    const now = sentAt + 12.2 * 60_000;                 // 12 min 12 s → 13 minutes
+    expect(timedMinutes(c.lines[0], now)).toBe(13);
+    expect(timedCost(c.lines[0], 0.5, now)).toBe(6.5);
+    const s = stopTimedLine(c, "pool", 6.5, "9999");
+    const struck = s.lines.find((l) => l.key === "pool")!;
+    expect(struck.isVoid).toBe(true);
+    const done = s.lines.find((l) => l.reference === TIMED_COMPLETE)!;
+    expect(done.amount).toBe(6.5); expect(done.sent).toBeFalsy(); expect(done.menuItemId).toBe("77");
+    expect(runningTimedLines(s)).toEqual([]);
   });
 });

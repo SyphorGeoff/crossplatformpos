@@ -52,8 +52,11 @@ export function useCheck(defaultRcId: string, terminalPosId: string) {
   const setGuestFor = useCallback((keys: Set<string>, guestNumber: number) =>
     mutate((c) => setLineGuest(c, keys, guestNumber)), [mutate]);
 
-  const addModifier = useCallback((parentKey: string, item: MenuItem, amount: number, indent = 1) =>
-    mutate((c) => addModifierLine(c, parentKey, item, amount, indent)), [mutate]);
+  const addModifier = useCallback((parentKey: string, item: MenuItem, amount: number, indent = 1, key?: string) => {
+    const k = key ?? mintLineKey();
+    mutate((c) => addModifierLine(c, parentKey, item, amount, indent, k));
+    return k; // so a modifier's own modifiers can attach to it
+  }, [mutate]);
 
   const remove_ = useCallback((key: string) => mutate((c) => removeLine(c, key)), [mutate]);
   const setQty = useCallback((key: string, qty: number) => mutate((c) => setQuantity(c, key, qty)), [mutate]);

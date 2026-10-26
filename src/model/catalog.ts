@@ -32,6 +32,7 @@ export interface MenuItem {
   isModifier: boolean;        // Is_Modifier=="1" — a topping/mod, not a sellable tile
   modChainId: string;         // Screen_Chain_POS_ID — forces modifiers when added (M2)
   askForPrice: boolean;       // open-price item (Ask_For_Price=="1")
+  isTimedItem: boolean;       // Is_Timed_Item — rings at $0, Stop Timer prices it by the minute (pool tables…)
   forceTabName: boolean;      // Menu_Item.enomatic_lookup — REPURPOSED: an unsent one forces a tab name (isForceTabName)
   nonRevenue: boolean;
   imageId: string;            // MenuItem_Image_ID || Image_ID
@@ -146,6 +147,7 @@ function toMenuItem(r: DefRow): MenuItem {
     isModifier: s(r, "Is_Modifier") === "1",
     modChainId: s(r, "Screen_Chain_POS_ID"),
     askForPrice: s(r, "Ask_For_Price") === "1",
+    isTimedItem: s(r, "Is_Timed_Item") === "1",
     forceTabName: s(r, "enomatic_lookup") === "1" || s(r, "Enomatic_Lookup") === "1" || s(r, "Is_Enomatic_Lookup") === "1",
     nonRevenue: s(r, "Non_Revenue") === "1",
     description: s(r, "Description"),

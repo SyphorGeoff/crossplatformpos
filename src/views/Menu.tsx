@@ -53,7 +53,7 @@ import {
 } from "@/protocol/order";
 import { sendPayment, type GiftType, type LoyaltyType, type PaymentContext, type PaymentResult } from "@/protocol/payment";
 import { fetchOpenChecks, fetchUnfinalizedTenders, lockCheck, modifyLineItem, readCheck, unlockCheck, type OpenCheck } from "@/protocol/tables";
-import { absorbSentLines, sweepUnsentForIdle, addFireCourseRecord, addTransferCheckRecord, applyAutoGratuity, changeRevenueCenter, applyItemAdjustments, applyMovePlan, checkSubtotal, effectiveCourse, firedCourses, guestAssignment, highestGuestNumber, lastLineOf, lineExtended, repeatLastOf, setLineReference, markRoundSent, mergeInto, newCheck, removeLine, setCourse, splitToNewCheck, unsentLines, voidLine, voidTenderLine, type AutoGratDef, type Check, type CheckLine } from "@/model/check";
+import { absorbSentLines, sweepUnsentForIdle, runningTimedLines, stopTimedLine, timedCost, timedMinutes, addFireCourseRecord, addTransferCheckRecord, applyAutoGratuity, changeRevenueCenter, applyItemAdjustments, applyMovePlan, checkSubtotal, effectiveCourse, firedCourses, guestAssignment, highestGuestNumber, lastLineOf, lineExtended, repeatLastOf, setLineReference, markRoundSent, mergeInto, newCheck, removeLine, setCourse, splitToNewCheck, unsentLines, voidLine, voidTenderLine, type AutoGratDef, type Check, type CheckLine } from "@/model/check";
 import { computeCheckTax, grandTotal, taxGroupsForWire } from "@/model/tax";
 import { adjustCount, countFor, emptyCounts, stockRefusal, withServerCounts, type ItemCounts } from "@/model/itemcounts";
 import { fetchMenuItemCounters, removeMenuItemCounter, setMenuItemCounter } from "@/protocol/itemcounts";
@@ -359,7 +359,13 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     const qty = Math.max(1, Math.floor(o.qty ?? 1));
     countRing(mi.id, qty);
     if (price !== undefined) ck.setPrice(key, Math.round(price * 100) / 100);
-    for (const cm of chosen) ck.addModifier(key, cm.item, cm.free ? 0 : Number(cm.item.price) || 0);
+    // modifiers attach to the item; a modifier's own modifiers attach to IT, one level deeper (mods of mods)
+    const keyOf = new Map<ChosenModifier, string>();
+    for (const cm of chosen) {
+      const parentKey = cm.parent ? keyOf.get(cm.parent) ?? key : key;
+      const indent = cm.parent ? (ck.check.lines.find((l) => l.key === parentKey)?.indentLevel ?? 1) + 1 : 1;
+      keyOf.set(cm, ck.addModifier(parentKey, cm.item, cm.free ? 0 : Number(cm.item.price) || 0, cm.parent ? indent : 1));
+    }
     if (qty > 1) ck.setQty(key, qty);   // x2 / x3 / x5 pill — modifiers scale with the parent
     o.after?.(key);
   };
@@ -612,6 +618,30 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
    *  Quick sale, New tab/check, Manager's Menu all stop here. Only a crash or a
    *  failed send can leave unsent items behind, and the sign-in flush recovers those. */
   const [unsentAlert, setUnsentAlert] = useState(false);
+  /** iOS: while a timed item's clock is running (sent, $0) the check cannot be printed, paid,
+   *  transferred, re-priced or re-seated — "You need to stop the timer before …". */
+  const blockIfTimerRunning = (what: string): boolean => {
+    if (runningTimedLines(checkRef.current).length === 0) return false;
+    setSendError(`You need to stop the timer before ${what}`);
+    return true;
+  };
+  const [stopTimer, setStopTimer] = useState<{ key: string; name: string; minutes: number; cost: number } | null>(null);
+  const askStopTimer = (key: string) => {
+    const l = checkRef.current.lines.find((x) => x.key === key);
+    if (!l) return;
+    if (!l.sent) { setSendError("Timer is not active — send the item first"); return; }   // iOS timedItemNotActive
+    const rate = Number(cat.miById.get(l.menuItemId)?.price) || 0;
+    const minutes = timedMinutes(l) ?? 0, cost = timedCost(l, rate) ?? 0;
+    setStopTimer({ key, name: l.description, minutes, cost });
+  };
+  const confirmStopTimer = () => {
+    if (!stopTimer || !employee) return;
+    const l = checkRef.current.lines.find((x) => x.key === stopTimer.key);
+    const rate = Number(cat.miById.get(l?.menuItemId ?? "")?.price) || 0;
+    const cost = l ? (timedCost(l, rate) ?? stopTimer.cost) : stopTimer.cost;   // re-read at the tap, like the iPad
+    ck.update((c) => stopTimedLine(c, stopTimer.key, cost, employee.id));
+    setStopTimer(null);
+  };
   const blockIfUnsent = (): boolean => {
     const c = checkRef.current;
     if (unsentLines(c).length === 0 && !c.tenders.some((t) => !t.sent)) return false;
@@ -668,6 +698,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
   /** Pay (I-17, payingCheck): the check is SENT before the payment sheet opens, so
    *  backing out leaves nothing unsent/removable; auto gratuity rides along. */
   const openPay = async () => {
+    if (blockIfTimerRunning("paying")) return;
     const next = withAutoGrat();
     if (unsentLines(next).length > 0) {
       setSending(true); setSendError("");
@@ -761,6 +792,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
    *  open the employee picker. Phase B runs from the picker on a fresh render. */
   const beginTransferCheck = async (kind: "person" | "personTable") => {
     if (blockIfUnsent()) return;
+    if (blockIfTimerRunning("transferring")) return;
     setSending(true); setSendError("");
     setXferClocked(await fetchClockedInEmpIds(sessionCfg()));
     setSending(false); setXferPick(kind);
@@ -1438,6 +1470,19 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
   }
 
   /** Manager's Menu → Terminal: confirm before de-activating (rendered in BOTH the manager branch and the main screen). */
+  // Stop Timer (CheckTableViewController stopTimer alert): "Stop timer — $X.XX / The item … has run for N minutes".
+  const stopTimerModal = stopTimer ? (
+    <div className="backdrop" onClick={() => setStopTimer(null)}>
+      <div className="authbox" onClick={(e) => e.stopPropagation()}>
+        <div className="authtitle">Stop timer — ${stopTimer.cost.toFixed(2)}</div>
+        <div className="authsub">The item {stopTimer.name} has run for {stopTimer.minutes} minute{stopTimer.minutes === 1 ? "" : "s"}.</div>
+        <div className="mfactions">
+          <button className="mfbtn ghost" onClick={() => setStopTimer(null)}>Cancel</button>
+          <button className="mfbtn go" onClick={confirmStopTimer}>Stop timer</button>
+        </div>
+      </div>
+    </div>
+  ) : null;
   const unsentModal = unsentAlert ? (
         <div className="backdrop" onClick={() => setUnsentAlert(false)}>
           <div className="authbox" onClick={(e) => e.stopPropagation()}>
@@ -1563,6 +1608,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
    *  go to the kitchen/server before the guest check prints, so a printed check
    *  can never exist for lines the server has not seen. A failed send prints nothing. */
   const doPrintCheck = async () => {
+    if (blockIfTimerRunning("printing")) return;
     const pr = checkPrinter(settings.terminalPosId);
     if (!pr) { setSendError("No check printer assigned"); return; }
     let c: Check;
@@ -1703,6 +1749,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     for (const l of ck.check.lines) if (keys.has(l.key) || (l.parentKey && fam.has(l.parentKey))) fam.add(l.key);
     const sentLines = ck.check.lines.filter((l) => fam.has(l.key) && l.sent && l.trayNumber && l.lineNumber);
     const checkNo = ck.check.checkNumber, checkKey = ck.check.id, bdOfCheck = ck.check.businessDateId;
+    if (blockIfTimerRunning("changing the guest")) { setGuestPick(null); return; }
     ck.setGuestFor(keys, g); unselectAll(); setGuestPick(null);
     if (sentLines.length && checkNo) {
       void (async () => {
@@ -1917,6 +1964,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
           orderName={employee.name}
           onQty={setQtyCounted}
           onRemove={removeCounted}
+          onStopTimer={askStopTimer}
           onSetTable={ck.setTable}
           onSetGuests={ck.setGuests}
           onSend={doSend}
@@ -2022,7 +2070,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
       )}
 
       {pending && (
-        <ModifierFlow itemName={pending.item.name} steps={pending.steps} onDone={finishMods} onCancel={() => setPending(null)} />
+        <ModifierFlow itemName={pending.item.name} steps={pending.steps} stepsFor={(mi) => modifierSteps(cat, mi.modChainId, rcId)} onDone={finishMods} onCancel={() => setPending(null)} />
       )}
 
       {showManager && perms && (
@@ -2291,7 +2339,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
       })()}
       {overridePad && (
         <NumberPad title={overridePad.name} sub="Override price" mode="money" initial={String(Math.round(overridePad.amount * 100))}
-          onOk={(v) => { const { key } = overridePad; setOverridePad(null); ck.setPrice(key, Math.round(v * 100) / 100); setSendError(`Price overridden on ${overridePad.name}`); }}
+          onOk={(v) => { const { key } = overridePad; setOverridePad(null); if (blockIfTimerRunning("changing the price")) return; ck.setPrice(key, Math.round(v * 100) / 100); setSendError(`Price overridden on ${overridePad.name}`); }}
           onCancel={() => setOverridePad(null)} />
       )}
       {countPad && (
@@ -2311,6 +2359,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
 
       {terminalConfirm}
       {unsentModal}
+      {stopTimerModal}
 
       {coursePick && (() => {
         const close = () => setCoursePick(null);

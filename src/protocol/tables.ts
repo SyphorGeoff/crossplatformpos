@@ -127,16 +127,18 @@ export function parseCheckLines(check: XmlDict, names: CheckNames): { lines: Che
     qty: number; ext: number; guest?: number; applied?: string; auth?: string; ref: string;
     mid: string; adj: string; tid: string; tip: number; change: number; reference?: string; balanceRef?: string;
     course?: number;
+    sentAt?: number;
   }
   const raws: Raw[] = [];
   let trayCount = 0;
   for (const tray of asList(findKey(check, "Tray"))) {
     trayCount++;
     const trayNum = textOf(tray["Tray_Number"]) || String(trayCount);
+    const sentOn = Date.parse(textOf(tray["Sent_On"]).replace(" ", "T"));   // "yyyy-MM-dd HH:mm:ss" (server clock) — the timed-item start
     for (const li of asList(findKey(tray, "LineItem"))) {
       const t = (k: string) => textOf(findKey(li, k));
       raws.push({
-        tray: trayNum, line: t("Line_Number"), type: textOf(li["Type"]) || "M",
+        tray: trayNum, line: t("Line_Number"), type: textOf(li["Type"]) || "M", sentAt: Number.isNaN(sentOn) ? undefined : sentOn,
         isVoid: textOf(li["Is_Void"]) === "1", xfer: textOf(li["Transfered_Out"]) === "1", split: textOf(li["Is_Split"]) === "1",
         held: textOf(li["Is_Held"]) === "1",
         parentTray: t("Parent_Tray_Number"), parentLine: t("Parent_LineItem_ID"),
@@ -165,7 +167,7 @@ export function parseCheckLines(check: XmlDict, names: CheckNames): { lines: Che
     const id = `${r.tray}:${r.line}`;
     if (removed.has(id)) continue;                           // moved to another check
     const struck = voided.has(id);
-    const common = { trayNumber: Number(r.tray) || undefined, lineNumber: Number(r.line) || undefined, sent: true as const };
+    const common = { trayNumber: Number(r.tray) || undefined, lineNumber: Number(r.line) || undefined, sent: true as const, sentAt: r.sentAt };
     if (r.type === "T") {
       if (struck) continue;
       tenders.push({ key: mintLineKey(), tenderId: r.tid, name: names.tenderName(r.tid), amount: r.ext, tip: r.tip, change: r.change, reference: r.reference, balanceRef: r.balanceRef, ...common });
@@ -187,11 +189,13 @@ export function parseCheckLines(check: XmlDict, names: CheckNames): { lines: Che
       continue;
     }
     const isMod = !!r.parentLine;
+    const parentKey = isMod ? keyByTrayLine.get(`${r.parentTray || r.tray}:${r.parentLine}`) : undefined;
+    const parentLine = parentKey ? lines.find((x) => x.key === parentKey) : undefined;
     lines.push({
       key, menuItemId: r.mid, description: names.menuItemName(r.mid),
       quantity: r.qty, amount: r.qty ? Math.round((r.ext / r.qty) * 100) / 100 : r.ext,
-      kind: isMod ? "Mo" : "M", indentLevel: isMod ? 1 : 0,
-      parentKey: isMod ? keyByTrayLine.get(`${r.parentTray || r.tray}:${r.parentLine}`) : undefined,
+      kind: isMod ? "Mo" : "M", indentLevel: isMod ? (parentLine ? parentLine.indentLevel + 1 : 1) : 0,   // a modifier of a modifier nests one deeper
+      parentKey,
       guestNumber: r.guest, appliedToGuests: r.applied, held: r.held || undefined, isVoid: struck || undefined,
       course: isMod ? undefined : r.course, reference: !isMod && r.ref ? r.ref : undefined, ...common,
     });

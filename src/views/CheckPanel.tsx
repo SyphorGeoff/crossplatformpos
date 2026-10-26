@@ -7,7 +7,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { checkSubtotal, highestGuestNumber, lineExtended, refIsShown, sortLinesByGuest, unsentLines, type Check, type CheckLine } from "@/model/check";
+import { checkSubtotal, highestGuestNumber, lineExtended, refIsShown, sortLinesByGuest, unsentLines, type Check, type CheckLine, isTimedRunning } from "@/model/check";
 
 /** Paul's ten course hues (CheckTableViewController _courseTintForCourse), style only. */
 export const COURSE_HUES = [30, 148, 198, 45, 282, 342, 210, 15, 120, 260];
@@ -29,6 +29,7 @@ export interface CheckPanelProps {
   orderName?: string;
   onQty: (key: string, qty: number) => void;
   onRemove: (key: string) => void;
+  onStopTimer?: (key: string) => void;     // timed item (sent, $0): the Stop Timer button (CheckTableCellView stopTimerButton)
   onSetTable: (name: string) => void;
   onSetGuests: (n: number) => void;
   onSend: () => void;
@@ -60,9 +61,9 @@ export interface CheckPanelProps {
   onAddingCourse?: () => void;             // open the picker
 }
 
-function LineRow({ line, selecting, checked, showGuest, onToggle, onQty, onRemove, course, onLongPress }: {
+function LineRow({ line, selecting, checked, showGuest, onToggle, onQty, onRemove, course, onLongPress, onStopTimer }: {
   line: CheckLine; selecting: boolean; checked: boolean; showGuest: boolean; onToggle: (k: string) => void;
-  onQty: CheckPanelProps["onQty"]; onRemove: CheckPanelProps["onRemove"];
+  onQty: CheckPanelProps["onQty"]; onRemove: CheckPanelProps["onRemove"]; onStopTimer?: CheckPanelProps["onStopTimer"];
   course?: number;                 // effective course to show as a "C{n}" pill (showCourse only)
   onLongPress?: (key: string) => void;
 }) {
@@ -99,6 +100,11 @@ function LineRow({ line, selecting, checked, showGuest, onToggle, onQty, onRemov
         <span className="clname">{line.description}{line.held && <span className="clheld">HELD</span>}{line.kind === "M" && line.reference && <span className="clitemnote">{line.reference}</span>}</span>
         <span className="clamt">{line.amount ? fmt(lineExtended(line)) : ""}</span>
       </div>
+      {!selecting && isTimedRunning(line) && onStopTimer && (
+        <div className="clctl">
+          <button className="rm" disabled={!line.sent} title={line.sent ? "" : "Send the item to start the clock"} onClick={(e) => { e.stopPropagation(); onStopTimer(line.key); }}>Stop timer</button>
+        </div>
+      )}
       {!selecting && !line.sent && line.kind === "M" && (
         <div className="clctl">
           <button onClick={() => onQty(line.key, line.quantity - 1)}>–</button>
@@ -153,7 +159,7 @@ export default function CheckPanel(p: CheckPanelProps) {
   useEffect(() => { if (courseFilter !== null && !coursesPresent.includes(courseFilter)) setCourseFilter(null); }, [courseFilter, coursesPresent.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
   const sentTotal = sentHeads.reduce((a, f) => a + lineExtended(f.head) + f.rest.filter((r) => r.kind === "Mo").reduce((b, r) => b + lineExtended(r), 0), 0);
   const fam = (f: Family, ks: Parameters<typeof LineRow>[0] extends infer T ? Omit<T, "line"> : never) => [f.head, ...f.rest].map((l) => <LineRow key={l.key} line={l} {...ks} course={l.kind === "M" ? f.course : undefined} />);
-  const rowProps = { selecting, showGuest: nGuestsFor(check) > 1, onToggle: p.onToggleLine ?? (() => {}), onQty: p.onQty, onRemove: p.onRemove, onLongPress: p.onLineLongPress };
+  const rowProps = { selecting, showGuest: nGuestsFor(check) > 1, onToggle: p.onToggleLine ?? (() => {}), onQty: p.onQty, onRemove: p.onRemove, onLongPress: p.onLineLongPress, onStopTimer: p.onStopTimer };
   const courseState = (c: number): "pending" | "sent" | "fired" => {
     const heads = families.filter((f) => f.course === c);
     if (!heads.some((f) => f.head.sent)) return "pending";
@@ -218,7 +224,7 @@ export default function CheckPanel(p: CheckPanelProps) {
             <div className="cemptysub">Pick a category to start</div>
           </div>
         ) : !coursing ? display.map((l) => (
-          <LineRow key={l.key} line={l} selecting={selecting} checked={sel.has(l.key)} showGuest={nGuests > 1} onToggle={p.onToggleLine ?? (() => {})} onQty={p.onQty} onRemove={p.onRemove}
+          <LineRow key={l.key} line={l} selecting={selecting} checked={sel.has(l.key)} showGuest={nGuests > 1} onToggle={p.onToggleLine ?? (() => {})} onQty={p.onQty} onRemove={p.onRemove} onStopTimer={p.onStopTimer}
             course={p.showCourse && p.courseOf && l.kind === "M" ? p.courseOf(l) : undefined} onLongPress={p.onLineLongPress} />
         )) : orderingMode ? (
           <>
@@ -249,7 +255,7 @@ export default function CheckPanel(p: CheckPanelProps) {
               );
             })}
             {courseFilter === null && trailers.map((l) => (
-              <LineRow key={l.key} line={l} selecting={selecting} checked={sel.has(l.key)} showGuest={nGuests > 1} onToggle={p.onToggleLine ?? (() => {})} onQty={p.onQty} onRemove={p.onRemove} />
+              <LineRow key={l.key} line={l} selecting={selecting} checked={sel.has(l.key)} showGuest={nGuests > 1} onToggle={p.onToggleLine ?? (() => {})} onQty={p.onQty} onRemove={p.onRemove} onStopTimer={p.onStopTimer} />
             ))}
             {unsentHeads.length > 0 && <button className="csentpill collapse" onClick={() => setSentExpanded(false)}>▲ BACK TO NEW ITEMS</button>}
           </>

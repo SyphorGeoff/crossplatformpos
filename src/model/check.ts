@@ -38,6 +38,7 @@ export interface CheckLine {
   rungAt?: number;          // ms when this terminal rang the line (local only; drives "Repeat last (12 min ago)")
   held?: boolean;           // Is_Held — on the check but withheld from the kitchen chit
   sent?: boolean;           // already fired to the kitchen in a prior round
+  sentAt?: number;          // ms when the round carrying this line was sent (local stamp, or the tray's Sent_On on pull-back) — the timed-item clock
   trayNumber?: number;      // Tray_Number the server holds this line under (stamped when sent)
   lineNumber?: number;      // Line_Number within that tray (stamped when sent)
   parentTrayNumber?: number; // Transfered_Out void-off → the ORIGINAL line's Tray_Number (Parent_Tray_Number)
@@ -118,30 +119,74 @@ export function guestAssignment(currentGuest: number): { guestNumber: number; ap
 export function addItemLine(check: Check, item: MenuItem, key: string, guestNumber?: number, appliedToGuests?: string, course?: number, held?: boolean): Check {
   const line: CheckLine = {
     key, menuItemId: item.id, description: item.name,
-    quantity: 1, amount: Number(item.price) || 0, kind: "M", indentLevel: 0,
+    // A timed item rings at $0 with the "Timed Item Active" reference (FinancialCheckManager :8761-8763);
+    // Stop Timer later voids it and re-adds it priced by the minute.
+    quantity: 1, amount: item.isTimedItem ? 0 : Number(item.price) || 0, kind: "M", indentLevel: 0,
     modChainId: item.modChainId || undefined, guestNumber, appliedToGuests, course, held: held || undefined,
+    reference: item.isTimedItem ? TIMED_ACTIVE : undefined,
     rungAt: Date.now(),
   };
   return { ...check, lines: [...check.lines, line] };
 }
 
+/* ---------------- Timed items (CheckTableViewController stopTimer / FinancialCheckManager addTimedLineItem) ---------------- */
+export const TIMED_ACTIVE = "Timed Item Active";
+export const TIMED_COMPLETE = "Timed Item Complete";
+/** A timed line whose clock is running: rung at $0 and not yet stopped (iOS: isTimedItem && Amount == 0). */
+export const isTimedRunning = (l: CheckLine): boolean => l.kind === "M" && !l.isVoid && l.amount === 0 && l.reference === TIMED_ACTIVE;
+export const runningTimedLines = (check: Check): CheckLine[] => check.lines.filter(isTimedRunning);
+/** Minutes on the clock, rounded UP (ceil(interval/60)); null until the line has been sent. */
+export function timedMinutes(l: CheckLine, now = Date.now()): number | null {
+  if (!l.sent || !l.sentAt) return null;
+  return Math.max(1, Math.ceil((now - l.sentAt) / 60_000));
+}
+/** cost = ceil(minutes) × the item's price (price = per-minute rate). */
+export function timedCost(l: CheckLine, pricePerMinute: number, now = Date.now()): number | null {
+  const m = timedMinutes(l, now);
+  return m === null ? null : Math.round(m * pricePerMinute * 100) / 100;
+}
+/** Stop the timer: void the running $0 line and append the same item priced at `cost`
+ *  with the "Timed Item Complete" reference (unsent — goes with the next Send). */
+export function stopTimedLine(check: Check, key: string, cost: number, authEmpId: string): Check {
+  const l = check.lines.find((x) => x.key === key);
+  if (!l || !isTimedRunning(l) || !l.sent) return check;
+  const voided = voidLine(check, key, "", authEmpId);
+  const done: CheckLine = {
+    key: mintLineKey(), menuItemId: l.menuItemId, description: l.description, quantity: 1, amount: cost, kind: "M", indentLevel: 0,
+    reference: TIMED_COMPLETE, guestNumber: l.guestNumber, appliedToGuests: l.appliedToGuests, course: l.course, rungAt: Date.now(),
+  };
+  return { ...voided, lines: [...voided.lines, done] };
+}
+
+/** Every line hanging off `key`, at any depth (modifiers of modifiers included). */
+export function descendantKeys(lines: CheckLine[], key: string): Set<string> {
+  const out = new Set<string>();
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const l of lines) if (l.parentKey && !out.has(l.key) && (l.parentKey === key || out.has(l.parentKey))) { out.add(l.key); grew = true; }
+  }
+  return out;
+}
+
 /** Insert a modifier line directly beneath its parent item (and any siblings).
  *  A modifier inherits its parent's guest so it sorts and moves with the item. */
 export function addModifierLine(
-  check: Check, parentKey: string, item: MenuItem, amount: number, indentLevel = 1,
+  check: Check, parentKey: string, item: MenuItem, amount: number, indentLevel = 1, key = mintLineKey(),
 ): Check {
   const parent = check.lines.find((l) => l.key === parentKey);
   const line: CheckLine = {
-    key: mintLineKey(), menuItemId: item.id, description: item.name,
+    key, menuItemId: item.id, description: item.name,
     quantity: 1, amount, kind: "Mo", indentLevel, parentKey,
     guestNumber: parent?.guestNumber, appliedToGuests: parent?.appliedToGuests,
   };
   const lines = [...check.lines];
-  // place after the parent and its existing descendants
+  // place after the parent and its whole subtree (a modifier's own modifiers included)
   let idx = lines.findIndex((l) => l.key === parentKey);
   if (idx < 0) return { ...check, lines: [...lines, line] };
+  const subtree = descendantKeys(lines, parentKey);
   idx++;
-  while (idx < lines.length && lines[idx].parentKey === parentKey) idx++;
+  while (idx < lines.length && subtree.has(lines[idx].key)) idx++;
   lines.splice(idx, 0, line);
   return { ...check, lines };
 }
@@ -159,13 +204,15 @@ export function sweepUnsentForIdle(check: Check, gcItemIds: string[]): { check: 
     if (l.kind === "M" && gc.has(l.menuItemId)) continue;
     if (l.kind === "M" || l.kind === "A") drop.add(l.key);
   }
-  const lines = check.lines.filter((l) => !drop.has(l.key) && !(l.parentKey && drop.has(l.parentKey)));
+  for (const k of [...drop]) for (const d of descendantKeys(check.lines, k)) drop.add(d);
+  const lines = check.lines.filter((l) => !drop.has(l.key));
   const keepCheck = lines.some((l) => l.sent || (l.kind === "M" && gc.has(l.menuItemId)));
   return { check: { ...check, lines }, keepCheck };
 }
 
 export function removeLine(check: Check, key: string): Check {
-  return { ...check, lines: check.lines.filter((l) => l.key !== key && l.parentKey !== key) };
+  const gone = descendantKeys(check.lines, key); gone.add(key);
+  return { ...check, lines: check.lines.filter((l) => !gone.has(l.key)) };
 }
 
 /** Change an unsent item's quantity. Its modifiers follow (updateQuantityForLineItems
@@ -834,7 +881,8 @@ export function markRoundSent(check: Check, closed = false): Check {
   // so later void-offs / transfers can point back at it.
   const tray = check.traysSent + 1;
   let n = 0;
-  const lines = check.lines.map((l) => (l.sent ? l : { ...l, sent: true, trayNumber: tray, lineNumber: ++n }));
+  const sentAt = Date.now();
+  const lines = check.lines.map((l) => (l.sent ? l : { ...l, sent: true, sentAt, trayNumber: tray, lineNumber: ++n }));
   // tenders follow the items in the tray's numbering (buildFinancialCheck: items.length + i + 1)
   return {
     ...check,
