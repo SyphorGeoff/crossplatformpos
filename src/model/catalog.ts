@@ -140,6 +140,8 @@ export interface Terminal {
   name: string;
   defaultScreenGroupId: string;   // Screen_Group_POS_ID (blank → first root group)
   defaultRevenueCenterId: string; // Default_RevenueCenter_POS_ID
+  choosePrinter: boolean;         // Choose_Printer — the Print Options buttons ask which check printer (TerminalConfigManager isChoosePrinter)
+  checkPrinterIds: string[];      // Chk_Printer_POS_ID + chk_Printer2..5_POS_ID — the printers that picker offers
   _raw: DefRow;
 }
 
@@ -628,6 +630,8 @@ export function terminals(): Terminal[] {
     name: s(r, "Name").trim(),
     defaultScreenGroupId: s(r, "Screen_Group_POS_ID"),
     defaultRevenueCenterId: s(r, "Default_RevenueCenter_POS_ID"),
+    choosePrinter: s(r, "Choose_Printer") === "1",
+    checkPrinterIds: ["Chk_Printer_POS_ID", "chk_Printer2_POS_ID", "chk_Printer3_POS_ID", "chk_Printer4_POS_ID", "chk_Printer5_POS_ID"].map((k) => s(r, k)).filter(Boolean),
     _raw: r,
   }));
 }

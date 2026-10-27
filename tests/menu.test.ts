@@ -30,7 +30,7 @@ const mi = (id: string, name: string, o: Partial<MenuItem> & { hide?: string; nl
 });
 const rc = (id: string, name: string, filter = false): RevenueCenter => ({ id, name, screenGroupFilter: filter, alwaysAskForTab: false, disableAutoGrat: false, timeoutActive: true, logoutAfterPayment: false, showCourse: false, useCourseButtons: false, guestBeforeCourse: false, _raw: {} });
 const term = (id: string, defRc = "", defSg = ""): Terminal => ({
-  id, name: "T" + id, defaultScreenGroupId: defSg, defaultRevenueCenterId: defRc, _raw: {},
+  id, name: "T" + id, defaultScreenGroupId: defSg, defaultRevenueCenterId: defRc, choosePrinter: false, checkPrinterIds: [], _raw: {},
 });
 
 function build(parts: {

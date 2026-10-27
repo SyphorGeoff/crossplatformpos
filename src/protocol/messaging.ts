@@ -38,6 +38,25 @@ export function checkHtmlUrl(p: {
 
 export interface MessageResult { ok: boolean; message: string; }
 
+/** Email the check (MessagingManager.m sendEmailCheckMessage :280-320): Send_Email=1 with the check's
+ *  Check_ID / BusinessDate_ID / check_key — the SERVER renders and mails the check. "to|cc" carries a CC. */
+export function emailCheckXml(cfg: SessionConfig, p: { email: string; empPosId: string; checkNo: string; businessDateId: string; checkKey: string }, now = new Date()): string {
+  const [to, cc] = p.email.split("|").map((x) => x.trim());
+  return `${XML_HEAD}${DTD}<Post_Message>` +
+    el("ISIS_Ver", cfg.isisVer) + el("Store_ID", cfg.storeId) + el("Security_Token", cfg.token) +
+    el("Send_Email", "1") + el("From_Employee_POS_ID", p.empPosId) + el("Send_Internal", "0") +
+    el("Check_ID", p.checkNo) + el("BusinessDate_ID", p.businessDateId) +
+    (cc ? el("CC_Email_Address", cc) : "") + el("Email_Address", to) + el("check_key", p.checkKey) +
+    el("Sent_On", stamp(now)) + `</Post_Message>`;
+}
+export async function sendEmailCheck(cfg: SessionConfig, p: Parameters<typeof emailCheckXml>[1]): Promise<MessageResult> {
+  try {
+    const parsed = parseXmlResponse(await postXml(apiServerAddress(cfg.enterpriseServerUrl), emailCheckXml(cfg, p)));
+    const code = textOf(findKey(parsed, "Status_Code"));
+    return { ok: code === "100", message: textOf(findKey(parsed, "Status_Text")) || code || "No response" };
+  } catch (e) { return { ok: false, message: `server unreachable: ${String((e as Error).message ?? e)}` }; }
+}
+
 /** Text the check to a phone (Send_SMS=1). `body` is typically checkHtmlUrl(). */
 export async function sendTextCheck(cfg: SessionConfig, p: { phone: string; empPosId: string; body: string }): Promise<MessageResult> {
   const xml = `${XML_HEAD}${DTD}<Post_Message>` +

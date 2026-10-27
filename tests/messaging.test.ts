@@ -73,3 +73,13 @@ describe("broadcast lane", () => {
     expect(xml).toContain("<Send_Email>0</Send_Email><Send_SMS>0</Send_SMS><From_Employee_POS_ID></From_Employee_POS_ID><Broadcast>1</Broadcast><Terminal_POS_ID>21</Terminal_POS_ID><Subject>Running behind</Subject><Message_Body>15 min on entrées</Message_Body><Sent_On>2026-10-16 19:38:00</Sent_On><Expires_On>2026-10-16 19:48:00</Expires_On></Post_Message>");
   });
 });
+
+// ---- Email Check (MessagingManager.m sendEmailCheckMessage :280-320) ----
+import { emailCheckXml } from "@/protocol/messaging";
+describe("emailCheckXml", () => {
+  it("Send_Email=1 with Check_ID / BusinessDate_ID / check_key, in the iPad's order; 'to|cc' carries a CC", () => {
+    const xml = emailCheckXml(cfg, { email: "a@x.com|b@x.com", empPosId: "1", checkNo: "210035", businessDateId: "90103", checkKey: "9872281" }, new Date(2026, 9, 27, 9, 5, 7));
+    expect(xml).toContain("<Security_Token>TOK</Security_Token><Send_Email>1</Send_Email><From_Employee_POS_ID>1</From_Employee_POS_ID><Send_Internal>0</Send_Internal><Check_ID>210035</Check_ID><BusinessDate_ID>90103</BusinessDate_ID><CC_Email_Address>b@x.com</CC_Email_Address><Email_Address>a@x.com</Email_Address><check_key>9872281</check_key><Sent_On>2026-10-27 09:05:07</Sent_On></Post_Message>");
+    expect(emailCheckXml(cfg, { email: "a@x.com", empPosId: "1", checkNo: "1", businessDateId: "2", checkKey: "3" })).not.toContain("CC_Email_Address");
+  });
+});

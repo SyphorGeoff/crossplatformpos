@@ -179,6 +179,8 @@ export interface CheckCtx {
   checkNo: string; server: string; guests: number; date: string; tableLabel?: string; reprint?: boolean;
   largeTotal?: boolean;   // printer.printLargeTotal — double-size TOTAL line
   tokens: TokenCtx;       // values for {SUBT*NN%}/{TOTAL*NN%}/{CHK_*}/{TABNAME}
+  guestLabels?: string[];                              // Print Check for some guests: "*** Guest  N" lines after the items (getCurrentCheckInfo:guests:showGuest:)
+  guestSections?: { label: string; lines: CheckLineOut[] }[]; // By SubTotal: each guest's items then its label (getCurrentSplitCheckInfo); replaces `lines`
 }
 export interface CheckTaxOut { name: string; amount: number; }
 export interface CheckTenderOut { name: string; amount: number; }
@@ -230,9 +232,17 @@ export function buildCustomerCheck(
   d.line(ctx.server);
   d.line(ctx.date);
   d.sep();
-  for (const l of lines) {
-    if (l.isMod) d.line(`   ${l.name}`);
-    else d.item(l.qty > 1 ? `${l.qty}` : "1", l.name, money(l.amount));
+  const emitLines = (ls: CheckLineOut[]) => {
+    for (const l of ls) {
+      if (l.isMod) d.line(`   ${l.name}`);
+      else d.item(l.qty > 1 ? `${l.qty}` : "1", l.name, money(l.amount));
+    }
+  };
+  if (ctx.guestSections) {
+    for (const sec of ctx.guestSections) { emitLines(sec.lines); d.line(sec.label); }
+  } else {
+    emitLines(lines);
+    for (const g of ctx.guestLabels ?? []) d.line(g);
   }
   d.sep("-");
   d.two("Subtotal", money(subtotal));

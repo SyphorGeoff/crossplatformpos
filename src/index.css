@@ -490,6 +490,11 @@ body { background: var(--cream); color: var(--ink); font-family: "Helvetica Neue
 .mgrtop { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
 .updbig { text-align: center; font-variant-numeric: tabular-nums; font-size: 44px; font-weight: 700; padding: 14px 0 6px; }
 .authbox.updauth { width: min(380px, 92vw); }
+.authbox.printopts { width: min(440px, 92vw); }
+.poguests { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin: 12px 0; }
+.pogrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.pogrid.one { grid-template-columns: 1fr; }
+.pogrid .mfbtn { padding: 12px 10px; font-size: 14px; }
 .authbox.timerblock { width: min(420px, 92vw); border: 2px solid var(--terra); }
 .authbox.timerblock .authtitle { color: var(--terra); font-size: 22px; }
 .authbox.timerblock .authsub { font-size: 15px; color: var(--ink); margin: 6px 0 12px; }

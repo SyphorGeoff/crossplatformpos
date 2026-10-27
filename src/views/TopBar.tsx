@@ -13,6 +13,7 @@ export interface TopBarProps {
   onEdit: () => void;
   editing: boolean;
   onPrint?: () => void;
+  onPrintOptions?: () => void;   // iOS "Prt Options" (printOptionButton): guests + Print Check / Separate Checks / By SubTotal / By Time / Email Check
   onSendStay: () => void;
   onSend: () => void;
   onPay: () => void;
@@ -34,6 +35,7 @@ export default function TopBar(p: TopBarProps) {
         <button className="tbbtn" onClick={p.onHub} disabled={p.sending}><i>◎</i>Dashboard</button>
         <button className={`tbbtn ${p.editing ? "on" : ""}`} onClick={p.onEdit} disabled={p.sending}><i>✎</i>Edit</button>
         <button className="tbbtn" onClick={p.onPrint} disabled={p.sending || !p.onPrint} title={p.onPrint ? "Print check" : "Print — add items first"}><i>⎙</i>Print</button>
+        <button className="tbbtn" onClick={p.onPrintOptions} disabled={p.sending || !p.onPrintOptions} title={p.onPrintOptions ? "Print options" : "Print options — add items first"}><i>⎙</i>Prt Options</button>
         {p.onMessages && <button className="tbbtn" onClick={p.onMessages} disabled={p.sending}><i>✉</i>Messages{p.unread ? <span className="tbbadge">{p.unread}</span> : null}</button>}
       </div>
       <div className="tbfire">

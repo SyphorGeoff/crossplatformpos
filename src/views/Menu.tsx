@@ -30,9 +30,9 @@ import EditCheck, { type EditCheckActions } from "./EditCheck";
 import SplitCheck, { type SplitKind, type SplitPlan } from "./SplitCheck";
 import NumberPad from "./NumberPad";
 import ManagerMenu from "./ManagerMenu";
-import { checkHtmlUrl, sendEmployeeNotice, sendTextCheck } from "@/protocol/messaging";
+import { checkHtmlUrl, sendEmailCheck, sendEmployeeNotice, sendTextCheck } from "@/protocol/messaging";
 import { memberLookup, type Member } from "@/protocol/memberlookup";
-import { backupPrinter, checkPrinter, checkWrapper, prepPrintersForGroups, printers as loadPrinters, type Printer } from "@/model/printers";
+import { backupPrinter, checkPrinter, checkPrinters, checkWrapper, prepPrintersForGroups, printers as loadPrinters, terminalChoosesPrinter, type Printer } from "@/model/printers";
 import { buildClockChit, buildCustomerCheck, buildFireChit, buildNoteChit, buildPrepChit, type CheckLineOut, type CourseOpts, type PrepCtx, type PrepItem } from "@/protocol/printjobs";
 import { printTo } from "@/platform/print";
 import { DRAWER_KICK } from "@/platform/escpos";
@@ -1202,26 +1202,48 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
   };
 
   /** Build the customer-check receipt text for the current check. */
-  const buildReceiptText = (checkNo: string, reprint = false, c: Check = ck.check): string => {
+  /** Receipt options (PrintCheckViewController): `guests` limits the check to those guests' lines
+   *  (totals recomputed for them, no tenders — getCurrentCheckInfo:guests:showGuest:), `byGuest` prints
+   *  each guest's items under its own label (By SubTotal — getCurrentSplitCheckInfo), `byTime` prefixes
+   *  every item with the HH:MM it was sent (By Time — sortLineItems showTime). */
+  type ReceiptOpts = { guests?: number[]; byGuest?: boolean; byTime?: boolean; printer?: Printer };
+  const receiptLinesOf = (c: Check): CheckLine[] => c.lines.filter((l) => !l.transferOut && !l.isSplit && !isVoidReversal(l) && l.kind !== "Co" && l.kind !== "R");
+  /** The guest a line belongs to for printing: an item's own Guest_Num, a modifier/adjustment its parent's. */
+  const printGuestOf = (c: Check, l: CheckLine): number => {
+    if (l.parentKey) { const p = c.lines.find((x) => x.key === l.parentKey); if (p) return printGuestOf(c, p); }
+    return l.guestNumber ?? 1;
+  };
+  const buildReceiptText = (checkNo: string, reprint = false, c: Check = ck.check, o: ReceiptOpts = {}): string => {
     const wrap = checkWrapper(c.revenueCenterId);
-    const pr = checkPrinter(settings.terminalPosId);
+    const pr = o.printer ?? checkPrinter(settings.terminalPosId);
     const cpl = pr?.charsPerLine ?? wrap.maxWidth;
-    const t = c === ck.check ? tax : computeCheckTax(cat, c, taxExempt);
-    const lines: CheckLineOut[] = c.lines
-      .filter((l) => !l.transferOut && !l.isSplit && !isVoidReversal(l) && l.kind !== "Co" && l.kind !== "R")
-      .map((l) => ({ qty: l.quantity, name: prefixedName(l.pfix, l.description), amount: lineExtended(l), indent: l.indentLevel, isMod: l.kind === "Mo" }));
-    const subtotal = checkSubtotal(c);
+    const all = receiptLinesOf(c);
+    const subset = o.guests ? all.filter((l) => o.guests!.includes(printGuestOf(c, l))) : all;
+    const sub: Check = o.guests ? { ...c, lines: subset, tenders: [] } : c;
+    const t = sub === ck.check ? tax : computeCheckTax(cat, sub, taxExempt);
+    const hhmm = (ms?: number) => { if (!ms) return ""; const d = new Date(ms); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")} `; };
+    const out = (l: CheckLine): CheckLineOut => ({
+      qty: l.quantity, name: (o.byTime && l.kind === "M" ? hhmm(l.sentAt) : "") + prefixedName(l.pfix, l.description),
+      amount: lineExtended(l), indent: l.indentLevel, isMod: l.kind === "Mo",
+    });
+    const lines: CheckLineOut[] = subset.map(out);
+    const subtotal = checkSubtotal(sub);
     const total = grandTotal(subtotal, t);
     const nm = (employee?.name ?? "").trim().split(/\s+/);
+    const guestLabel = (g: number) => (g > 0 ? `*** Guest  ${g}` : "*** Table");
+    const guestSections = o.byGuest
+      ? (o.guests ?? [...new Set(subset.map((l) => printGuestOf(c, l)))].sort((a, b) => a - b)).map((g) => ({ label: guestLabel(g), lines: subset.filter((l) => printGuestOf(c, l) === g).map(out) }))
+      : undefined;
     return buildCustomerCheck(
       { headerLines: wrap.headerLines, trailerLines: wrap.trailerLines, checkNo, server: employee?.name ?? "",
         guests: c.guestCount, date: new Date().toLocaleString(),
         tableLabel: c.diningTableId ? `Table ${tableNumberOf(c.diningTableId)}` : (c.tableName || undefined), reprint,
         largeTotal: pr?.printLargeTotal ?? false,
-        tokens: { firstName: nm[0] ?? "", lastName: nm.slice(1).join(" "), tabName: c.tableName, subtotal, grandTotal: total } },
+        tokens: { firstName: nm[0] ?? "", lastName: nm.slice(1).join(" "), tabName: c.tableName, subtotal, grandTotal: total },
+        guestLabels: o.guests && !o.byGuest ? o.guests.map(guestLabel) : undefined, guestSections },
       lines, subtotal, t.groups.filter((g) => !g.isInclusive && g.amount).map((g) => ({ name: g.name, amount: g.amount })),
-      total, c.tenders.map((x) => ({ name: x.name, amount: x.amount })),
-      Math.max(0, total - c.tenders.reduce((a, x) => a + x.amount, 0)), cpl,
+      total, sub.tenders.map((x) => ({ name: x.name, amount: x.amount })),
+      Math.max(0, total - sub.tenders.reduce((a, x) => a + x.amount, 0)), cpl,
     );
   };
 
@@ -1683,6 +1705,114 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     setSendError("Reprinting last check");
   };
 
+  /* ---- Print Options (iOS "Prt Options" → PrintCheckViewController): pick guests, then
+   *      Print Check / Separate Checks / By SubTotal / By Time / Email Check. Guests with live items
+   *      start selected (guestHasLineitems); Choose_Printer terminals pick the check printer first. ---- */
+  type PrintKind = "check" | "separate" | "subtotal" | "time";
+  const [printOpts, setPrintOpts] = useState<{ guests: Set<number> } | null>(null);
+  const [printerPick, setPrinterPick] = useState<{ kind: PrintKind; guests: number[] } | null>(null);
+  const guestsWithItems = (c: Check): Set<number> =>
+    new Set(c.lines.filter((l) => l.kind === "M" && !l.isVoid && !l.transferOut && !l.isSplit).map((l) => l.guestNumber ?? 1));
+  const openPrintOptions = () => {
+    if (blockIfTimerRunning("printing")) return;
+    if (!ck.check.lines.some((l) => l.kind === "M" && !l.isVoid)) { setSendError("Cannot print an empty check"); return; }
+    setPrintOpts({ guests: guestsWithItems(ck.check) });
+  };
+  /** Send anything unsent first (Print is a Send & Stay — same rule as the Print button); null = the send failed. */
+  const sentCheckForPrint = async (): Promise<Check | null> => {
+    if (unsentLines(ck.check).length > 0 || ck.check.tenders.some((t) => !t.sent)) {
+      setSending(true); setSendError("");
+      const r = await postCheck(false, withAutoGrat());
+      setSending(false);
+      if (!r.ok) { setSendError(r.message); return null; }
+      return checkRef.current;
+    }
+    return withAutoGrat();
+  };
+  const runPrintOption = async (kind: PrintKind, guests: number[], printer?: Printer) => {
+    const pr = printer ?? checkPrinter(settings.terminalPosId);
+    if (!pr) { setSendError("No check printer assigned"); return; }
+    const c = await sentCheckForPrint();
+    if (!c) return;
+    const checkNo = c.checkNumber ?? "";
+    const allGuests = guests.length === 0 || guests.length >= highestGuestNumber(c);
+    const popts = { enterpriseCode: settings.enterpriseCode, storeId: settings.storeId, backup: backupPrinter(pr) };
+    let text = "";
+    if (kind === "separate") {
+      // one cut receipt per guest, in guest order (printMultipleChecks → printCurrentCheckGuest)
+      const gs = guests.length ? guests : [...guestsWithItems(c)].sort((a, b) => a - b);
+      for (const g of gs) { const t = buildReceiptText(checkNo, false, c, { guests: [g], printer: pr }); text += t; void printTo(pr, t, popts); }
+      setSendError(`Printing ${gs.length} separate check${gs.length === 1 ? "" : "s"} to ${pr.name}`);
+    } else {
+      text = buildReceiptText(checkNo, false, c, { guests: allGuests ? undefined : guests, byGuest: kind === "subtotal", byTime: kind === "time", printer: pr });
+      void printTo(pr, text, popts);
+      setSendError(`Printing ${kind === "subtotal" ? "check by subtotal" : kind === "time" ? "check by time" : "check"} to ${pr.name}`);
+    }
+    lastReceiptRef.current = text;
+  };
+  const pickPrintOption = (kind: PrintKind) => {
+    if (!printOpts) return;
+    const guests = [...printOpts.guests].sort((a, b) => a - b);
+    setPrintOpts(null);
+    if (terminalChoosesPrinter(settings.terminalPosId) && checkPrinters(settings.terminalPosId).length > 0) { setPrinterPick({ kind, guests }); return; }
+    void runPrintOption(kind, guests);
+  };
+  /** Email Check: the server renders and mails the posted check (sendEmailCheckMessage). */
+  const doEmailCheck = async () => {
+    setPrintOpts(null);
+    const email = window.prompt("Email the check to:", "");
+    if (!email || !email.trim()) return;
+    const c = await sentCheckForPrint();
+    if (!c || !c.checkNumber) return;
+    try {
+      const bd = c.businessDateId || await ensureBd();
+      const r = await sendEmailCheck(sessionCfg(), { email: email.trim(), empPosId: employee!.id, checkNo: c.checkNumber, businessDateId: bd, checkKey: c.id });
+      setSendError(r.ok ? `Emailed the check to ${email.trim()}` : `Email failed: ${r.message}`);
+    } catch (e) { setSendError(String((e as Error).message ?? e)); }
+  };
+  const printOptionsModal = printOpts ? (() => {
+    const n = highestGuestNumber(ck.check);
+    const toggle = (g: number) => setPrintOpts((p) => { if (!p) return p; const s = new Set(p.guests); s.has(g) ? s.delete(g) : s.add(g); return { guests: s }; });
+    const sel = printOpts.guests;
+    return (
+      <div className="backdrop" onClick={() => setPrintOpts(null)}>
+        <div className="authbox printopts" onClick={(e) => e.stopPropagation()}>
+          <div className="authtitle">Print Check</div>
+          <div className="authsub">Pick the guests, then how to print.</div>
+          <div className="poguests" role="group" aria-label="Guests">
+            {Array.from({ length: n }, (_, i) => i + 1).map((g) => (
+              <button key={g} className={`gbtn ${sel.has(g) ? "on" : ""}`} aria-pressed={sel.has(g)} onClick={() => toggle(g)}>{g}</button>
+            ))}
+          </div>
+          <div className="pogrid">
+            <button className="mfbtn ghost" onClick={() => setPrintOpts({ guests: new Set(Array.from({ length: n }, (_, i) => i + 1)) })}>Select All</button>
+            <button className="mfbtn ghost" onClick={() => setPrintOpts({ guests: new Set() })}>Un-Select All</button>
+            <button className="mfbtn go" disabled={sel.size === 0} onClick={() => pickPrintOption("subtotal")}>By SubTotal</button>
+            <button className="mfbtn go" disabled={sel.size === 0} onClick={() => pickPrintOption("check")}>Print Check</button>
+            <button className="mfbtn go" disabled={sel.size === 0} onClick={() => pickPrintOption("separate")}>Separate Checks</button>
+            <button className="mfbtn go" onClick={() => void doEmailCheck()}>Email Check</button>
+            <button className="mfbtn go" disabled={sel.size === 0} onClick={() => pickPrintOption("time")}>By Time</button>
+            <button className="mfbtn ghost" onClick={() => setPrintOpts(null)}>Done</button>
+          </div>
+        </div>
+      </div>
+    );
+  })() : null;
+  const printerPickModal = printerPick ? (
+    <div className="backdrop" onClick={() => setPrinterPick(null)}>
+      <div className="authbox printopts" onClick={(e) => e.stopPropagation()}>
+        <div className="authtitle">Select Printer</div>
+        <div className="pogrid one">
+          <button className="mfbtn go" onClick={() => { const p = printerPick; setPrinterPick(null); void runPrintOption(p.kind, p.guests); }}>Default Printer</button>
+          {checkPrinters(settings.terminalPosId).map((pr) => (
+            <button key={pr.id} className="mfbtn ghost" onClick={() => { const p = printerPick; setPrinterPick(null); void runPrintOption(p.kind, p.guests, pr); }}>{pr.name}</button>
+          ))}
+          <button className="mfbtn ghost" onClick={() => setPrinterPick(null)}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
   /* ---- Split Check screen: Split Guest (chksplit) / Transfer Item (lixfer) ---- */
   const openSplit = (kind: SplitKind, auth: Authorizer, preselect?: Set<string>) => {
     setSplitErr(""); setSplitMode({ kind, preselect, auth }); void refreshOpenChecks();
@@ -1936,6 +2066,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
         onLogout={() => void doSignOut()} onTables={() => void goToFloor()} onTabs={() => void goToTabs()}
         onHub={() => setShowHub(true)} onEdit={() => setEditing((e) => !e)} editing={editing}
         onPrint={ck.check.lines.length ? () => withTabName(() => void doPrintCheck()) : undefined}
+        onPrintOptions={ck.check.lines.length ? () => withTabName(openPrintOptions) : undefined}
         onSendStay={() => withTabName(() => void doSendStay())} onSend={() => withTabName(() => void doSend2())} onPay={() => withTabName(() => void openPay())}
         canSend={unsentLines(ck.check).length > 0} canSendExit={ck.check.lines.length > 0} canPay={ck.check.lines.length > 0} sending={sending}
         onMessages={openMessages} unread={msgs.unread}
@@ -2420,6 +2551,8 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
       {unsentModal}
       {stopTimerModal}
       {timerBlockModal}
+      {printOptionsModal}
+      {printerPickModal}
 
       {coursePick && (() => {
         const close = () => setCoursePick(null);

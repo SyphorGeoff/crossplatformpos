@@ -52,6 +52,7 @@ Last updated: 2026-10-08
 | Timed item | Built | Is_Timed_Item rings at $0 'Timed Item Active'; Stop timer after Send prices ceil(minutes) × price as a 'Timed Item Complete' line; Pay/Print/transfer/price/guest guarded while the clock runs (R46–R47, 2026-10-26) |
 | Prefix bar (CUP / BOWL x1.4 multiplier prefixes) | Built | Screen Group → Topping Group drives a bar above the tiles, default pre-selected, back to the default after every ring; price × PriceMultiplier (fixed-dollar and price-tier modes too); toppingPrefix_ID + pfix on the wire and pull-back; chit/KDS name "BOW Cup Tomato Soup" (R48, R50, 2026-10-26) |
 | Change the prefix on an unsent line | Built | Tap the chip on the line: cycles the item's Main Topping Group prefixes and re-prices from the base price (iOS opens a picker from the same group). (R49, 2026-10-26) |
+| Prt Options (Print Check popup: guests + Print Check / Separate Checks / By SubTotal / By Time / Email Check; Choose_Printer picker) | Built | iOS PrintCheckViewController port, 2026-10-27, not yet live-tested (R52) |
 | Prefix bar on modifier screens | Built | Chain step screen with a Topping Group → bar in the modifier flow; pick carries the prefix; mods also take their parents' price/quantity multipliers (iOS getParentPriceMultipler). Verified live on Waffle Options / Add on Some Protein (R51, 2026-10-26) |
 | Wine Descriptor | Out of scope | Geoff, 2026-10-07 |
 | Visual favorites | Built | "Favorites" tile first on the root screen: Top16 items plus pins |

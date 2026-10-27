@@ -70,6 +70,22 @@ export function checkPrinter(terminalPosId: string): Printer | undefined {
   return term ? printerById(s(term, "Chk_Printer_POS_ID")) : undefined;
 }
 
+/** The check printers the Print Options picker offers (PrintCheckViewController selectCheckPrinter):
+ *  Terminal.Chk_Printer_POS_ID + chk_Printer2..5_POS_ID, by name, KDS stations dropped. */
+export function checkPrinters(terminalPosId: string): Printer[] {
+  const term = loadDefRows("Terminal").find((t) => s(t, "POS_ID") === terminalPosId);
+  if (!term) return [];
+  const ids = ["Chk_Printer_POS_ID", "chk_Printer2_POS_ID", "chk_Printer3_POS_ID", "chk_Printer4_POS_ID", "chk_Printer5_POS_ID"].map((k) => s(term, k)).filter(Boolean);
+  const out: Printer[] = [];
+  for (const id of ids) { const p = printerById(id); if (p && !p.isKDS && !out.some((x) => x.id === p.id)) out.push(p); }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+/** Terminal.Choose_Printer — the Print Options buttons ask which check printer to use. */
+export function terminalChoosesPrinter(terminalPosId: string): boolean {
+  const term = loadDefRows("Terminal").find((t) => s(t, "POS_ID") === terminalPosId);
+  return !!term && s(term, "Choose_Printer") === "1";
+}
+
 /** Follow one Backup_POS_ID hop (PrintManager falls back to a backup printer). */
 export function backupPrinter(p: Printer | undefined): Printer | undefined {
   return p && p.backupId ? printerById(p.backupId) : undefined;

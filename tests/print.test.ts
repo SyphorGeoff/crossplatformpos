@@ -62,6 +62,19 @@ describe("customer check", () => {
     expect(job).toContain("Thank you!");
     expect(job).toContain("CHK: 200001");
   });
+  it("Print Check for some guests lists '*** Guest  N' after the items; By SubTotal groups items under each guest's label", () => {
+    const base = { headerLines: [], trailerLines: [], checkNo: "1", server: "S", guests: 2, date: "d", tokens: { firstName: "A", lastName: "B", tabName: "", subtotal: 4, grandTotal: 4.4 } };
+    const a = { qty: 1, name: "Coffee", amount: 3, indent: 0, isMod: false }, b = { qty: 1, name: "Tea", amount: 1, indent: 0, isMod: false };
+    const some = buildCustomerCheck({ ...base, guestLabels: ["*** Guest  2"] }, [b], 1, [], 1.1, [], 1.1, 40);
+    expect(some.indexOf("Tea")).toBeLessThan(some.indexOf("*** Guest  2"));
+    expect(some).not.toContain("Coffee");
+    const split = buildCustomerCheck({ ...base, guestSections: [{ label: "*** Guest  1", lines: [a] }, { label: "*** Guest  2", lines: [b] }] }, [], 4, [], 4.4, [], 4.4, 40);
+    const i = (t: string) => split.indexOf(t);
+    expect(i("Coffee")).toBeLessThan(i("*** Guest  1"));
+    expect(i("*** Guest  1")).toBeLessThan(i("Tea"));
+    expect(i("Tea")).toBeLessThan(i("*** Guest  2"));
+    expect(i("*** Guest  2")).toBeLessThan(i("Subtotal"));
+  });
   it("resolves gratuity tokens and honors |=blank / empty=skip", () => {
     const job = buildCustomerCheck(
       { headerLines: ["STORE", "", "|"], trailerLines: ["18%: ${SUBT*18%}"], checkNo: "1", server: "S", guests: 1, date: "d",
