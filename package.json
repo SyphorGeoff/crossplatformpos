@@ -1,7 +1,7 @@
 {
   "name": "aireus-pos",
   "private": true,
-  "version": "1.23",
+  "version": "1.24",
   "type": "module",
   "description": "Aireus POS EDGE — cross-platform POS client (web / Android / iOS). Protocol parity with the iOS Objective-C ISIS client.",
   "scripts": {
