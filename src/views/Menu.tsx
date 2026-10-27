@@ -13,6 +13,7 @@ import { useCheck } from "@/state/useCheck";
 import { mintCheckNumber, syncCheckCounter } from "@/state/checkcounter";
 import { useEmployee } from "@/state/useEmployee";
 import CheckPanel from "./CheckPanel";
+import { defaultPrefixOf, nextPrefix, prefixedName, prefixesForGroup, setLinePrefix } from "@/model/prefix";
 import ModifierFlow, { type ChosenModifier } from "./ModifierFlow";
 import PaymentView from "./PaymentView";
 import Floorplan from "./Floorplan";
@@ -239,6 +240,12 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
   const roots = useMemo(() => rootScreenGroups(cat, rcId), [cat, rcId]);
   const current = stack[stack.length - 1];
   const searching = query.trim().length > 0;
+  // Prefix bar (ItemsTableViewController prefixes): the current screen group's topping group,
+  // its default pre-selected; back to the default after every ring (resetPrefixForRootScreenGroup).
+  const barPrefixes = useMemo(() => (!searching && current?.toppingGroupId ? prefixesForGroup(cat, current.toppingGroupId) : []), [cat, current, searching]);
+  const [selectedPrefixId, setSelectedPrefixId] = useState<string | undefined>(undefined);
+  const resetPrefix = () => setSelectedPrefixId(!searching && current?.toppingGroupId ? defaultPrefixOf(cat, current.toppingGroupId)?.id : undefined);
+  useEffect(() => { resetPrefix(); }, [current?.id, current?.toppingGroupId, cat, searching]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const favorites = useMemo(() => favoriteItems(cat, pins), [cat, pins]);
   const subGroups = useMemo<ScreenGroup[]>(() => {
@@ -327,6 +334,16 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     }
     ck.setQty(key, qty);
   };
+  /** The prefixes a rung line may switch to: its item's Main Topping Group (iPad changePrefix → hasMainTopping). */
+  const prefixListFor = (l: CheckLine) => { const mi = cat.miById.get(l.menuItemId); return mi?.mainToppingGroupId ? prefixesForGroup(cat, mi.mainToppingGroupId) : []; };
+  const prefixCyclable = (l: CheckLine) => !l.sent && l.kind === "M" && !cat.miById.get(l.menuItemId)?.isTimedItem && prefixListFor(l).length > 0;
+  /** Tap the prefix chip on an unsent line → the next allowed prefix, re-priced from the base price. */
+  const cyclePrefix = (key: string) => {
+    const l = lineOf(key);
+    if (!l || !prefixCyclable(l)) return;
+    const next = nextPrefix(prefixListFor(l), l.prefixId);
+    if (next) ck.update((c) => setLinePrefix(c, key, next, cat.miById.get(l.menuItemId)));
+  };
 
   /** Store.max_check_amount (getMax_check_amount / amountDiff): refuse an item that
    *  would push the check past the limit. */
@@ -359,12 +376,19 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     const qty = Math.max(1, Math.floor(o.qty ?? 1));
     countRing(mi.id, qty);
     if (price !== undefined) ck.setPrice(key, Math.round(price * 100) / 100);
+    // the bar's prefix rides on the item (selectedPrefixID at add time), then the bar snaps back to the default
+    const prefix = barPrefixes.length && selectedPrefixId ? cat.prefixById.get(selectedPrefixId) : undefined;
+    if (prefix) ck.update((c) => setLinePrefix(c, key, prefix, mi));
+    resetPrefix();
     // modifiers attach to the item; a modifier's own modifiers attach to IT, one level deeper (mods of mods)
     const keyOf = new Map<ChosenModifier, string>();
     for (const cm of chosen) {
       const parentKey = cm.parent ? keyOf.get(cm.parent) ?? key : key;
       const indent = cm.parent ? (ck.check.lines.find((l) => l.key === parentKey)?.indentLevel ?? 1) + 1 : 1;
-      keyOf.set(cm, ck.addModifier(parentKey, cm.item, cm.free ? 0 : Number(cm.item.price) || 0, cm.parent ? indent : 1));
+      const mk = ck.addModifier(parentKey, cm.item, cm.free ? 0 : Number(cm.item.price) || 0, cm.parent ? indent : 1);
+      keyOf.set(cm, mk);
+      // the modifier screen's prefix (No / Dbl…) and the parents' multipliers (a mod under a BOWL x1.4 is ×1.4 too)
+      ck.update((c) => setLinePrefix(c, mk, cm.prefix, cm.item, cat));
     }
     if (qty > 1) ck.setQty(key, qty);   // x2 / x3 / x5 pill — modifiers scale with the parent
     o.after?.(key);
@@ -864,6 +888,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
       }
       const names = {
         menuItemName: (id: string) => cat.miById.get(id)?.name ?? `#${id}`,
+        prefixQtyMult: (id: string) => cat.prefixById.get(id)?.inventoryMultiplier, prefixName: (id: string) => cat.prefixById.get(id)?.name,
         tenderName: (id: string) => payTenders.find((t) => t.id === id)?.name ?? `#${id}`,
         adjustmentName: (id: string) => adjustmentDefs.find((a) => a.id === id)?.name ?? `#${id}`,
       };
@@ -892,6 +917,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
       const moved = dest.lines.map((l) => ({ ...l, sent: false }));
       const names = {
         menuItemName: (id: string) => cat.miById.get(id)?.name ?? `#${id}`,
+        prefixQtyMult: (id: string) => cat.prefixById.get(id)?.inventoryMultiplier, prefixName: (id: string) => cat.prefixById.get(id)?.name,
         tenderName: (id: string) => payTenders.find((t) => t.id === id)?.name ?? `#${id}`,
         adjustmentName: (id: string) => adjustmentDefs.find((a) => a.id === id)?.name ?? `#${id}`,
       };
@@ -1011,9 +1037,9 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
       if (l.kind === "M") {
         const seat = printer.includeSeat ? (l.guestNumber && l.guestNumber > 0 && !l.appliedToGuests ? `S${l.guestNumber}` : "T") : undefined;
         const c = courseOfLine(l);
-        cur = { qty: l.quantity, name: l.description, mods: [], seat, held: l.held, course: l.course === undefined && c === 0 ? undefined : c, guest: l.guestNumber ?? 0, note: l.reference };
+        cur = { qty: l.quantity, name: prefixedName(l.pfix, l.description), mods: [], seat, held: l.held, course: l.course === undefined && c === 0 ? undefined : c, guest: l.guestNumber ?? 0, note: l.reference };
         out.push(cur);
-      } else if (cur) cur.mods.push(l.description);
+      } else if (cur) cur.mods.push(prefixedName(l.pfix, l.description));
     }
     return out;
   };
@@ -1026,7 +1052,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     ...(fire !== undefined ? { fire: String(fire) } : {}),
   });
   const kdsLine = (l: CheckLine, course: number, fired?: string): KdsItem => ({
-    lineitemkey: `${ck.check.id}:${l.key}`, quantity: String(l.quantity), description: l.description,
+    lineitemkey: `${ck.check.id}:${l.key}`, quantity: String(l.quantity), description: prefixedName(l.pfix, l.description),
     amount: l.amount.toFixed(2), guestNumber: l.appliedToGuests === "0" || !l.guestNumber || l.guestNumber <= 0 ? "T" : String(l.guestNumber),
     indentLevel: l.indentLevel, reference: l.kind === "M" ? (l.reference ?? "") : "", type: l.kind === "Mo" ? "Mo" : "M", isVoid: l.isVoid ? "1" : "0",
     ...(course > 0 ? { course: String(course) } : {}), ...(fired !== undefined ? { fired } : {}),
@@ -1180,7 +1206,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     const t = c === ck.check ? tax : computeCheckTax(cat, c, taxExempt);
     const lines: CheckLineOut[] = c.lines
       .filter((l) => !l.transferOut && !l.isSplit && !(l.isVoid && l.amount < 0) && l.kind !== "Co" && l.kind !== "R")
-      .map((l) => ({ qty: l.quantity, name: l.description, amount: lineExtended(l), indent: l.indentLevel, isMod: l.kind === "Mo" }));
+      .map((l) => ({ qty: l.quantity, name: prefixedName(l.pfix, l.description), amount: lineExtended(l), indent: l.indentLevel, isMod: l.kind === "Mo" }));
     const subtotal = checkSubtotal(c);
     const total = grandTotal(subtotal, t);
     const nm = (employee?.name ?? "").trim().split(/\s+/);
@@ -1652,6 +1678,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
       if (!lock.ok) { setSplitErr(lock.alreadyLocked ? `Check ${occ.checkNo} is open on another terminal` : `Could not lock check ${occ.checkNo}: ${lock.message}`); return null; }
       const names = {
         menuItemName: (id: string) => cat.miById.get(id)?.name ?? `#${id}`,
+        prefixQtyMult: (id: string) => cat.prefixById.get(id)?.inventoryMultiplier, prefixName: (id: string) => cat.prefixById.get(id)?.name,
         tenderName: (id: string) => payTenders.find((t) => t.id === id)?.name ?? `#${id}`,
         adjustmentName: (id: string) => adjustmentDefs.find((a) => a.id === id)?.name ?? `#${id}`,
       };
@@ -1939,6 +1966,14 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
             </nav>
           ) : null}
 
+          {barPrefixes.length > 0 && (
+            <div className="prefixbar" role="radiogroup" aria-label="Prefix">
+              {barPrefixes.map((pf) => (
+                <button key={pf.id} className={`pfx ${selectedPrefixId === pf.id ? "on" : ""}`} aria-pressed={selectedPrefixId === pf.id} onClick={() => setSelectedPrefixId(pf.id)}>{pf.name}</button>
+              ))}
+            </div>
+          )}
+
           <div className="menugrid">
             {subGroups.map((sg) => (
               <button key={`g${sg.id}`} className="tile group" style={{ background: tileColor(sg.color) }} onClick={() => enter(sg)}>
@@ -1965,6 +2000,8 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
           onQty={setQtyCounted}
           onRemove={removeCounted}
           onStopTimer={askStopTimer}
+          onCyclePrefix={cyclePrefix}
+          prefixCyclable={prefixCyclable}
           onSetTable={ck.setTable}
           onSetGuests={ck.setGuests}
           onSend={doSend}

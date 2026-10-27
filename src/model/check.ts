@@ -35,6 +35,10 @@ export interface CheckLine {
   transferOut?: boolean;    // a negative void-off line moving an item off this check (split/transfer)
   isSplit?: boolean;        // Is_Split=1 — a negative marker retiring a line that was divided among guests
   course?: number;          // print_Sort_Order — the line's course (0 = none); undefined = item default
+  prefixId?: string;        // toppingPrefix_ID — the prefix rung with the item (CUP / BOWL x1.4 / No…)
+  pfix?: string;            // pfix — the prefix's name as sent on the wire (shown on the line, chit and KDS)
+  prefixQtyMult?: number;   // the prefix's InventoryMultiplier: wire Quantity = quantity × this (1 when absent)
+  baseAmount?: number;      // the unit price BEFORE the prefix multiplier — a prefix change re-prices from here
   rungAt?: number;          // ms when this terminal rang the line (local only; drives "Repeat last (12 min ago)")
   held?: boolean;           // Is_Held — on the check but withheld from the kitchen chit
   sent?: boolean;           // already fired to the kitchen in a prior round

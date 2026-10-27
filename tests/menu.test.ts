@@ -19,13 +19,13 @@ import {
 
 const sg = (id: string, name: string, o: Partial<ScreenGroup> & { skip?: string } = {}): ScreenGroup => ({
   id, name, sort: o.sort ?? 0, parentIds: o.parentIds ?? [], displayMode: o.displayMode ?? "LG_VIEW",
-  imageId: "", color: o.color ?? "", isTableView: false,
+  imageId: "", color: o.color ?? "", isTableView: false, toppingGroupId: o.toppingGroupId ?? "",
   _raw: { Skip_Carousel: o.skip ?? "0" },
 });
 const mi = (id: string, name: string, o: Partial<MenuItem> & { hide?: string; nlu?: string } = {}): MenuItem => ({
   id, name, price: o.price ?? "1.00", screenGroupId: o.screenGroupId ?? "", otherScreenGroupIds: o.otherScreenGroupIds ?? [],
   sort: o.sort ?? 0, categoryId: "", taxGroupId: o.taxGroupId ?? "", printGroupId: "", printGroupIds: o.printGroupIds ?? [], isModifier: o.isModifier ?? false, modChainId: o.modChainId ?? "",
-  askForPrice: false, isTimedItem: false, forceTabName: false, nonRevenue: false, imageId: "", description: "", printSortOrder: 0, cost: 0, affinityId: "", top16: false,
+  askForPrice: false, isTimedItem: false, forceTabName: false, nonRevenue: false, imageId: "", description: "", printSortOrder: 0, cost: 0, affinityId: "", top16: false, mainToppingGroupId: "",
   _raw: { Hide_From_Store: o.hide ?? "0", NLU: o.nlu ?? "" },
 });
 const rc = (id: string, name: string, filter = false): RevenueCenter => ({ id, name, screenGroupFilter: filter, alwaysAskForTab: false, disableAutoGrat: false, timeoutActive: true, logoutAfterPayment: false, showCourse: false, useCourseButtons: false, guestBeforeCourse: false, _raw: {} });
@@ -45,6 +45,7 @@ function build(parts: {
     screenGroups, menuItems, revenueCenters, terminals,
     rcScreenGroups: parts.rcScreenGroups ?? [], categories: [], chains: [], screenChains: [],
     taxPacks: [], menuItemTaxGroups: [], taxReportGroups: [],
+    toppingPrefixes: [], toppingGroups: [], toppingGroupPrefixes: [], prefixById: new Map(), toppingGroupById: new Map(),
     sgById: indexBy(screenGroups, (x) => x.id), miById: indexBy(menuItems, (x) => x.id),
     rcById: indexBy(revenueCenters, (x) => x.id), catById: new Map(), termById: indexBy(terminals, (x) => x.id),
     taxPackById: new Map(), taxGroupById: new Map(), reportGroupById: new Map(),

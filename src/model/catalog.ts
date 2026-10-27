@@ -41,6 +41,7 @@ export interface MenuItem {
   cost: number;               // Cost — item cost from the feed (0 when empty; iOS ignores it)
   affinityId: string;         // MenuItem_Affinity_POS_ID — the suggested pairing (PairedItemViewController)
   top16: boolean;             // Top16 — a visual favorite (VisualFavoritesManager)
+  mainToppingGroupId: string; // main_ToppingGroup_ID ("Main Topping Group") — gates changing the prefix on a rung line (hasMainTopping)
   _raw: DefRow;
 }
 
@@ -53,8 +54,32 @@ export interface ScreenGroup {
   imageId: string;            // Image_ID
   color: string;              // button_color palette index
   isTableView: boolean;
+  toppingGroupId: string;     // toppingGroup_ID — the prefix bar (CUP / BOWL…) shown while ordering from this screen
   _raw: DefRow;
 }
+
+/** A prefix (ToppingPrefix): CUP, BOWL x1.4, No, Dbl… stamped on a line as toppingPrefix_ID + pfix.
+ *  `mode` is fixAmountPriceMultiplier: 0 = PriceMultiplier scales the price, 1 = it is a dollar
+ *  amount added to the price, 2 = it selects a price tier (2 = Happy_Hour_Price, N = Price_Tier_N). */
+export interface ToppingPrefix {
+  id: string;                 // POS_ID
+  name: string;
+  inventoryMultiplier: number; // Quantity on the wire = count × this ("No" = 0)
+  priceMultiplier: number;
+  mode: 0 | 1 | 2;
+  screenChainId: string;      // screen_Chain_POS_ID — a chain the prefix forces (not ported)
+  _raw: DefRow;
+}
+/** A set of allowed prefixes with a default (ToppingGroup), referenced by Screen_Group.toppingGroup_ID
+ *  (the ordering bar) and Menu_Item.main_ToppingGroup_ID (the line's prefix picker). */
+export interface ToppingGroup {
+  id: string;
+  name: string;
+  defaultPrefixId: string;    // Default_ToppingPrefix_ID
+  _raw: DefRow;
+}
+/** Topping_ToppingPrefix — which prefixes a group allows. */
+export interface ToppingGroupPrefix { prefixId: string; groupId: string; }
 
 export interface RevenueCenter {
   id: string;                 // POS_ID
@@ -155,6 +180,7 @@ function toMenuItem(r: DefRow): MenuItem {
     cost: Number(s(r, "Cost")) > 0 ? Number(s(r, "Cost")) : 0,
     affinityId: s(r, "MenuItem_Affinity_POS_ID"),
     top16: s(r, "Top16") === "1",
+    mainToppingGroupId: s(r, "main_ToppingGroup_ID") || s(r, "Main_ToppingGroup_ID"),
     imageId: s(r, "MenuItem_Image_ID") || s(r, "Image_ID"),
     _raw: r,
   };
@@ -170,8 +196,34 @@ function toScreenGroup(r: DefRow): ScreenGroup {
     imageId: s(r, "Image_ID"),
     color: s(r, "button_color"),
     isTableView: s(r, "Is_Table_View") === "1",
+    toppingGroupId: s(r, "toppingGroup_ID") || s(r, "ToppingGroup_ID"),
     _raw: r,
   };
+}
+
+export function toppingPrefixes(): ToppingPrefix[] {
+  return loadDefRows("ToppingPrefix").filter(alive).map((r) => {
+    const m = s(r, "fixAmountPriceMultiplier");
+    const mode: 0 | 1 | 2 = m === "1" ? 1 : m === "2" ? 2 : 0;
+    return {
+      id: s(r, "POS_ID"), name: s(r, "Name").trim(),
+      inventoryMultiplier: s(r, "InventoryMultiplier") === "" ? 1 : Number(s(r, "InventoryMultiplier")) || 0,
+      priceMultiplier: s(r, "PriceMultiplier") === "" ? 1 : Number(s(r, "PriceMultiplier")) || 0,
+      mode,
+      screenChainId: s(r, "screen_Chain_POS_ID"),
+      _raw: r,
+    };
+  }).filter((p) => p.id);
+}
+export function toppingGroups(): ToppingGroup[] {
+  return loadDefRows("ToppingGroup").filter(alive).map((r) => ({
+    id: s(r, "POS_ID"), name: s(r, "Name").trim(), defaultPrefixId: s(r, "Default_ToppingPrefix_ID"), _raw: r,
+  })).filter((g) => g.id);
+}
+export function toppingGroupPrefixes(): ToppingGroupPrefix[] {
+  return loadDefRows("Topping_ToppingPrefix").filter(alive).map((r) => ({
+    prefixId: s(r, "ToppingPrefix_ID"), groupId: s(r, "ToppingGroup_ID"),
+  })).filter((x) => x.prefixId && x.groupId);
 }
 
 export function menuItems(): MenuItem[] {

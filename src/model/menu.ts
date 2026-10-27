@@ -17,10 +17,11 @@
 
 import {
   categories, chains, indexBy, menuItems, menuItemTaxGroups, revenueCenters, rcScreenGroups, screenChains,
-  screenGroups, taxPacks, taxReportGroups, terminals,
+  screenGroups, taxPacks, taxReportGroups, terminals, toppingGroupPrefixes, toppingGroups, toppingPrefixes,
   type Category, type Chain, type MenuItem, type MenuItemTaxGroup, type RevenueCenter, type RcScreenGroup,
-  type ScreenChain, type ScreenGroup, type TaxPack, type TaxReportGroup, type Terminal,
+  type ScreenChain, type ScreenGroup, type TaxPack, type TaxReportGroup, type Terminal, type ToppingGroup, type ToppingGroupPrefix, type ToppingPrefix,
 } from "./catalog";
+import { defaultPrefixOf, prefixesForGroup } from "./prefix";
 
 export interface Catalog {
   revenueCenters: RevenueCenter[];
@@ -34,6 +35,11 @@ export interface Catalog {
   taxPacks: TaxPack[];
   menuItemTaxGroups: MenuItemTaxGroup[];
   taxReportGroups: TaxReportGroup[];
+  toppingPrefixes: ToppingPrefix[];
+  toppingGroups: ToppingGroup[];
+  toppingGroupPrefixes: ToppingGroupPrefix[];
+  prefixById: Map<string, ToppingPrefix>;
+  toppingGroupById: Map<string, ToppingGroup>;
   sgById: Map<string, ScreenGroup>;
   miById: Map<string, MenuItem>;
   rcById: Map<string, RevenueCenter>;
@@ -54,7 +60,14 @@ export function loadCatalog(): Catalog {
   const tp = taxPacks();
   const mitg = menuItemTaxGroups();
   const trg = taxReportGroups();
+  const tpx = toppingPrefixes();
+  const tgx = toppingGroups();
   return {
+    toppingPrefixes: tpx,
+    toppingGroups: tgx,
+    toppingGroupPrefixes: toppingGroupPrefixes(),
+    prefixById: indexBy(tpx, (x) => x.id),
+    toppingGroupById: indexBy(tgx, (x) => x.id),
     revenueCenters: rc,
     screenGroups: sg,
     menuItems: mi,
@@ -87,6 +100,8 @@ export interface ModifierStep {
   isForced: boolean;        // must pick (no skip)
   maxFreeCount: number;     // first N free
   items: MenuItem[];        // modifier tiles
+  prefixes: ToppingPrefix[]; // the modifier screen's Topping Group prefixes (No / Dbl / Side…), bar order; [] = no bar
+  defaultPrefixId: string;  // pre-selected on that bar (ToppingGroup.Default_ToppingPrefix_ID)
 }
 
 /**
@@ -108,6 +123,8 @@ export function modifierSteps(cat: Catalog, screenChainId: string, rcId: string,
         screenChainId, screenGroupId: ch.screenGroupId, title: sg.name,
         min: ch.min, max: ch.max, isForced: ch.isForced, maxFreeCount: ch.maxFreeCount,
         items: itemsInScreenGroup(cat, ch.screenGroupId),
+        prefixes: sg.toppingGroupId ? prefixesForGroup(cat, sg.toppingGroupId) : [],
+        defaultPrefixId: sg.toppingGroupId ? defaultPrefixOf(cat, sg.toppingGroupId)?.id ?? "" : "",
       } as ModifierStep;
     })
     .filter((s): s is ModifierStep => s !== null && s.items.length > 0);
@@ -199,7 +216,7 @@ export function itemsInScreenGroup(cat: Catalog, sgId: string): MenuItem[] {
 /** The synthetic "Favorites" screen group id (VisualFavoritesManager: Top16 items). */
 export const FAVORITES_GROUP_ID = "__favorites";
 export const favoritesGroup = (): ScreenGroup =>
-  ({ id: FAVORITES_GROUP_ID, name: "Favorites", sort: -1, parentIds: [], displayMode: "", imageId: "", color: "", isTableView: false, _raw: {} });
+  ({ id: FAVORITES_GROUP_ID, name: "Favorites", sort: -1, parentIds: [], displayMode: "", imageId: "", color: "", isTableView: false, toppingGroupId: "", _raw: {} });
 
 /** Favorites: every Top16 sellable item plus this employee's pinned ones. */
 export function favoriteItems(cat: Catalog, pinnedIds: Set<string>): MenuItem[] {

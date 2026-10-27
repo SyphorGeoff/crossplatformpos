@@ -30,6 +30,8 @@ export interface CheckPanelProps {
   onQty: (key: string, qty: number) => void;
   onRemove: (key: string) => void;
   onStopTimer?: (key: string) => void;     // timed item (sent, $0): the Stop Timer button (CheckTableCellView stopTimerButton)
+  onCyclePrefix?: (key: string) => void;   // tap the prefix chip on an unsent item → next allowed prefix (CheckTableCellView prefixButton)
+  prefixCyclable?: (l: CheckLine) => boolean; // the item has a Main Topping Group (iPad hasMainTopping) and is unsent
   onSetTable: (name: string) => void;
   onSetGuests: (n: number) => void;
   onSend: () => void;
@@ -61,9 +63,10 @@ export interface CheckPanelProps {
   onAddingCourse?: () => void;             // open the picker
 }
 
-function LineRow({ line, selecting, checked, showGuest, onToggle, onQty, onRemove, course, onLongPress, onStopTimer }: {
+function LineRow({ line, selecting, checked, showGuest, onToggle, onQty, onRemove, course, onLongPress, onStopTimer, onCyclePrefix, prefixCyclable }: {
   line: CheckLine; selecting: boolean; checked: boolean; showGuest: boolean; onToggle: (k: string) => void;
   onQty: CheckPanelProps["onQty"]; onRemove: CheckPanelProps["onRemove"]; onStopTimer?: CheckPanelProps["onStopTimer"];
+  onCyclePrefix?: CheckPanelProps["onCyclePrefix"]; prefixCyclable?: CheckPanelProps["prefixCyclable"];
   course?: number;                 // effective course to show as a "C{n}" pill (showCourse only)
   onLongPress?: (key: string) => void;
 }) {
@@ -83,6 +86,7 @@ function LineRow({ line, selecting, checked, showGuest, onToggle, onQty, onRemov
   }
   const isMod = line.kind === "Mo";
   const selectable = selecting && !isMod;
+  const cyclable = !selecting && line.kind === "M" && !!onCyclePrefix && !!prefixCyclable?.(line);
   return (
     <div
       className={`cl ${isMod ? "mod" : ""} ${line.sent ? "sent" : "fresh"} ${line.isVoid ? "void" : ""} ${selectable ? "selectable" : ""} ${checked ? "picked" : ""}`}
@@ -97,6 +101,9 @@ function LineRow({ line, selecting, checked, showGuest, onToggle, onQty, onRemov
           <span className="clguest">{line.appliedToGuests === "0" ? "T" : `G${line.guestNumber ?? 1}`}</span>
         )}
         <span className="clqty">{line.quantity > 1 ? `${line.quantity}×` : ""}</span>
+        {cyclable ? (
+          <button className="clpfix tap" title="Tap to change the prefix" onClick={(e) => { e.stopPropagation(); onCyclePrefix!(line.key); }}>{line.pfix || "prefix"}</button>
+        ) : line.pfix ? <span className="clpfix">{line.pfix}</span> : null}
         <span className="clname">{line.description}{line.held && <span className="clheld">HELD</span>}{line.kind === "M" && line.reference && <span className="clitemnote">{line.reference}</span>}</span>
         <span className="clamt">{line.amount ? fmt(lineExtended(line)) : ""}</span>
       </div>
@@ -159,7 +166,7 @@ export default function CheckPanel(p: CheckPanelProps) {
   useEffect(() => { if (courseFilter !== null && !coursesPresent.includes(courseFilter)) setCourseFilter(null); }, [courseFilter, coursesPresent.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
   const sentTotal = sentHeads.reduce((a, f) => a + lineExtended(f.head) + f.rest.filter((r) => r.kind === "Mo").reduce((b, r) => b + lineExtended(r), 0), 0);
   const fam = (f: Family, ks: Parameters<typeof LineRow>[0] extends infer T ? Omit<T, "line"> : never) => [f.head, ...f.rest].map((l) => <LineRow key={l.key} line={l} {...ks} course={l.kind === "M" ? f.course : undefined} />);
-  const rowProps = { selecting, showGuest: nGuestsFor(check) > 1, onToggle: p.onToggleLine ?? (() => {}), onQty: p.onQty, onRemove: p.onRemove, onLongPress: p.onLineLongPress, onStopTimer: p.onStopTimer };
+  const rowProps = { selecting, showGuest: nGuestsFor(check) > 1, onToggle: p.onToggleLine ?? (() => {}), onQty: p.onQty, onRemove: p.onRemove, onLongPress: p.onLineLongPress, onStopTimer: p.onStopTimer, onCyclePrefix: p.onCyclePrefix, prefixCyclable: p.prefixCyclable };
   const courseState = (c: number): "pending" | "sent" | "fired" => {
     const heads = families.filter((f) => f.course === c);
     if (!heads.some((f) => f.head.sent)) return "pending";
@@ -225,6 +232,7 @@ export default function CheckPanel(p: CheckPanelProps) {
           </div>
         ) : !coursing ? display.map((l) => (
           <LineRow key={l.key} line={l} selecting={selecting} checked={sel.has(l.key)} showGuest={nGuests > 1} onToggle={p.onToggleLine ?? (() => {})} onQty={p.onQty} onRemove={p.onRemove} onStopTimer={p.onStopTimer}
+            onCyclePrefix={p.onCyclePrefix} prefixCyclable={p.prefixCyclable}
             course={p.showCourse && p.courseOf && l.kind === "M" ? p.courseOf(l) : undefined} onLongPress={p.onLineLongPress} />
         )) : orderingMode ? (
           <>

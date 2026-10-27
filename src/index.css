@@ -76,6 +76,13 @@ body { background: var(--cream); color: var(--ink); font-family: "Helvetica Neue
 .tab { flex: 0 0 auto; padding: 10px 16px; border: none; border-radius: 10px 10px 0 0; background: transparent; color: var(--ink-soft); font-size: 14px; font-weight: 700; cursor: pointer; border-bottom: 3px solid transparent; }
 .tab.on { color: var(--ink); border-bottom-color: var(--gold); background: rgba(26,26,26,.04); }
 
+/* prefix bar (CUP / BOWL x1.4…) — the current screen group's topping group */
+.prefixbar { display: flex; gap: 6px; padding: 8px 14px 0; background: var(--surface); overflow-x: auto; }
+.pfx { flex: 0 0 auto; padding: 7px 14px; border: 1px solid var(--line-hard); border-radius: 999px; background: var(--field); color: var(--ink-soft); font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit; }
+.pfx.on { background: var(--gold); color: var(--ink); border-color: var(--gold); }
+.modflow .prefixbar { padding: 10px 16px 0; }
+.tile .tpfx { position: absolute; top: 6px; left: 8px; font-size: 10px; font-weight: 800; letter-spacing: .04em; padding: 1px 6px; border-radius: 6px; background: var(--gold); color: var(--ink); }
+
 .crumbs { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; padding: 8px 14px; font-size: 13px; color: var(--ink-dim); }
 .crumb { background: transparent; border: none; color: var(--ink-soft); font-size: 13px; cursor: pointer; padding: 4px 4px; }
 .crumb.here { color: var(--ink); font-weight: 700; cursor: default; }
@@ -174,6 +181,8 @@ body { background: var(--cream); color: var(--ink); font-family: "Helvetica Neue
 .clqty { color: var(--ink-dim); font-variant-numeric: tabular-nums; min-width: 22px; }
 .clguest { flex: 0 0 auto; align-self: center; font-size: 10px; font-weight: 800; letter-spacing: .04em; color: var(--gold); border: 1px solid var(--gold); border-radius: 6px; padding: 1px 5px; }
 .clname { flex: 1; font-size: 14px; font-weight: 600; }
+.clpfix { flex: 0 0 auto; align-self: center; font-size: 10px; font-weight: 800; letter-spacing: .04em; padding: 1px 6px; border-radius: 6px; background: var(--field); color: var(--ink-soft); border: 1px solid var(--line-hard); font-family: inherit; }
+.clpfix.tap { cursor: pointer; border-style: dashed; color: var(--ink); }
 .clheld { margin-left: 8px; font-size: 9px; font-weight: 800; letter-spacing: .1em; color: var(--terra); border: 1px solid var(--terra); border-radius: 4px; padding: 1px 4px; vertical-align: middle; }
 .clamt { font-variant-numeric: tabular-nums; color: var(--terra); font-size: 14px; font-weight: 700; }
 .clctl { display: flex; align-items: center; gap: 6px; margin-top: 6px; }

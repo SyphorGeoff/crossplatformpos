@@ -16,6 +16,7 @@
 
 import { apiServerAddress, asList, findKey, parseXmlResponse, postXml, textOf } from "./hbroker";
 import { generateCheckKey, unsentLines, unsentTenders, type Check, type CheckLine, type TenderLine } from "@/model/check";
+import { wireQuantity } from "@/model/prefix";
 
 export interface SessionConfig {
   enterpriseServerUrl: string;
@@ -103,7 +104,8 @@ function xmlLineItem(line: CheckLine, lineNumber: number, trayNumber: number, pa
     parts.push(el("Parent_Tray_Number", trayNumber));
   }
   if (line.authEmpId) parts.push(el("AuthorizingEmployee_ID", line.authEmpId));
-  parts.push(el("Quantity", line.quantity));
+  // A prefixed item's Quantity is count × the prefix's InventoryMultiplier (FinancialCheckManager :8955-8963)
+  parts.push(el("Quantity", line.prefixQtyMult !== undefined ? wireQuantity(line.quantity, line.prefixQtyMult) : line.quantity));
   parts.push(el("Line_Number", lineNumber));
   // Course (print_Sort_Order, FinancialCheckManager :12359): an item's own override;
   // a modifier rides its parent's so a pull-back on another terminal agrees.
@@ -113,6 +115,7 @@ function xmlLineItem(line: CheckLine, lineNumber: number, trayNumber: number, pa
   else if (!isRef) parts.push(el("MenuItem_POS_ID", line.menuItemId));
   if (line.voidPosId) parts.push(el("Void_POS_ID", line.voidPosId));
   if (line.reference && (isRef || line.kind === "M")) parts.push(el("Reference", line.reference)); // iOS: any line with a Reference emits it (:12363)
+  if (line.prefixId) { parts.push(el("toppingPrefix_ID", line.prefixId)); parts.push(el("pfix", line.pfix ?? "")); } // the prefix rung with the item (:12380-12385)
   parts.push(el("Line_Amount", (isRef ? 0 : line.amount * line.quantity).toFixed(2))); // extended, like the iPad's Amount
   return `<LineItem ${attrs}>${parts.join("")}</LineItem>`;
 }

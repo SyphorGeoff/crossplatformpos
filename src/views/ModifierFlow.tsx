@@ -12,12 +12,14 @@
  * right after it is picked, and those land one level under the potato.
  */
 import { useState } from "react";
-import type { MenuItem } from "@/model/catalog";
+import type { MenuItem, ToppingPrefix } from "@/model/catalog";
 import type { ModifierStep } from "@/model/menu";
 
-export interface ChosenModifier { item: MenuItem; free: boolean; parent?: ChosenModifier; }
+export interface ChosenModifier { item: MenuItem; free: boolean; parent?: ChosenModifier; prefix?: ToppingPrefix; }
 
-interface FlowStep extends ModifierStep { parent?: ChosenModifier; }   // parent = the pick this step hangs off (nested chain)
+// parent = the pick this step hangs off (nested chain); selectedPrefixId = the step's prefix bar
+// (ItemsTableViewController nextMenuItemsList.prefixes: default pre-selected, back to it after every pick)
+interface FlowStep extends ModifierStep { parent?: ChosenModifier; selectedPrefixId?: string; }
 
 const fmt = (n: number) => `$${n.toFixed(2)}`;
 
@@ -28,7 +30,7 @@ export default function ModifierFlow({ itemName, steps, stepsFor, onDone, onCanc
   onDone: (chosen: ChosenModifier[]) => void;
   onCancel: () => void;
 }) {
-  const [flow, setFlow] = useState<FlowStep[]>(() => steps.map((s) => ({ ...s })));
+  const [flow, setFlow] = useState<FlowStep[]>(() => steps.map((s) => ({ ...s, selectedPrefixId: s.defaultPrefixId || undefined })));
   const [idx, setIdx] = useState(0);
   const [picks, setPicks] = useState<ChosenModifier[][]>(() => steps.map(() => []));
   const step = flow[idx];
@@ -39,7 +41,7 @@ export default function ModifierFlow({ itemName, steps, stepsFor, onDone, onCanc
 
   /** Steps a pick brings with it: its own chain, parented to the pick. */
   const nestedFor = (pick: ChosenModifier): FlowStep[] =>
-    (stepsFor && pick.item.modChainId ? stepsFor(pick.item) : []).map((s) => ({ ...s, parent: pick }));
+    (stepsFor && pick.item.modChainId ? stepsFor(pick.item) : []).map((s) => ({ ...s, parent: pick, selectedPrefixId: s.defaultPrefixId || undefined }));
 
   /** Drop the nested steps (and their picks) that belong to a de-selected pick, at any depth. */
   const withoutNested = (f: FlowStep[], p: ChosenModifier[][], pick: ChosenModifier) => {
@@ -58,10 +60,12 @@ export default function ModifierFlow({ itemName, steps, stepsFor, onDone, onCanc
       const r = withoutNested(f, p, cur[at]); f = r.f; p = r.p;
       p[idx] = p[idx].filter((m) => m.item.id !== item.id);
     } else {
-      const pick: ChosenModifier = { item, free: false, parent: step.parent };
+      const prefix = step.prefixes.find((x) => x.id === step.selectedPrefixId);
+      const pick: ChosenModifier = { item, free: false, parent: step.parent, ...(prefix ? { prefix } : {}) };
       if (step.max === 1 && cur.length) { const r = withoutNested(f, p, cur[0]); f = r.f; p = r.p; p[idx] = []; }   // single-select replaces
       else if (atMax) return;
       p[idx] = [...p[idx], pick];
+      f[idx] = { ...f[idx], selectedPrefixId: step.defaultPrefixId || undefined };   // the bar snaps back to the default
       const nested = nestedFor(pick);
       if (nested.length) { f.splice(idx + 1, 0, ...nested); p.splice(idx + 1, 0, ...nested.map(() => [] as ChosenModifier[])); }
     }
@@ -99,11 +103,20 @@ export default function ModifierFlow({ itemName, steps, stepsFor, onDone, onCanc
           </div>
           <button className="x" onClick={onCancel}>✕</button>
         </div>
+        {step.prefixes.length > 0 && (
+          <div className="prefixbar" role="radiogroup" aria-label="Prefix">
+            {step.prefixes.map((pf) => (
+              <button key={pf.id} className={`pfx ${step.selectedPrefixId === pf.id ? "on" : ""}`} aria-pressed={step.selectedPrefixId === pf.id}
+                onClick={() => setFlow(flow.map((s, i) => (i === idx ? { ...s, selectedPrefixId: pf.id } : s)))}>{pf.name}</button>
+            ))}
+          </div>
+        )}
         <div className="mfgrid">
           {step.items.map((m) => (
             <button key={m.id} className={`tile item ${isSelected(m.id) ? "picked" : ""}`}
               disabled={!isSelected(m.id) && atMax && step.max !== 1}
               onClick={() => toggle(m)}>
+              {selected.find((x) => x.item.id === m.id)?.prefix && <span className="tpfx">{selected.find((x) => x.item.id === m.id)!.prefix!.name}</span>}
               <span className="tname">{m.name}</span>
               {Number(m.price) > 0 && <span className="tprice">{fmt(Number(m.price))}</span>}
             </button>

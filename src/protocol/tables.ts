@@ -64,7 +64,13 @@ async function setLock(cfg: SessionConfig, p: { checkNo: string; checkKey: strin
 export const lockCheck = (cfg: SessionConfig, p: { checkNo: string; checkKey: string; businessDateId: string }) => setLock(cfg, p, true);
 export const unlockCheck = (cfg: SessionConfig, p: { checkNo: string; checkKey: string; businessDateId: string }) => setLock(cfg, p, false);
 
-export interface CheckNames { menuItemName: (id: string) => string; tenderName: (id: string) => string; adjustmentName?: (id: string) => string; }
+export interface CheckNames {
+  menuItemName: (id: string) => string; tenderName: (id: string) => string; adjustmentName?: (id: string) => string;
+  /** ToppingPrefix POS_ID → its InventoryMultiplier (the wire Quantity is count × this); undefined when unknown. */
+  prefixQtyMult?: (id: string) => number | undefined;
+  /** ToppingPrefix POS_ID → its name, when the line came back without a pfix. */
+  prefixName?: (id: string) => string | undefined;
+}
 
 /**
  * Read a full check back and reconstruct our Check model (parsePullBackCheck,
@@ -128,6 +134,7 @@ export function parseCheckLines(check: XmlDict, names: CheckNames): { lines: Che
     mid: string; adj: string; tid: string; tip: number; change: number; reference?: string; balanceRef?: string;
     course?: number;
     sentAt?: number;
+    prefixId: string; pfix: string;
   }
   const raws: Raw[] = [];
   let trayCount = 0;
@@ -150,6 +157,7 @@ export function parseCheckLines(check: XmlDict, names: CheckNames): { lines: Che
         tip: Number(t("Tip_Amount")) || 0, change: Number(t("Change_Given")) || 0,
         reference: t("Reference") || undefined, balanceRef: t("Transaction_Ref") || undefined,
         course: t("print_Sort_Order") !== "" && Number.isFinite(Number(t("print_Sort_Order"))) ? Number(t("print_Sort_Order")) : undefined,
+        prefixId: t("toppingPrefix_ID"), pfix: t("pfix"),
       });
     }
   }
@@ -191,9 +199,17 @@ export function parseCheckLines(check: XmlDict, names: CheckNames): { lines: Che
     const isMod = !!r.parentLine;
     const parentKey = isMod ? keyByTrayLine.get(`${r.parentTray || r.tray}:${r.parentLine}`) : undefined;
     const parentLine = parentKey ? lines.find((x) => x.key === parentKey) : undefined;
+    // A prefixed line's Quantity is count × InventoryMultiplier — divide it back out for display
+    // (CheckTableCellView :397-425), and price the unit from the count.
+    // A modifier's factor is its own × its parent's (already combined up the chain).
+    const own = r.prefixId ? names.prefixQtyMult?.(r.prefixId) ?? 1 : 1;
+    const mult = own * (parentLine?.prefixQtyMult ?? 1);
+    const count = mult > 0 && mult !== 1 ? Math.round((r.qty / mult) * 1000) / 1000 : r.qty;
     lines.push({
       key, menuItemId: r.mid, description: names.menuItemName(r.mid),
-      quantity: r.qty, amount: r.qty ? Math.round((r.ext / r.qty) * 100) / 100 : r.ext,
+      quantity: count, amount: count ? Math.round((r.ext / count) * 100) / 100 : r.ext,
+      ...(r.prefixId ? { prefixId: r.prefixId, pfix: r.pfix || names.prefixName?.(r.prefixId) || "" } : {}),
+      ...(r.prefixId || mult !== 1 ? { prefixQtyMult: mult } : {}),
       kind: isMod ? "Mo" : "M", indentLevel: isMod ? (parentLine ? parentLine.indentLevel + 1 : 1) : 0,   // a modifier of a modifier nests one deeper
       parentKey,
       guestNumber: r.guest, appliedToGuests: r.applied, held: r.held || undefined, isVoid: struck || undefined,
