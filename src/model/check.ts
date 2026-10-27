@@ -226,6 +226,10 @@ export function setQuantity(check: Check, key: string, quantity: number): Check 
   return { ...check, lines: check.lines.map((l) => (l.key === key || l.parentKey === key ? { ...l, quantity } : l)) };
 }
 
+/** The negative reversal a void appends (not the struck original, which keeps its amount
+ *  and has no Parent_*). Never test the amount's sign: a $0 line's reversal is -0. */
+export const isVoidReversal = (l: CheckLine): boolean => !!l.isVoid && l.parentLineNumber !== undefined;
+
 /** A line's extended price (unit × qty). Modifiers may carry an upcharge. */
 export const lineExtended = (l: CheckLine): number => (l.isVoid ? 0 : l.amount * l.quantity);
 

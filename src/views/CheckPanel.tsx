@@ -7,7 +7,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { checkSubtotal, highestGuestNumber, lineExtended, refIsShown, sortLinesByGuest, unsentLines, type Check, type CheckLine, isTimedRunning } from "@/model/check";
+import { checkSubtotal, highestGuestNumber, isVoidReversal, lineExtended, refIsShown, sortLinesByGuest, unsentLines, type Check, type CheckLine, isTimedRunning } from "@/model/check";
 
 /** Paul's ten course hues (CheckTableViewController _courseTintForCourse), style only. */
 export const COURSE_HUES = [30, 148, 198, 45, 282, 342, 210, 15, 120, 260];
@@ -137,7 +137,7 @@ export default function CheckPanel(p: CheckPanelProps) {
   // Hide void-off/reversal lines and machine-only reference lines (only shown
   // Type="R" notes render — refIsShown mirrors the iPad display filter).
   const shown = check.lines.filter((l) =>
-    !l.transferOut && !l.isSplit && !(l.isVoid && l.amount < 0) && !(l.kind === "R" && !refIsShown(l)));
+    !l.transferOut && !l.isSplit && !isVoidReversal(l) && !(l.kind === "R" && !refIsShown(l)));
   const itemCount = shown.filter((l) => l.kind === "M").length;
   // Sort Guest: order item families (item + its modifiers) by guest number.
   const display = p.sortByGuest ? sortLinesByGuest(shown) : shown;

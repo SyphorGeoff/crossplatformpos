@@ -15,7 +15,7 @@
  */
 
 import { apiServerAddress, asList, findKey, parseXmlResponse, postXml, textOf } from "./hbroker";
-import { generateCheckKey, unsentLines, unsentTenders, type Check, type CheckLine, type TenderLine } from "@/model/check";
+import { generateCheckKey, isVoidReversal, unsentLines, unsentTenders, type Check, type CheckLine, type TenderLine } from "@/model/check";
 import { wireQuantity } from "@/model/prefix";
 
 export interface SessionConfig {
@@ -89,10 +89,10 @@ function xmlLineItem(line: CheckLine, lineNumber: number, trayNumber: number, pa
     // points at the ORIGINAL line that left this check (or was divided among guests)
     parts.push(el("Parent_LineItem_ID", line.parentLineNumber));
     parts.push(el("Parent_Tray_Number", line.parentTrayNumber ?? trayNumber));
-  } else if (line.isVoid && line.amount < 0 && line.parentLineNumber !== undefined) {
+  } else if (isVoidReversal(line)) {   // never by amount sign — a $0 line's reversal is -0 (210025 came back with a live timer)
     // a void reversal names the ORIGINAL it cancels (voidLineItems :1957-1958) —
     // without these the server (and every pull-back) keeps the original live
-    parts.push(el("Void_Line_Item_ID", line.parentLineNumber));
+    parts.push(el("Void_Line_Item_ID", line.parentLineNumber!));
     parts.push(el("Void_Parent_Tray_Number", line.parentTrayNumber ?? trayNumber));
   } else if (line.kind === "A" && parent?.sent && parent.lineNumber !== undefined) {
     // an item-level discount on an already-sent item points at the item's stamped

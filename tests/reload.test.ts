@@ -30,6 +30,14 @@ describe("voidLine (sent item family)", () => {
     expect(xml).toContain("<Void_Line_Item_ID>2</Void_Line_Item_ID><Void_Parent_Tray_Number>1</Void_Parent_Tray_Number>");
     expect(xml).toContain("<Void_POS_ID>V9</Void_POS_ID>");
   });
+  it("a $0 line's reversal (amount -0) still names the original — 210025's timer came back live without this", () => {
+    let c = newCheck("1"); c = addItemLine(c, item("77", 0), "t", 1); c.lines[0].reference = "Timed Item Active";
+    c = markRoundSent(c);
+    c = voidLine(c, "t", "", "1");
+    const xml = buildFinancialCheck(c, ctx);
+    expect(xml).toContain("<Void_Line_Item_ID>1</Void_Line_Item_ID><Void_Parent_Tray_Number>1</Void_Parent_Tray_Number>");
+    expect(xml).toContain("<Line_Amount>0.00</Line_Amount>");
+  });
   it("an unsent family is simply removed", () => {
     let c = newCheck("1"); c = addItemLine(c, item("100"), "a", 1); c = addModifierLine(c, "a", item("m", 0), 0);
     expect(voidLine(c, "a", "V9", "1").lines).toHaveLength(0);
@@ -61,6 +69,20 @@ const li = (a: Record<string, string>, kids: Record<string, string | number>): X
   Is_Held: a.held ?? "0", Is_Void: a.void ?? "0", Transfered_Out: a.xfer ?? "0", Print_On_Check: "1", Show_On_Display: "1",
   Type: a.type ?? "M", Finalized: "0", Is_Split: a.split ?? "0", lineitemkey: a.key ?? "1", posted: "1",
   ...Object.fromEntries(Object.entries(kids).map(([k, v]) => [k, String(v)])),
+});
+
+describe("parseCheckLines repair: an unlinked $0 'Timed Item Active' reversal strikes the running line", () => {
+  it("strikes the earliest live $0 running line of the same item, leaves the Complete line alone", () => {
+    const fc: XmlDict = { Tray: [
+      { Tray_Number: "2", LineItem: [li({}, { Guest_Num: 1, Quantity: 1, Line_Number: 1, MenuItem_POS_ID: 57975, Reference: "Timed Item Active", Line_Amount: "0.00" })] },
+      { Tray_Number: "3", LineItem: [
+        li({ void: "1" }, { Guest_Num: 1, Quantity: 1, Line_Number: 1, MenuItem_POS_ID: 57975, Reference: "Timed Item Active", Line_Amount: "0.00" }),   // no Void_* link (pre-1.24)
+        li({}, { Guest_Num: 1, Quantity: 1, Line_Number: 2, MenuItem_POS_ID: 57975, Reference: "Timed Item Complete", Line_Amount: "1.00" }),
+      ] },
+    ] };
+    const { lines } = parseCheckLines(fc, names);
+    expect(lines.map((l) => [l.reference, l.amount, !!l.isVoid])).toEqual([["Timed Item Active", 0, true], ["Timed Item Complete", 1, false]]);
+  });
 });
 
 describe("parseCheckLines (pull-back netting = isValid:)", () => {

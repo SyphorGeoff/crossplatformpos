@@ -54,7 +54,7 @@ import {
 } from "@/protocol/order";
 import { sendPayment, type GiftType, type LoyaltyType, type PaymentContext, type PaymentResult } from "@/protocol/payment";
 import { fetchOpenChecks, fetchUnfinalizedTenders, lockCheck, modifyLineItem, readCheck, unlockCheck, type OpenCheck } from "@/protocol/tables";
-import { absorbSentLines, sweepUnsentForIdle, runningTimedLines, stopTimedLine, timedCost, timedMinutes, addFireCourseRecord, addTransferCheckRecord, applyAutoGratuity, changeRevenueCenter, applyItemAdjustments, applyMovePlan, checkSubtotal, effectiveCourse, firedCourses, guestAssignment, highestGuestNumber, lastLineOf, lineExtended, repeatLastOf, setLineReference, markRoundSent, mergeInto, newCheck, removeLine, setCourse, splitToNewCheck, unsentLines, voidLine, voidTenderLine, type AutoGratDef, type Check, type CheckLine } from "@/model/check";
+import { absorbSentLines, sweepUnsentForIdle, runningTimedLines, stopTimedLine, timedCost, timedMinutes, addFireCourseRecord, addTransferCheckRecord, applyAutoGratuity, changeRevenueCenter, applyItemAdjustments, applyMovePlan, checkSubtotal, effectiveCourse, firedCourses, guestAssignment, highestGuestNumber, lastLineOf, lineExtended, repeatLastOf, setLineReference, markRoundSent, mergeInto, newCheck, removeLine, setCourse, splitToNewCheck, unsentLines, voidLine, voidTenderLine, type AutoGratDef, type Check, type CheckLine, isVoidReversal } from "@/model/check";
 import { computeCheckTax, grandTotal, taxGroupsForWire } from "@/model/tax";
 import { adjustCount, countFor, emptyCounts, stockRefusal, withServerCounts, type ItemCounts } from "@/model/itemcounts";
 import { fetchMenuItemCounters, removeMenuItemCounter, setMenuItemCounter } from "@/protocol/itemcounts";
@@ -473,7 +473,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
 
   // Line selection for Edit mode (Select All / Void Selected / Split Item, …).
   const selectableKeys = () => ck.check.lines
-    .filter((l) => l.kind === "M" && !l.transferOut && !(l.isVoid && l.amount < 0))
+    .filter((l) => l.kind === "M" && !l.transferOut && !isVoidReversal(l))
     .map((l) => l.key);
   const toggleLine = (k: string) => setSel((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
   const selectAll = () => setSel(new Set(selectableKeys()));
@@ -644,9 +644,12 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
   const [unsentAlert, setUnsentAlert] = useState(false);
   /** iOS: while a timed item's clock is running (sent, $0) the check cannot be printed, paid,
    *  transferred, re-priced or re-seated — "You need to stop the timer before …". */
+  /** iOS alert "You need to stop the timer before …" — a modal, not the footer line, with a Stop timer shortcut. */
+  const [timerBlock, setTimerBlock] = useState<{ what: string; lines: CheckLine[] } | null>(null);
   const blockIfTimerRunning = (what: string): boolean => {
-    if (runningTimedLines(checkRef.current).length === 0) return false;
-    setSendError(`You need to stop the timer before ${what}`);
+    const running = runningTimedLines(checkRef.current);
+    if (running.length === 0) return false;
+    setTimerBlock({ what, lines: running });
     return true;
   };
   const [stopTimer, setStopTimer] = useState<{ key: string; name: string; minutes: number; cost: number } | null>(null);
@@ -1205,7 +1208,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     const cpl = pr?.charsPerLine ?? wrap.maxWidth;
     const t = c === ck.check ? tax : computeCheckTax(cat, c, taxExempt);
     const lines: CheckLineOut[] = c.lines
-      .filter((l) => !l.transferOut && !l.isSplit && !(l.isVoid && l.amount < 0) && l.kind !== "Co" && l.kind !== "R")
+      .filter((l) => !l.transferOut && !l.isSplit && !isVoidReversal(l) && l.kind !== "Co" && l.kind !== "R")
       .map((l) => ({ qty: l.quantity, name: prefixedName(l.pfix, l.description), amount: lineExtended(l), indent: l.indentLevel, isMod: l.kind === "Mo" }));
     const subtotal = checkSubtotal(c);
     const total = grandTotal(subtotal, t);
@@ -1505,6 +1508,25 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
         <div className="mfactions">
           <button className="mfbtn ghost" onClick={() => setStopTimer(null)}>Cancel</button>
           <button className="mfbtn go" onClick={confirmStopTimer}>Stop timer</button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+  const timerBlockModal = timerBlock ? (
+    <div className="backdrop" onClick={() => setTimerBlock(null)}>
+      <div className="authbox timerblock" onClick={(e) => e.stopPropagation()}>
+        <div className="authtitle">⏱ Stop the timer first</div>
+        <div className="authsub">You need to stop the timer before {timerBlock.what}.</div>
+        <ul className="timerlines">
+          {timerBlock.lines.map((l) => (
+            <li key={l.key}>
+              <span>{l.description}{l.sent ? "" : " (not sent yet)"}</span>
+              <button className="mfbtn go" disabled={!l.sent} onClick={() => { setTimerBlock(null); askStopTimer(l.key); }}>Stop timer</button>
+            </li>
+          ))}
+        </ul>
+        <div className="mfactions">
+          <button className="mfbtn ghost" onClick={() => setTimerBlock(null)}>OK</button>
         </div>
       </div>
     </div>
@@ -2397,6 +2419,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
       {terminalConfirm}
       {unsentModal}
       {stopTimerModal}
+      {timerBlockModal}
 
       {coursePick && (() => {
         const close = () => setCoursePick(null);

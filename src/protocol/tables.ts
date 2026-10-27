@@ -9,7 +9,7 @@
 
 import { apiServerAddress, asList, findKey, parseXmlResponse, postXml, textOf, type XmlDict } from "./hbroker";
 import { escapeXml, type SessionConfig } from "./order";
-import { mintLineKey, type Check, type CheckLine, type TenderLine } from "@/model/check";
+import { mintLineKey, TIMED_ACTIVE, type Check, type CheckLine, type TenderLine } from "@/model/check";
 
 const XML_HEAD = '<?xml version="1.0" encoding="UTF-8"?>';
 const TRANS_DTD = '<!DOCTYPE Transactional_Request SYSTEM "Transactions/Post_Messages/Transactional_Request.dtd">';
@@ -165,6 +165,12 @@ export function parseCheckLines(check: XmlDict, names: CheckNames): { lines: Che
   const removed = new Set<string>();  // originals that left (transfer / split)
   for (const r of raws) {
     if (r.isVoid && r.voidLine) voided.add(`${r.voidTray || r.tray}:${r.voidLine}`);
+    // Repair for reversals posted before 1.24 without their Void_* link (the -0 bug): a $0
+    // "Timed Item Active" reversal strikes the earliest still-live $0 running line of that item.
+    if (r.isVoid && !r.voidLine && r.ext === 0 && r.ref === TIMED_ACTIVE && r.type !== "T" && r.type !== "A" && r.type !== "R") {
+      const target = raws.find((o) => o !== r && !o.isVoid && !o.xfer && !o.split && o.mid === r.mid && o.ext === 0 && o.ref === TIMED_ACTIVE && !voided.has(`${o.tray}:${o.line}`));
+      if (target) voided.add(`${target.tray}:${target.line}`);
+    }
     if ((r.xfer || r.split) && r.parentLine) removed.add(`${r.parentTray || r.tray}:${r.parentLine}`);
   }
   const lines: CheckLine[] = [];
