@@ -151,6 +151,9 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
   const [xferConfirm, setXferConfirm] = useState<{ kind: "check" | "items"; table: DiningTable; occs: OpenCheck[] } | null>(null);
   const [memberBox, setMemberBox] = useState<null | { q: string; busy: boolean; msg: string; results: Member[] }>(null);
   const lastReceiptRef = useRef("");   // last customer-check text, for Reprint Last Check
+  type PrintKind = "check" | "separate" | "subtotal" | "time";
+  const [printOpts, setPrintOpts] = useState<{ guests: Set<number> } | null>(null);          // Prt Options popup (hooks stay above the sign-in returns)
+  const [printerPick, setPrinterPick] = useState<{ kind: PrintKind; guests: number[] } | null>(null);
   const [transferMode, setTransferMode] = useState(false);
   // The dining room the floor shows: seeded from the shift's default room at
   // sign-in / clock-in, then follows the room the server switches to.
@@ -1708,9 +1711,6 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
   /* ---- Print Options (iOS "Prt Options" → PrintCheckViewController): pick guests, then
    *      Print Check / Separate Checks / By SubTotal / By Time / Email Check. Guests with live items
    *      start selected (guestHasLineitems); Choose_Printer terminals pick the check printer first. ---- */
-  type PrintKind = "check" | "separate" | "subtotal" | "time";
-  const [printOpts, setPrintOpts] = useState<{ guests: Set<number> } | null>(null);
-  const [printerPick, setPrinterPick] = useState<{ kind: PrintKind; guests: number[] } | null>(null);
   const guestsWithItems = (c: Check): Set<number> =>
     new Set(c.lines.filter((l) => l.kind === "M" && !l.isVoid && !l.transferOut && !l.isSplit).map((l) => l.guestNumber ?? 1));
   const openPrintOptions = () => {
