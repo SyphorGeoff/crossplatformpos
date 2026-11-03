@@ -10,6 +10,7 @@ import Setup from "./views/Setup";
 import Menu from "./views/Menu";
 import { ISIS_VER, useSettings } from "./state/useSettings";
 import { DefinitionError, fullSync, loadSeqMap, incrementalSync, pullTable, type SyncConfig } from "./protocol/defsync";
+import { clearTerminalData } from "./platform/storage";
 import { requestStandardToken } from "./protocol/activation";
 
 export default function App() {
@@ -89,6 +90,7 @@ export default function App() {
    *  Returns true when we were dropped. */
   const dropAssignment = useCallback((why: string) => {
     console.warn(`[terminal] no longer assigned — ${why}; re-assignment required`);
+    started.current = false; // the next activation must run the launch sync again
     update({ activated: false, token: "" });
   }, [update]);
   // Only an explicit server refusal counts — never a network failure or an odd/empty reply.
@@ -131,7 +133,9 @@ export default function App() {
   }, [launch, checkStillAssigned, dropAssignment, syncCfg, settings.enterpriseServerUrl, settings.storeId, settings.terminalPosId, settings.terminalUid, settings.enterpriseCode, update]);
 
   if (!settings.activated) {
-    return <Setup initial={settings} onDone={(patch) => update(patch)} />;
+    // A (re)activation starts the terminal from nothing: drop every cached table,
+    // the revision map and any local check, then let the launch effect full-sync.
+    return <Setup initial={settings} onDone={(patch) => { clearTerminalData(); started.current = false; update(patch); }} />;
   }
 
   if (phase === "syncing") {
@@ -151,7 +155,7 @@ export default function App() {
       settings={settings}
       defsVersion={defsVersion}
       refreshDefinitions={refreshDefinitions}
-      onChangeStation={() => update({ activated: false, token: "" })}
+      onChangeStation={() => { started.current = false; update({ activated: false, token: "" }); }}
     />
   );
 }

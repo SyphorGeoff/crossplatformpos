@@ -49,3 +49,22 @@ export function remove(key: string): void {
     /* ignore */
   }
 }
+
+/** Wipe everything this terminal cached for its store — every definition table,
+ *  the revision map, the open check and the lanes — keeping only the settings
+ *  record. Called when the terminal is (re)activated: a terminal that moves to
+ *  another store or enterprise must start from a full pull, or the incremental
+ *  sync keeps every old table whose revision number was higher (2026-11-03: a
+ *  web terminal re-activated from enox to live ran with a mix of both). */
+export function clearTerminalData(): void {
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(NS) && k !== NS + "settings.v1") keys.push(k);
+    }
+    for (const k of keys) localStorage.removeItem(k);
+  } catch {
+    /* ignore */
+  }
+}

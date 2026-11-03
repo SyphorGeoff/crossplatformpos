@@ -154,3 +154,4 @@ up; prerequisites (like coursing) are built when a pill needs them.
 | Charity round-up | Parked | Payment screen at settle time: a revenue-neutral service charge (an Adjustment line) that rounds the balance up to the next dollar; sales reports exclude it. Easy, later |
 | Customer-attached pills (member price, repeat visit) | Parked | Customer info is available once a customer is attached to the check; leave for now per Geoff |
 | Pills blocked on back office or server | Blocked | Upsell, per-item To-Go, audit log, last ordered, allergen data |
+| Re-activation starts clean | Built | Change station / Re-activate / a dropped assignment wipe every cached definition table, the revision map and local check state when the new activation completes, so the launch runs a full pull. Before this a terminal moved from enox to live kept every enox table whose revision number was higher (2026-11-03) |
