@@ -2,8 +2,9 @@
 /*
  * TSYS / TransIT API 3.0 driver — request documents (field order, amount
  * format, authentication), reply classification (A/D/E/F families, partial
- * approval), and the seam operations mapped onto Auth / Sale / Capture /
- * TipAdjustment / IncrementalAuth / Void / Return. The HTTP
+ * approval), and the seam operations mapped onto Capture /
+ * TipAdjustment / IncrementalAuth / Void / Return. The POS sends no card data,
+ * so Auth / Sale start on the payment device (not integrated yet). The HTTP
  * seam is mocked; every exchange is checked against the spec samples in
  * docs/tsys.
  */
@@ -12,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProcessorConfig } from "@/payments/config";
 import type { CardRequest, CheckRef } from "@/payments/processor";
 import { selectProcessor } from "@/payments/select";
-import { buildTsysXml, externalRef, makeTsys, money, parseTsysReply, provisionTsysKey, resetTsys, setTsysKey, TSYS_PROD_URL, TSYS_UAT_URL, tsysKey } from "@/payments/tsys";
+import { buildTsysXml, externalRef, makeTsys, money, parseTsysReply, provisionTsysKey, recordTsysStart, resetTsys, setTsysKey, TSYS_PROD_URL, TSYS_UAT_URL, tsysKey } from "@/payments/tsys";
 import type { StoreConfig } from "@/model/catalog";
 
 const calls: Array<{ url: string; body: string }> = [];
@@ -37,8 +38,7 @@ const cfg = (over: Partial<ProcessorConfig> = {}): ProcessorConfig => ({
   name: "tsys", merchantId: "888900000189", bundle: { mid: "888900000189", deviceId: "26660000013601", developerId: "1234567890", testMode: true }, testMode: true, timeoutSec: 60, ...over,
 });
 const ctx: CheckRef = { storeId: "3", businessDateId: "90042", checkNo: "280001", checkKey: "1234567", tenderKey: "7654321", terminalPosId: "28", employeePosId: "5" };
-const TOKEN = "D111111111111111";   // a stored TransIT token stands in for the card — the POS never holds a card number
-const req = (amount: number, over: Partial<CardRequest> = {}): CardRequest => ({ ...ctx, amount, tenderId: "16", timeoutSec: 10, token: TOKEN, ...over });
+const req = (amount: number, over: Partial<CardRequest> = {}): CardRequest => ({ ...ctx, amount, tenderId: "16", timeoutSec: 10, ...over });
 
 const ok = (op: string, extra = "", code = "A0000", msg = "Success") =>
   `<${op}Response><status>PASS</status><responseCode>${code}</responseCode><responseMessage>${msg}</responseMessage>${extra}</${op}Response>`;
@@ -58,10 +58,10 @@ describe("request documents", () => {
     expect(externalRef(ctx)).toBe("C280001T7654321");
   });
   it("UAT vs production endpoint follows testMode", async () => {
-    replies = [AUTH_OK, AUTH_OK];
-    await makeTsys(cfg()).authorize(req(11.13));
-    await makeTsys(cfg({ testMode: false })).authorize(req(11.13, { tenderKey: "k2" }));
-    expect(calls[0].url).toBe(`${TSYS_UAT_URL}/Auth`); expect(calls[1].url).toBe(`${TSYS_PROD_URL}/Auth`);
+    replies = [ok("Void", "<transactionID>1</transactionID>"), ok("Void", "<transactionID>1</transactionID>")];
+    await makeTsys(cfg()).cancel("1", ctx);
+    await makeTsys(cfg({ testMode: false })).cancel("1", ctx);
+    expect(calls[0].url).toBe(`${TSYS_UAT_URL}/Void`); expect(calls[1].url).toBe(`${TSYS_PROD_URL}/Void`);
   });
 });
 
@@ -85,50 +85,10 @@ describe("reply classification", () => {
 });
 
 describe("authorize / sale", () => {
-  it("token Auth: MANUAL source, dollars, token in cardNumber, reference, operator, PREAUTH, terminal data in spec order", async () => {
-    replies = [AUTH_OK];
-    const r = await makeTsys(cfg()).authorize(req(11.13));
-    expect(r).toMatchObject({ status: "ok", ref: "43167957", authorizedAmount: 11.13, last4: "5439", brand: "VISA", tip: 0 });
-    expect(r.capturedAmount).toBeUndefined();
-    const b = calls[0].body;
-    expect(b.startsWith("<Auth><deviceID>26660000013601</deviceID><transactionKey>S52TRZPJO9ZAS758AGOZWOI2JJ9CQ8O8</transactionKey><cardDataSource>MANUAL</cardDataSource><transactionAmount>11.13</transactionAmount><currencyCode>USD</currencyCode><cardNumber>D111111111111111</cardNumber><externalReferenceID>C280001T7654321</externalReferenceID><operatorID>EMP5</operatorID><orderNumber>280001</orderNumber><partialAuthSupport>YES</partialAuthSupport><terminalCapability>KEYED_ENTRY_ONLY</terminalCapability>")).toBe(true);
-    expect(b.endsWith("<cardDataOutputCapability>NONE</cardDataOutputCapability><developerID>1234567890</developerID><laneID>00000028</laneID><authorizationIndicator>PREAUTH</authorizationIndicator></Auth>")).toBe(true);
-    expect(b).not.toContain("tokenRequired");
-  });
-  it("Sale with a tip is captured at base + tip; no PREAUTH indicator", async () => {
-    replies = [ok("Sale", "<authCode>TAS051</authCode><transactionID>43043955</transactionID><processedAmount>32.63</processedAmount><cardType>M</cardType><maskedCardNumber>5439</maskedCardNumber>")];
-    const r = await makeTsys(cfg()).sale(req(32.63, { tip: 5 }));
-    expect(r).toMatchObject({ status: "ok", capturedAmount: 37.63, authorizedAmount: 32.63, tip: 5, brand: "MASTERCARD" });
-    expect(calls[0].url).toMatch(/\/Sale$/); expect(calls[0].body).toContain("<transactionAmount>32.63</transactionAmount><tip>5.00</tip>"); expect(calls[0].body).not.toContain("authorizationIndicator");
-  });
-  it("partial approval: authorizedAmount is the processed amount", async () => {
-    replies = [ok("Sale", "<authCode>TAS802</authCode><hostResponseCode>10</hostResponseCode><transactionID>43043881</transactionID><transactionAmount>11.10</transactionAmount><processedAmount>5.55</processedAmount><cardType>V</cardType><maskedCardNumber>5439</maskedCardNumber>", "A0002", "Partially Approved")];
-    const r = await makeTsys(cfg()).sale(req(11.1));
-    expect(r.status).toBe("ok"); expect(r.authorizedAmount).toBe(5.55); expect(r.capturedAmount).toBe(5.55); expect(r.message).toMatch(/Partial/);
-  });
-  it("a cents-only processedAmount is read as cents", async () => {
-    replies = [ok("Sale", "<transactionID>5</transactionID><processedAmount>300</processedAmount>")];
-    expect((await makeTsys(cfg()).sale(req(3))).capturedAmount).toBe(3);
-  });
-  it("a stored token goes in cardNumber with no expiry; tokenRequired only when the bundle asks", async () => {
-    replies = [AUTH_OK];
-    await makeTsys(cfg({ bundle: { ...cfg().bundle, tokens: true } })).sale(req(9));
-    expect(calls[0].body).toContain("<cardNumber>D111111111111111</cardNumber><externalReferenceID>"); expect(calls[0].body).toContain("<tokenRequired>Y</tokenRequired>");
-  });
-  it("a decline comes back declined; a host error as error", async () => {
-    replies = [`<AuthResponse><status>FAIL</status><responseCode>D0001</responseCode><responseMessage>Insufficient funds</responseMessage></AuthResponse>`];
-    expect(await makeTsys(cfg()).authorize(req(50))).toMatchObject({ status: "declined", message: "Declined — Insufficient funds" });
-  });
-  it("is idempotent per tender line: a retry replays the recorded result without a second request", async () => {
-    replies = [AUTH_OK];
+  it("the POS sends no card data: authorize and sale are refused locally until the payment device is integrated", async () => {
     const p = makeTsys(cfg());
-    const a = await p.authorize(req(11.13)); const b = await p.authorize(req(11.13));
-    expect(b.ref).toBe(a.ref); expect(calls).toHaveLength(1);
-    expect((await p.status(a.ref!, ctx)).authCode).toBe("TAS789");
-  });
-  it("no device yet: card-present entry (no stored token) is refused locally", async () => {
-    const r = await makeTsys(cfg()).sale(req(10, { token: undefined }));
-    expect(r.status).toBe("error"); expect(r.message).toMatch(/payment device/); expect(calls).toHaveLength(0);
+    for (const r of [await p.authorize(req(11.13)), await p.sale(req(10))]) { expect(r.status).toBe("error"); expect(r.message).toMatch(/payment device/); }
+    expect(calls).toHaveLength(0);
   });
   it("refuses to run without the terminal's transaction key or the back-office ids", async () => {
     resetTsys();
@@ -138,10 +98,34 @@ describe("authorize / sale", () => {
   });
 });
 
+describe("recording a started payment", () => {
+  it("an approved Auth becomes an open authorization that status replays", async () => {
+    const r = recordTsysStart(req(11.13), "auth", parseTsysReply("Auth", AUTH_OK));
+    expect(r).toMatchObject({ status: "ok", ref: "43167957", authorizedAmount: 11.13, last4: "5439", brand: "VISA", tip: 0 });
+    expect(r.capturedAmount).toBeUndefined();
+    expect((await makeTsys(cfg()).status(r.ref!, ctx)).authCode).toBe("TAS789");
+  });
+  it("a Sale with a tip is captured at base + tip", () => {
+    const r = recordTsysStart(req(32.63, { tip: 5 }), "sale", parseTsysReply("Sale", ok("Sale", "<authCode>TAS051</authCode><transactionID>43043955</transactionID><processedAmount>32.63</processedAmount><cardType>M</cardType><maskedCardNumber>5439</maskedCardNumber>")));
+    expect(r).toMatchObject({ status: "ok", capturedAmount: 37.63, authorizedAmount: 32.63, tip: 5, brand: "MASTERCARD" });
+  });
+  it("partial approval: authorizedAmount is the processed amount", () => {
+    const r = recordTsysStart(req(11.1), "sale", parseTsysReply("Sale", ok("Sale", "<authCode>TAS802</authCode><hostResponseCode>10</hostResponseCode><transactionID>43043881</transactionID><transactionAmount>11.10</transactionAmount><processedAmount>5.55</processedAmount><cardType>V</cardType>", "A0002", "Partially Approved")));
+    expect(r.status).toBe("ok"); expect(r.authorizedAmount).toBe(5.55); expect(r.capturedAmount).toBe(5.55); expect(r.message).toMatch(/Partial/);
+  });
+  it("a cents-only processedAmount is read as cents", () => {
+    expect(recordTsysStart(req(3), "sale", parseTsysReply("Sale", ok("Sale", "<transactionID>5</transactionID><processedAmount>300</processedAmount>"))).capturedAmount).toBe(3);
+  });
+  it("a decline is passed through and nothing is recorded", async () => {
+    const r = recordTsysStart(req(50), "auth", parseTsysReply("Auth", `<AuthResponse><status>FAIL</status><responseCode>D0001</responseCode><responseMessage>Insufficient funds</responseMessage><transactionID>77</transactionID></AuthResponse>`));
+    expect(r).toMatchObject({ status: "declined", message: "Declined — Insufficient funds" });
+    expect((await makeTsys(cfg()).status("77", ctx)).status).toBe("error");
+  });
+});
+
 describe("after the auth", () => {
   async function authed() {
-    replies = [AUTH_OK];
-    const p = makeTsys(cfg()); const a = await p.authorize(req(11.13)); calls.length = 0;
+    const p = makeTsys(cfg()); const a = recordTsysStart(req(11.13), "auth", parseTsysReply("Auth", AUTH_OK)); calls.length = 0;
     return { p, ref: a.ref! };
   }
   it("capture sends base + tip and the transactionID; a second capture is refused", async () => {
@@ -205,9 +189,6 @@ describe("after the auth", () => {
 });
 
 describe("key provisioning / registry", () => {
-  it("the driver never offers tokenize — a card number cannot enter the POS", () => {
-    expect(makeTsys(cfg()).tokenize).toBeUndefined();
-  });
   it("provisionTsysKey calls GenerateKey with the admin credentials and stores only the key", async () => {
     resetTsys();
     replies = [ok("GenerateKey", "<transactionKey>1L3ARDZ462FKD4D7UEZY2B1OUHJ4IGP0</transactionKey>")];

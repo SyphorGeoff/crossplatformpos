@@ -403,8 +403,6 @@ export interface Tender {
   hidden: boolean;
   // Card-processing flags (payments seam). Wire names verified on enox store 3, 2026-11-05.
   onlineVoid: boolean;      // OnlineVoid — a void of this tender is sent to the processor (cancel/refund) before the reversal line
-  captureSignature: boolean; // captureSignature — collect a signature after the auth
-  threshold: number;        // threshold — amount above which a receipt / signature is required (0 = always)
   tipPresets: number[];     // tip1..tip3 — percent presets on the tip pad (empty = none)
   promptForCard: boolean;   // PromptForCard — ask for the card number (gift) / keyed card prompt
   deviceKeyedEntry: boolean; // use_third_party_keyed_entry — tell the PAYMENT DEVICE to allow manual (keyed) entry; what it does depends on the processor (Geoff 2026-11-06)
@@ -500,8 +498,6 @@ export function tenders(): Tender[] {
     roundingAmount: s(r, "Enable_Rounding") === "1" ? s(r, "RoundingAmount") : "",
     hidden: s(r, "isHide") === "1",
     onlineVoid: s(r, "OnlineVoid") === "1",
-    captureSignature: s(r, "captureSignature") === "1",
-    threshold: Number(s(r, "threshold")) || 0,
     tipPresets: ["tip1", "tip2", "tip3"].map((k) => Number(s(r, k))).filter((n) => n > 0),
     promptForCard: s(r, "PromptForCard") === "1",
     deviceKeyedEntry: s(r, "use_third_party_keyed_entry") === "1",

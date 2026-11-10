@@ -20,14 +20,14 @@ const tenderXml = (c: Check) => buildFinancialCheck(c, ctx).match(/<LineItem[^>]
 
 describe("xmlTenderLine card fields", () => {
   it("an authorized card line: Finalized=0 with RefNo / RecordNo / AuthCode / masked account", () => {
-    const c = addTender(base(), { key: "7654321", tenderId: "16", name: "Signature CC", amount: 12, tip: 0, change: 0, ref: "MKABC1", recordNo: "MKABC1", authCode: "OK1007", last4: "6781", finalized: false, processor: "mock" });
+    const c = addTender(base(), { key: "7654321", tenderId: "16", name: "Auth CC", amount: 12, tip: 0, change: 0, ref: "MKABC1", recordNo: "MKABC1", authCode: "OK1007", last4: "6781", finalized: false, processor: "mock" });
     const [t] = tenderXml(c);
     expect(t).toContain('Type="T" Finalized="0"');
     expect(t).toContain('lineitemkey="7654321"');
     expect(t).toContain("<TruncatedAcctNo>XXXXXXXXXXXX6781</TruncatedAcctNo><RecordNo>MKABC1</RecordNo><AuthCode>OK1007</AuthCode><RefNo>MKABC1</RefNo><AcctNo>XXXXXXXXXXXX6781</AcctNo><Line_Amount>12.00</Line_Amount>");
   });
   it("a one-shot sale is Finalized=1 with its tip", () => {
-    const c = addTender(base(), { tenderId: "16", name: "Signature CC", amount: 12, tip: 2, change: 0, ref: "MKX", finalized: true });
+    const c = addTender(base(), { tenderId: "16", name: "Auth CC", amount: 12, tip: 2, change: 0, ref: "MKX", finalized: true });
     const [t] = tenderXml(c);
     expect(t).toContain('Finalized="1"'); expect(t).toContain("<Tip_Amount>2.00</Tip_Amount>"); expect(t).toContain("<RefNo>MKX</RefNo>");
     expect(t).not.toContain("TruncatedAcctNo"); expect(t).not.toContain("AuthCode");
@@ -54,7 +54,7 @@ const PULL = `<?xml version="1.0"?><FinancialCheck Check_Name="T1" Guest_Count="
 
 describe("parseCheckLines card fields", () => {
   const fc = findKey(parseXmlResponse(PULL), "FinancialCheck") as XmlDict;
-  const names = { menuItemName: () => "Burger", tenderName: (id: string) => ({ "16": "Signature CC", "3": "Visa", "1": "Cash" })[id] ?? id };
+  const names = { menuItemName: () => "Burger", tenderName: (id: string) => ({ "16": "Auth CC", "3": "Visa", "1": "Cash" })[id] ?? id };
   const { tenders } = parseCheckLines(fc, names);
   it("restores an uncaptured auth with its ids and masked account", () => {
     const t = tenders.find((x) => x.tenderId === "16") as TenderLine;

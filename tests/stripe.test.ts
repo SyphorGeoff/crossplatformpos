@@ -114,9 +114,8 @@ describe("readiness", () => {
     const r = await makeStripe(cfg({ bundle: { secretKey: "sk_live_abc", testMode: true, currency: "usd" } })).authorize(req(20));
     expect(r.status).toBe("error"); expect(r.message).toMatch(/live mode/);
   });
-  it("stored tokens are refused; no reader → error", async () => {
+  it("no reader → error", async () => {
     const p = makeStripe(cfg());
-    expect((await p.sale(req(20, { token: "pm_x" }))).message).toMatch(/Stored-card/);
     expect((await p.authorize(req(20, { readerId: undefined }))).message).toMatch(/No Stripe reader/);
     expect(calls.length).toBe(0);
   });

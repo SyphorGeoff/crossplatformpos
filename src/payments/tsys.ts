@@ -2,17 +2,17 @@
  * TSYS — TransIT API 3.0 (Global Payments) card processor behind the seam.
  * Spec text: docs/tsys/*.txt, pulled from developerportal.transit-pass.com
  * (API 3.0 Authentication, GenerateKey, Auth, Sale, Capture, Void, Return,
- * TipAdjustment, IncrementalAuth, Tokenization, ResponseCodes, Restaurant use
+ * TipAdjustment, IncrementalAuth, ResponseCodes, Restaurant use
  * cases) on 2026-11-05.
  *
  * What this module does today (no device yet):
- *   stored token → Auth / Sale with the TransIT token in cardNumber
  *   finalize     → Capture (base + tip)            tip change → TipAdjustment
  *   bar tab grow → IncrementalAuth                 shrink     → partial Void
  *   void         → Void (full / partial)           refund     → Return with reference
- * The POS never handles a card number (Geoff 2026-11-06): every card is
+ * The POS never handles a card number or a card token and saves nothing
+ * about a card for later charges (Geoff 2026-11-06, 2026-11-10): every card is
  * presented on, or keyed into, the payment device. Until the device
- * integration lands, authorize/sale without a stored token return an error
+ * integration lands, authorize/sale return an error
  * and the UI keeps the tender on its offline path.
  *
  * Wire: XML over HTTPS, Content-Type text/xml (TransIT picks the format from
@@ -129,7 +129,7 @@ export function parseTsysReply(op: string, xml: string): Reply {
   const code = raw.responseCode; const msg = raw.responseMessage || code;
   const base: Partial<CardResult> = {
     ref: raw.transactionID, recordNo: raw.transactionID, authCode: raw.authCode, last4: raw.maskedCardNumber, brand: brandFromText(raw.cardType),
-    token: raw.token, tip: num(raw.tip),
+    tip: num(raw.tip),
     receipt: raw.customerReceipt || raw.merchantReceipt ? { customer: raw.customerReceipt, merchant: raw.merchantReceipt } : undefined,
   };
   if (raw.status === "PASS" && code.startsWith("A")) return { status: "ok", message: code === "A0002" ? "Partial approval" : msg, ...base, raw };
@@ -153,31 +153,24 @@ async function post(cfg: ProcessorConfig, op: string, fields: Pair[]): Promise<R
 
 function auth(cfg: ProcessorConfig): Pair[] { return [["deviceID", tsysDeviceId(cfg)], ["transactionKey", tsysKey(tsysMid(cfg))]]; }
 const operatorId = (ctx: CheckRef) => `EMP${ctx.employeePosId}`;                      // min length 3
-const laneId = (ctx: CheckRef) => /^\d+$/.test(ctx.terminalPosId) ? ctx.terminalPosId.padStart(8, "0").slice(-8) : undefined;
 /** One id per tender line, alphanumeric: TransIT keeps it 24 h for duplicate detection / lookup. */
 export const externalRef = (ctx: CheckRef) => `C${ctx.checkNo}T${ctx.tenderKey}`.replace(/[^A-Za-z0-9]/g, "").slice(0, 100);
 
-/** Attended restaurant terminal data (restaurant use case 15 values); the device integration will replace the entry-mode values. */
-const KEYED_TERMINAL: Pair[] = [
-  ["terminalCapability", "KEYED_ENTRY_ONLY"], ["terminalOperatingEnvironment", "ON_MERCHANT_PREMISES_ATTENDED"],
-  ["cardholderAuthenticationMethod", "MANUAL_SIGNATURE"], ["terminalAuthenticationCapability", "NO_CAPABILITY"],
-  ["terminalOutputCapability", "PRINT_AND_DISPLAY"], ["maxPinLength", "NOT_SUPPORTED"], ["terminalCardCaptureCapability", "NO_CAPABILITY"],
-  ["cardholderPresentDetail", "CARDHOLDER_PRESENT"], ["cardPresentDetail", "CARD_PRESENT"], ["cardDataInputMode", "KEY_ENTERED_INPUT"],
-  ["cardholderAuthenticationEntity", "MERCHANT_CARD_ACCEPTOR_SIGNATURE"], ["cardDataOutputCapability", "NONE"],
-];
-
-/** The stored TransIT token stands in for the card; a card number never reaches this code. */
-function cardFields(req: CardRequest): Pair[] { return [["cardNumber", req.token]]; }
-
-function paymentRequest(cfg: ProcessorConfig, req: CardRequest, kind: "auth" | "sale"): Pair[] {
-  const tokens = cfg.bundle.tokens === true || cfg.bundle.tokenRequired === true;
-  return [
-    ...auth(cfg), ["cardDataSource", "MANUAL"], ["transactionAmount", money(req.amount)], ["tip", req.tip ? money(req.tip) : undefined], ["currencyCode", "USD"],
-    ...cardFields(req),
-    ["externalReferenceID", externalRef(req)], ["operatorID", operatorId(req)], ["orderNumber", req.checkNo], ["partialAuthSupport", "YES"],
-    ["tokenRequired", tokens ? "Y" : undefined],
-    ...KEYED_TERMINAL, ["developerID", developerId(cfg)], ["laneID", laneId(req)], ["authorizationIndicator", kind === "auth" ? "PREAUTH" : undefined],
-  ];
+/** What an approved Auth / Sale reply becomes: the local record the follow-on calls (capture, tip
+ *  adjust, increment, void, return, status) work from. The payment-device start feeds it. The POS
+ *  sends no card data of any kind, so it has no Auth / Sale request of its own. */
+export function recordTsysStart(req: CardRequest, kind: "auth" | "sale", r: Reply): CardResult {
+  const { raw, ...reply } = r;
+  if (reply.status !== "ok" || !reply.ref) return reply;
+  const approved = num(raw.processedAmount) ?? req.amount;
+  const authorized = round2(Math.min(approved, req.amount));
+  const result: CardResult = {
+    ...reply, authorizedAmount: authorized, tip: req.tip ?? 0,
+    capturedAmount: kind === "sale" ? round2(authorized + (req.tip ?? 0)) : undefined,
+    message: authorized < req.amount - 0.005 ? `Partial approval — ${money(authorized)} of ${money(req.amount)}` : "Approved",
+  };
+  putTxn({ id: reply.ref, kind, amount: authorized, tip: req.tip ?? 0, authorized, captured: kind === "sale", voided: false, last: result, checkNo: req.checkNo, tenderKey: req.tenderKey, externalRef: externalRef(req) });
+  return result;
 }
 
 /* ---------------- the processor ---------------- */
@@ -189,23 +182,9 @@ export function makeTsys(cfg: ProcessorConfig): CardProcessor {
     return null;
   };
 
-  async function start(req: CardRequest, kind: "auth" | "sale"): Promise<CardResult> {
-    const notReady = ready(); if (notReady) return notReady;
-    if (!req.token) return failed("TSYS card-present entry needs the payment device (not integrated yet) — use an offline tender");
-    const existing = Object.values(txns()).find((t) => t.externalRef === externalRef(req) && !t.voided);
-    if (existing) return existing.last;                                   // idempotent per tender line
-    const r = await post(cfg, kind === "auth" ? "Auth" : "Sale", paymentRequest(cfg, req, kind));
-    if (r.status !== "ok" || !r.ref) return r;
-    const approved = num(r.raw.processedAmount) ?? req.amount;
-    const authorized = round2(Math.min(approved, req.amount));
-    const result: CardResult = {
-      ...r, authorizedAmount: authorized, tip: req.tip ?? 0,
-      capturedAmount: kind === "sale" ? round2(authorized + (req.tip ?? 0)) : undefined,
-      message: authorized < req.amount - 0.005 ? `Partial approval — ${money(authorized)} of ${money(req.amount)}` : "Approved",
-    };
-    delete (result as Partial<Reply>).raw;
-    putTxn({ id: r.ref, kind, amount: authorized, tip: req.tip ?? 0, authorized, captured: kind === "sale", voided: false, last: result, checkNo: req.checkNo, tenderKey: req.tenderKey, externalRef: externalRef(req) });
-    return result;
+  /** A payment starts on the payment device. Until that integration exists there is nothing to send. */
+  async function start(): Promise<CardResult> {
+    return ready() ?? failed("TSYS card entry needs the payment device (not integrated yet) — use an offline tender");
   }
 
   const remember = (t: TsysTxn | undefined, patch: Partial<TsysTxn>, result: CardResult): CardResult => {
@@ -216,8 +195,8 @@ export function makeTsys(cfg: ProcessorConfig): CardProcessor {
 
   return {
     name: "tsys",
-    authorize: (req) => start(req, "auth"),
-    sale: (req) => start(req, "sale"),
+    authorize: () => start(),
+    sale: () => start(),
 
     async capture(ref, amounts: CardAmounts, ctx) {
       const notReady = ready(); if (notReady) return notReady;

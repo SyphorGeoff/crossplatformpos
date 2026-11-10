@@ -79,7 +79,6 @@ export interface TenderLine {
   finalized?: boolean;      // false = authorized only (capture pending at finalize); true = captured; undefined = not a card line
   authorizedAmount?: number; // what the processor approved (a partial approval is less than asked)
   capturedAmount?: number;  // what was captured (sale, or capture at finalize)
-  signatureCaptured?: boolean; // a signature was collected for this line (pad or device)
 }
 
 /** An online card line that has been authorized but not yet captured. */

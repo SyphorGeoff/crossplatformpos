@@ -7,7 +7,8 @@
  * Every call carries the check identity (store, business date, check number,
  * check_key, the tender line's lineitemkey) so a processor or a payment service
  * can tie its transaction to the Aireus check and make retries idempotent.
- * The POS never holds a card number: every card is presented on, or keyed into,
+ * The POS never holds a card number or a card token, and saves nothing about a
+ * card for later charges: every card is presented on, or keyed into,
  * the payment device (Geoff 2026-11-06: "we can no longer handle a card number
  * under ANY circumstances or any card driver").
  * Every call returns one CardResult; a `pending` result means the processor
@@ -38,10 +39,8 @@ export interface CardRequest extends CheckRef {
   tip?: number;             // tip known at payment time (one-shot sale with the tip prompt first)
   tenderId: string;         // Tender_POS_ID the server picked
   readerId?: string;        // Terminal TyroTerminalID — the device to drive, when there is one
-  token?: string;           // a card token from an earlier tokenize/auth (bar tabs: charge the stored card)
   promptTip?: boolean;      // let the device prompt for a tip (pay-at-table sale)
   deviceKeyedEntry?: boolean; // tender flag use_third_party_keyed_entry: ask the DEVICE to allow manual entry; a processor without such a switch ignores it
-  captureSignature?: boolean; // the tender wants a signature; a device may collect it itself
   timeoutSec: number;       // how long the UI will wait (Store CC_Timeout or the tender's WaitTime)
 }
 
@@ -60,8 +59,6 @@ export interface CardResult {
   authorizedAmount?: number; // a partial approval is less than asked
   capturedAmount?: number;
   tip?: number;
-  token?: string;           // card-on-file token when the processor returned one
-  signatureCaptured?: boolean; // the device collected the signature itself
   receipt?: { customer?: string; merchant?: string }; // processor-rendered receipt text (EMV lines), when provided
 }
 
@@ -83,10 +80,6 @@ export interface CardProcessor {
   refund(ref: string, amount: number, ctx: CheckRef): Promise<CardResult>;
   /** Current state of a transaction (poll while `pending`; recover after a timeout). */
   status(ref: string, ctx: CheckRef): Promise<CardResult>;
-  /** Attach a POS-pad signature (PNG data URL) to a transaction. Optional: a device may do it itself. */
-  attachSignature?(ref: string, pngDataUrl: string, ctx: CheckRef): Promise<CardResult>;
-  /** Store the card for later charges (bar tabs) without moving money. Optional. */
-  tokenize?(req: CardRequest): Promise<CardResult>;
 }
 
 /** Shorthand results. */

@@ -7,8 +7,7 @@
  * payments (makePayment: no processor → a plain Type="T" line). Online card
  * tenders go through the processor seam (payments/processor.ts) when the
  * store has a processor (`card` prop): auth-then-capture for table service,
- * one-shot sale when the terminal is Pay_At_Table or the tender auto-captures;
- * a signature pad after the auth when the tender asks; declines / partial
+ * one-shot sale when the terminal is Pay_At_Table or the tender auto-captures; declines / partial
  * approvals / cancel handled on the sheet. When the balance reaches zero the
  * check is settled (the FinancialCheck re-POST with Is_Closed/Is_Settled).
  *
@@ -27,7 +26,6 @@ import type { GiftType, LoyaltyType, PaymentResult } from "@/protocol/payment";
 import type { CardBrand, CardProcessor, CardResult, CheckRef } from "@/payments/processor";
 import { runCard, type RunHandle } from "@/payments/run";
 import NumberPad from "./NumberPad";
-import SignaturePad from "./SignaturePad";
 
 const fmt = (n: number) => (n < 0 ? `-$${Math.abs(n).toFixed(2)}` : `$${n.toFixed(2)}`);
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -35,8 +33,7 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 type Mode = { kind: "tenders" } | { kind: "cash" } | { kind: "gift"; tender: Tender } | { kind: "room"; tender: Tender }
   | { kind: "card"; tender: Tender } | { kind: "tip"; tender: Tender; amount: number } | { kind: "divide" }
   | { kind: "processing"; tender: Tender; text: string }                     // waiting on the processor / device
-  | { kind: "tabtip"; line: TenderLine }                                      // Finish Tab: the tip before the capture
-  | { kind: "signature"; tender: Tender; key: string; line: Omit<TenderLine, "key"> }; // signature after the auth
+  | { kind: "tabtip"; line: TenderLine };                                     // Finish Tab: the tip before the capture
 
 /** What the sheet needs from the processor seam when the store has one. */
 export interface CardSupport {
@@ -168,7 +165,7 @@ export default function PaymentView(p: PaymentViewProps) {
     const ctx = card.checkRef(key);
     const sale = !forceAuth && oneShot(tender);   // a bar tab is always a hold, whatever the terminal's Pay_At_Table
     const timeoutSec = tender.waitTimeSec > 0 ? tender.waitTimeSec : card.timeoutSec;
-    const req = { ...ctx, amount, tip: sale ? tip : undefined, tenderId: tender.id, readerId: card.readerId || undefined, promptTip: sale && tender.askForTip, deviceKeyedEntry: tender.deviceKeyedEntry || undefined, captureSignature: tender.captureSignature, timeoutSec };
+    const req = { ...ctx, amount, tip: sale ? tip : undefined, tenderId: tender.id, readerId: card.readerId || undefined, promptTip: sale && tender.askForTip, deviceKeyedEntry: tender.deviceKeyedEntry || undefined, timeoutSec };
     setBusy(true);
     setMode({ kind: "processing", tender, text: "Present the card…" });
     const run = runCard(card.processor, ctx, () => (sale ? card.processor.sale(req) : card.processor.authorize(req)),
@@ -186,12 +183,8 @@ export default function PaymentView(p: PaymentViewProps) {
       amount: partial ? approved : amount, tip: sale ? round2(r.tip ?? tip) : 0, change: 0,
       processor: card.processorName, ref: r.ref, recordNo: r.recordNo ?? r.ref, authCode: r.authCode, last4: r.last4, brand: r.brand,
       finalized: sale, authorizedAmount: approved, capturedAmount: sale ? round2((partial ? approved : amount) + round2(r.tip ?? tip)) : undefined,
-      signatureCaptured: r.signatureCaptured || undefined,
     };
     const note = `${line.name} ${fmt(line.amount)}${line.tip ? ` + tip ${fmt(line.tip)}` : ""}${line.last4 ? ` ••${line.last4}` : ""}${sale ? "" : " authorized"}${partial ? ` · partial approval (${fmt(approved)} of ${fmt(amount)})` : ""}`;
-    if (tender.captureSignature && !r.signatureCaptured && (tender.threshold <= 0 || line.amount >= tender.threshold)) {
-      setMode({ kind: "signature", tender, key, line }); setMsg(note); return;
-    }
     recordWithKey(key, line, note);
   };
 
@@ -222,21 +215,11 @@ export default function PaymentView(p: PaymentViewProps) {
     p.voidTender(t.key); setMsg(`${t.name} voided`);
   };
 
-  const signatureDone = async (key: string, line: Omit<TenderLine, "key">, png: string) => {
-    const card = p.card!;
-    if (png && line.ref && card.processor.attachSignature) {
-      setBusy(true);
-      try { await card.processor.attachSignature(line.ref, png, card.checkRef(key)); } catch { /* the signature is best effort; the auth stands */ }
-      setBusy(false);
-    }
-    recordWithKey(key, { ...line, signatureCaptured: !!png || undefined }, `${line.name} ${fmt(line.amount)}${line.last4 ? ` ••${line.last4}` : ""}${png ? " · signed" : ""}`);
-  };
-
   /* ---------------- Bar tabs (Terminal "Bar Tabs") ---------------- */
   const hold = openHold(p.check);
   /** The tender a tab opens on: the one flagged for incremental auth, else the plain online credit tender (Auth CC). */
   const tabTender = p.tenders.find((t) => t.isOnline && t.incrementalAuth)
-    ?? p.tenders.find((t) => t.isOnline && t.isCredit && !t.captureSignature && !t.deviceKeyedEntry && !t.autoCapture)
+    ?? p.tenders.find((t) => t.isOnline && t.isCredit && !t.deviceKeyedEntry && !t.autoCapture)
     ?? p.tenders.find((t) => t.isOnline && t.isCredit);
   const openTab = () => {
     if (!tabTender) { setMsg("No online card tender to open a tab on"); return; }
@@ -378,10 +361,6 @@ export default function PaymentView(p: PaymentViewProps) {
             <div className="pvproctext">{mode.text}</div>
             <div className="pvactions"><button className="mfbtn ghost" onClick={() => runRef.current?.cancel()}>Cancel</button></div>
           </div>
-        )}
-        {mode.kind === "signature" && (
-          <SignaturePad title={`${mode.line.name} ${fmt(mode.line.amount)} — sign below`} sub={mode.line.last4 ? `Card ••${mode.line.last4}` : undefined}
-            onDone={(png) => void signatureDone(mode.key, mode.line, png)} onSkip={() => void signatureDone(mode.key, mode.line, "")} />
         )}
 
         {mode.kind === "room" && (

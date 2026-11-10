@@ -185,7 +185,6 @@ export function intentResult(pi: Obj, waitingText = "Present the card on the rea
     authorizedAmount: dollars(numv(card.amount_authorized)) ?? dollars(numv(pi.amount)),
     capturedAmount: captured ? dollars(numv(charge.amount_captured)) : undefined,
     tip: dollars(numv(obj(obj(pi.amount_details).tip).amount)),
-    signatureCaptured: false,
   };
   const emv = receiptLines(card);
   if (emv) base.receipt = { customer: emv, merchant: emv };
@@ -314,7 +313,6 @@ export function makeStripe(cfg: ProcessorConfig): CardProcessor {
 
   async function start(req: CardRequest, kind: "auth" | "sale"): Promise<CardResult> {
     const notReady = ready(); if (notReady) return notReady;
-    if (req.token) return failed("Stored-card charges are not available yet — present the card on the reader");
     const readerId = (req.readerId || stripeLocalReader()).trim();
     if (!readerId) return failed("No Stripe reader is assigned to this terminal (TyroTerminalID, or Functions → Card setup)");
     if (req.amount < 0.5) return failed("Stripe minimum charge is $0.50");

@@ -193,7 +193,7 @@ function tokenValue(tok: string, t: TokenCtx): string {
     case "CHK_FIRST_NAME": case "TRN_FIRST_NAME": return t.firstName;
     case "CHK_LAST_NAME": case "TRN_LAST_NAME": return t.lastName;
     case "TABNAME": return t.tabName;
-    case "CHECKBOX": return ""; // signature checkbox — handled at print time on iOS
+    case "CHECKBOX": return ""; // checkbox token — handled at print time on iOS
   }
   let m = tok.match(/^SUBT\*([\d.]+)%?$/); // suggested tip on subtotal; "x Total: $y"
   if (m) { const sug = t.subtotal * parseFloat(m[1]) / 100; return `${sug.toFixed(2)} Total: $${(t.grandTotal + sug).toFixed(2)}`; }

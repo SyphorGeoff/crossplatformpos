@@ -19,7 +19,7 @@ const SETTLE_MS = 1200;
 interface MockTxn {
   ref: string; kind: "auth" | "sale"; amount: number; tip: number; captured: boolean; voided: boolean; refunded: number;
   authorizedAmount: number; brand: CardBrand; last4: string; authCode: string; createdAt: number; pendingForever: boolean;
-  signature?: string; token?: string; checkNo: string; tenderKey: string;
+  checkNo: string; tenderKey: string;
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -38,7 +38,6 @@ function result(t: MockTxn, status: CardResult["status"], message: string): Card
   return {
     status, message, ref: t.ref, recordNo: t.ref, authCode: t.authCode, last4: t.last4, brand: t.brand,
     authorizedAmount: t.authorizedAmount, capturedAmount: t.captured ? round2(t.amount + t.tip) : undefined, tip: t.tip,
-    token: t.token, signatureCaptured: !!t.signature,
   };
 }
 
@@ -54,7 +53,7 @@ function start(req: CardRequest, kind: "auth" | "sale"): CardResult {
     ref: nextRef(), kind, amount: round2(req.amount), tip, captured: false, voided: false, refunded: 0,
     authorizedAmount: c === 97 ? round2(req.amount / 2) : round2(req.amount), brand, last4,
     authCode: `OK${100000 + Math.floor(Math.random() * 900000)}`, createdAt: Date.now(), pendingForever: c === 96,
-    token: req.token ?? `tok_${last4}`, checkNo: req.checkNo, tenderKey: req.tenderKey,
+    checkNo: req.checkNo, tenderKey: req.tenderKey,
   };
   if (c === 99) { t.voided = true; put(t); return declined("Declined (mock .99)", { ref: t.ref, last4, brand }); }
   if (c === 97) t.amount = t.authorizedAmount;
@@ -110,17 +109,6 @@ export const mockProcessor: CardProcessor = {
     if (!t.captured) return failed("Not captured — void it instead");
     t.refunded = round2(t.refunded + amount); put(t);
     return { ...result(t, "ok", "Refunded"), ref: `${t.ref}R`, recordNo: `${t.ref}R` };
-  },
-  async attachSignature(ref, png) {
-    const t = get(ref);
-    if (!t) return failed("Unknown transaction");
-    t.signature = png.slice(0, 64); put(t);
-    return result(t, "ok", "Signature stored");
-  },
-  async tokenize(req) {
-    const r = start({ ...req, amount: 0.01 }, "auth");
-    if (r.ref) { const t = get(r.ref); if (t) { t.voided = true; put(t); } }
-    return r.status === "error" ? r : { status: "ok", message: "Card stored", token: r.token, last4: r.last4, brand: r.brand };
   },
 };
 
