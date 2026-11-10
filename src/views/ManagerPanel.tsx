@@ -25,6 +25,8 @@ export interface ManagerPanelProps {
   onNoSale: () => void;
   onCancelCheck: () => void;
   onDiscount: (a: Adjustment) => void;
+  onFinalize?: () => void;   // finalize credit tenders (tip + capture) — present when the store has a card processor
+  onCardSetup?: () => void;  // per-terminal processor key / reader (Stripe) — managers only
   onClose: () => void;
 }
 
@@ -48,6 +50,8 @@ export default function ManagerPanel(p: ManagerPanelProps) {
               : <button className="mgrbtn" disabled={p.busy} onClick={() => setView("clockin")}>Clock in</button>}
             <button className="mgrbtn" disabled={p.busy || !p.perms.noSale} onClick={p.onNoSale}>No sale<small>open drawer</small></button>
             <button className="mgrbtn" disabled={p.busy || !p.hasCheck} onClick={() => setView("discounts")}>Discount / comp</button>
+            {p.onFinalize && <button className="mgrbtn" disabled={p.busy} onClick={p.onFinalize}>Finalize cards<small>tips &amp; capture</small></button>}
+            {p.onCardSetup && p.perms.manager && <button className="mgrbtn" disabled={p.busy} onClick={p.onCardSetup}>Card setup<small>key &amp; reader</small></button>}
             <button className="mgrbtn danger" disabled={p.busy || !p.hasCheck} onClick={p.onCancelCheck}>Cancel check</button>
           </div>
         )}

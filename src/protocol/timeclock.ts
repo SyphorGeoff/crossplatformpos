@@ -63,6 +63,23 @@ export async function fetchClockedInEmpIds(cfg: SessionConfig): Promise<Set<stri
   } catch { return null; }
 }
 
+/** Every clocked-in employee with job, clock-in time and shift sequence (Manager's Menu → Clocked In Employees). */
+export async function fetchClockedInEmps(cfg: SessionConfig): Promise<ClockedInEmp[]> {
+  const xml = `${XML_HEAD}${TRANS_DTD}<Transactional_Request Trans_Type="Clocked_In_Emps">` +
+    el("ISIS_Ver", cfg.isisVer) + el("Store_ID", cfg.storeId) + el("Security_Token", cfg.token) + `</Transactional_Request>`;
+  const nn = (v: string) => (/^[<(]?null[>)]?$/i.test(v.trim()) ? "" : v);
+  const parsed = parseXmlResponse(await postXml(apiServerAddress(cfg.enterpriseServerUrl), xml));
+  return asList(findKey(parsed, "Clocked_In_Emp")).map((r) => ({
+    empId: textOf(findKey(r, "Emp_POS_ID")),
+    businessDateId: nn(textOf(findKey(r, "BusinessDate_ID"))),
+    sequence: nn(textOf(findKey(r, "Sequence"))),
+    jobId: nn(textOf(findKey(r, "Job_POS_ID"))),
+    defaultRoomId: nn(textOf(findKey(r, "Default_Dining_Room_POS_ID"))),
+    clockInTime: nn(textOf(findKey(r, "Clock_In_Date_Time"))),
+    teamName: nn(textOf(findKey(r, "Team_Name"))),
+  })).filter((e) => e.empId);
+}
+
 /** yyyy-MM-dd HH:mm — the time-card timestamp format (minute precision). */
 export function clockStamp(d = new Date()): string {
   const p = (n: number) => String(n).padStart(2, "0");

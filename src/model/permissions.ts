@@ -17,10 +17,13 @@ export interface Perms {
   transfer: boolean;      // Approve_Transfer
   noSale: boolean;        // allow_no_sale / No_Sale
   manager: boolean;       // Mgr_Menu (pay-in/out, force clock, release drawer, cancel…)
+  approvePayment: boolean; // approve_Payment — APPROVE_PAYMENT (a tender flagged require_Appovement)
+  tipAuth: boolean;       // approve_Tip — TIP_AUTH (a tip at/above Max_Tip_Percent of the payment)
+  finalizeCredit: boolean; // finalize_Tip — FINALIZE_CREDIT (finalize / tip other servers' card tenders)
 }
 export type AuthAction = keyof Perms;
 
-const NONE: Perms = { void: false, adjust: false, reopen: false, overridePrice: false, removeTax: false, transfer: false, noSale: false, manager: false };
+const NONE: Perms = { void: false, adjust: false, reopen: false, overridePrice: false, removeTax: false, transfer: false, noSale: false, manager: false, approvePayment: false, tipAuth: false, finalizeCredit: false };
 
 function union(list: Job[]): Perms {
   return list.reduce<Perms>((p, j) => ({
@@ -32,6 +35,9 @@ function union(list: Job[]): Perms {
     transfer: p.transfer || j.approveTransfer,
     noSale: p.noSale || j.noSale,
     manager: p.manager || j.mgrMenu,
+    approvePayment: p.approvePayment || j.approvePayment,
+    tipAuth: p.tipAuth || j.approveTip,
+    finalizeCredit: p.finalizeCredit || j.finalizeTip,
   }), { ...NONE });
 }
 

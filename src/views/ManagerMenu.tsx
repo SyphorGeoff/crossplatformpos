@@ -39,7 +39,7 @@ const ORDER: { key: keyof ManagerMenuActions; label: string }[] = [
   { key: "queryByTable", label: "Query By Table" },
   { key: "openChecks", label: "Open Checks" },
   { key: "mergeChecks", label: "Merge Checks" },
-  { key: "openClosedChecks", label: "Open Closed Checks" },
+  { key: "openClosedChecks", label: "Closed Checks" },        // iOS said "Open Closed Checks"; Geoff 2026-11-06: just Closed Checks
   { key: "transferAll", label: "Transfer All" },
   { key: "clockOut", label: "Clock Out" },
   { key: "clockedInEmployees", label: "Clocked In Employees" },

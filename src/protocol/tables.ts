@@ -28,6 +28,40 @@ export interface OpenCheck {
   lastModified: string;
 }
 
+/** A settled check of the business date (Manager's Menu → Closed Checks). */
+export interface ClosedCheck {
+  checkNo: string;          // Check_Number
+  checkKey: string;         // check_key
+  checkName: string;        // Check_Name (tab / table label)
+  tableId: string;          // Table_POS_ID ("" for tabs)
+  businessDateId: string;
+  empPosId: string;         // the check's owner
+  openedOn: string;         // Opened_On
+  lastModified: string;     // Last_Modified_Time
+  subtotal: number;
+  total: number;
+}
+
+/** The business date's closed checks — FinancialCheckManager closedChecks (Trans_Type="Closed_Checks"). */
+export async function fetchClosedChecks(cfg: SessionConfig, businessDateId: string): Promise<ClosedCheck[]> {
+  const xml = `${XML_HEAD}${TRANS_DTD}<Transactional_Request Trans_Type="Closed_Checks">` +
+    el("ISIS_Ver", cfg.isisVer) + el("Store_ID", cfg.storeId) + el("Security_Token", cfg.token) +
+    el("BusinessDate_ID", businessDateId) + `</Transactional_Request>`;
+  const parsed = parseXmlResponse(await postXml(apiServerAddress(cfg.enterpriseServerUrl), xml));
+  return asList(findKey(parsed, "Closed_Check")).map((r: XmlDict) => ({
+    checkNo: textOf(findKey(r, "Check_Number")),
+    checkKey: textOf(findKey(r, "check_key")),
+    checkName: textOf(findKey(r, "Check_Name")),
+    tableId: textOf(findKey(r, "Table_POS_ID")),
+    businessDateId: textOf(findKey(r, "BusinessDate_ID")) || businessDateId,
+    empPosId: textOf(findKey(r, "Emp_POS_ID")),
+    openedOn: textOf(findKey(r, "Opened_On")),
+    lastModified: textOf(findKey(r, "Last_Modified_Time")),
+    subtotal: Number(textOf(findKey(r, "Subtotal"))) || 0,
+    total: Number(textOf(findKey(r, "Total"))) || 0,
+  })).filter((c) => c.checkNo);
+}
+
 /** List the store's open checks (floorplan occupancy). FinancialCheckManager.m:13410. */
 export async function fetchOpenChecks(cfg: SessionConfig, businessDateId: string, opts: { empPosId?: string } = {}): Promise<OpenCheck[]> {
   const emp = opts.empPosId ? el("Emp_POS_ID", opts.empPosId) : "";
@@ -132,6 +166,7 @@ export function parseCheckLines(check: XmlDict, names: CheckNames): { lines: Che
     parentTray: string; parentLine: string; voidTray: string; voidLine: string;
     qty: number; ext: number; guest?: number; applied?: string; auth?: string; ref: string;
     mid: string; adj: string; tid: string; tip: number; change: number; reference?: string; balanceRef?: string;
+    refNo: string; recordNo: string; authCode: string; acct: string; finalized: string;   // online card fields (Type T)
     course?: number;
     sentAt?: number;
     prefixId: string; pfix: string;
@@ -156,6 +191,7 @@ export function parseCheckLines(check: XmlDict, names: CheckNames): { lines: Che
         mid: t("MenuItem_POS_ID"), adj: t("Adjustment_POS_ID"), tid: t("Tender_POS_ID"),
         tip: Number(t("Tip_Amount")) || 0, change: Number(t("Change_Given")) || 0,
         reference: t("Reference") || undefined, balanceRef: t("Transaction_Ref") || undefined,
+        refNo: t("RefNo"), recordNo: t("RecordNo"), authCode: t("AuthCode"), acct: t("TruncatedAcctNo") || t("AcctNo"), finalized: textOf(li["Finalized"]),
         course: t("print_Sort_Order") !== "" && Number.isFinite(Number(t("print_Sort_Order"))) ? Number(t("print_Sort_Order")) : undefined,
         prefixId: t("toppingPrefix_ID"), pfix: t("pfix"),
       });
@@ -184,7 +220,15 @@ export function parseCheckLines(check: XmlDict, names: CheckNames): { lines: Che
     const common = { trayNumber: Number(r.tray) || undefined, lineNumber: Number(r.line) || undefined, sent: true as const, sentAt: r.sentAt };
     if (r.type === "T") {
       if (struck) continue;
-      tenders.push({ key: mintLineKey(), tenderId: r.tid, name: names.tenderName(r.tid), amount: r.ext, tip: r.tip, change: r.change, reference: r.reference, balanceRef: r.balanceRef, ...common });
+      // A processor card line comes back with its RefNo; "0" is the server's "no ref" (finalizetender).
+      const ref = r.refNo && r.refNo !== "0" ? r.refNo : "";
+      const card = ref ? {
+        ref, recordNo: r.recordNo && r.recordNo !== "0" ? r.recordNo : ref, authCode: r.authCode || undefined,
+        last4: r.acct ? r.acct.replace(/[^0-9]/g, "").slice(-4) || undefined : undefined,
+        finalized: r.finalized === "1" || /^true$/i.test(r.finalized),
+        ...(r.finalized === "1" || /^true$/i.test(r.finalized) ? { capturedAmount: r.ext } : { authorizedAmount: r.ext }),
+      } : {};
+      tenders.push({ key: mintLineKey(), tenderId: r.tid, name: names.tenderName(r.tid), amount: r.ext, tip: r.tip, change: r.change, reference: r.reference, balanceRef: r.balanceRef, ...card, ...common });
       continue;
     }
     const key = mintLineKey();
@@ -229,7 +273,7 @@ export function parseCheckLines(check: XmlDict, names: CheckNames): { lines: Che
  * :11645-11700): Trans_Type="Modify", Record_Type LineItem. The iPad uses it for
  * Guest_Num (change guest on a sent line) and Line_Amount. Success = Status_Code 100. */
 export async function modifyLineItem(cfg: SessionConfig, p: {
-  businessDateId: string; checkNo: string; checkKey: string; trayNumber: number; lineNumber: number; field: "Guest_Num" | "Line_Amount" | "print_Sort_Order"; value: string;
+  businessDateId: string; checkNo: string; checkKey: string; trayNumber: number; lineNumber: number; field: "Guest_Num" | "Line_Amount" | "print_Sort_Order" | "Tip_Amount"; value: string;
 }): Promise<{ ok: boolean; message: string }> {
   const xml = `${XML_HEAD}${TRANS_DTD}<Transactional_Request Trans_Type="Modify"><ISIS_Ver>1.0</ISIS_Ver>` +
     `<Store_ID>${escapeXml(cfg.storeId)}</Store_ID><Security_Token>${escapeXml(cfg.token)}</Security_Token><Record_Type>LineItem</Record_Type>` +

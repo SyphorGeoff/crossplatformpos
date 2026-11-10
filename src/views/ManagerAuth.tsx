@@ -40,7 +40,7 @@ export default function ManagerAuth({ title, action, onAuthorized, onCancel }: {
   };
 
   return (
-    <div className="backdrop" onClick={onCancel}>
+    <div className="backdrop prompt" onClick={onCancel}>
       <div className="authbox" onClick={(e) => e.stopPropagation()}>
         <div className="authtitle">{title}</div>
         <div className="authsub">{phase === "id" ? "Enter authorizing ID" : "Enter PIN"}</div>

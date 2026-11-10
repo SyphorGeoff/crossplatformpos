@@ -18,6 +18,7 @@ export interface EditCheckActions {
   mergeCheck?: () => void;      // this check INTO another open check (Geoff 2026-10-16: its own tile)
   searchMenu?: () => void;
   changeRc?: () => void;
+  editPayment?: () => void;    // adjust the tip on a card line already taken (processor adjust; Stripe: down only)
   // — not yet built (render disabled until wired to the iOS behavior) —
   nameTab?: () => void;
   transferItem?: () => void;
@@ -84,6 +85,7 @@ export default function EditCheck(p: EditCheckProps) {
 
       <div className="ecgrid">
         <Fn glyph="✎" label="Name Tab" onClick={a.nameTab} />
+        <Fn glyph="$" label="Edit Payment" sub="change a card tip" onClick={a.editPayment} />
         <Fn glyph="↪" label="Transfer Check" onClick={a.transferCheck} />
         <Fn glyph="⧉" label="Merge Checks" onClick={a.mergeCheck} />
         <Fn glyph="↗" label="Transfer Item" onClick={a.transferItem} />

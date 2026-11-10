@@ -26,7 +26,10 @@ function devForwarder(): Plugin {
         req.on("end", () => {
           const body = Buffer.concat(chunks);
           const headers: Record<string, string> = {};
-          for (const h of ["content-type"]) {
+          // Pass the request headers a processor API needs (Stripe: Authorization,
+          // Stripe-Version, Idempotency-Key, Stripe-Account); the native builds send
+          // every header through CapacitorHttp, so dev must match.
+          for (const h of ["content-type", "accept", "authorization", "stripe-version", "idempotency-key", "stripe-account"]) {
             const v = req.headers[h];
             if (typeof v === "string") headers[h] = v;
           }

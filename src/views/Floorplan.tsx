@@ -21,6 +21,7 @@ export interface FloorplanProps {
   occupancy: Map<string, OpenCheck>;
   onPick: (table: DiningTable, occ?: OpenCheck) => void;
   onQuickSale: () => void;
+  onOpenChecks?: () => void;       // the open-checks list (Geoff 2026-11-06: wanted on the table layout, not only in the Dashboard)
   onMessages?: () => void;
   unread?: number;
   onRefresh: () => void;
@@ -65,6 +66,7 @@ export default function Floorplan(p: FloorplanProps) {
         </div>
         <div className="tools">
           <button className="station" onClick={p.onRefresh} disabled={p.loading}>{p.loading ? "…" : "Refresh"}</button>
+          {p.onOpenChecks && <button className="station" onClick={p.onOpenChecks}>Open checks</button>}
           <button className="station" onClick={p.onQuickSale}>Quick sale</button>
           {p.onMessages && <button className="station" onClick={p.onMessages}>Messages{p.unread ? <span className="tbbadge">{p.unread}</span> : null}</button>}
           <button className="station" onClick={p.onDashboard}>Dashboard</button>

@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { splitToNewCheck, checkSubtotal, generateCheckKey, newCheck, sweepUnsentForIdle, addItemLine, addModifierLine, removeLine, descendantKeys, markRoundSent, stopTimedLine, timedMinutes, timedCost, isTimedRunning, runningTimedLines, TIMED_ACTIVE, TIMED_COMPLETE, type Check, type CheckLine } from "@/model/check";
+import { openHold, splitToNewCheck, checkSubtotal, generateCheckKey, newCheck, sweepUnsentForIdle, addItemLine, addModifierLine, removeLine, descendantKeys, markRoundSent, stopTimedLine, timedMinutes, timedCost, isTimedRunning, runningTimedLines, TIMED_ACTIVE, TIMED_COMPLETE, type Check, type CheckLine } from "@/model/check";
 import type { MenuItem } from "@/model/catalog";
 
 describe("generateCheckKey (iOS numeric key)", () => {
@@ -138,5 +138,19 @@ describe("timed items (Stop Timer)", () => {
     const done = s.lines.find((l) => l.reference === TIMED_COMPLETE)!;
     expect(done.amount).toBe(6.5); expect(done.sent).toBeFalsy(); expect(done.menuItemId).toBe("77");
     expect(runningTimedLines(s)).toEqual([]);
+  });
+});
+
+describe("openHold (bar tabs)", () => {
+  const base = { tenderId: "12", name: "Auth CC", amount: 11, tip: 0, change: 0 };
+  it("is the one uncaptured card line, sent or not; captured, cash and voided lines are not holds", () => {
+    const c = newCheck("1");
+    expect(openHold(c)).toBeUndefined();
+    c.tenders = [{ ...base, key: "a", ref: "pi_1", finalized: false }];
+    expect(openHold(c)?.key).toBe("a");
+    c.tenders = [{ ...base, key: "b", ref: "pi_2", finalized: true }, { ...base, key: "c", tenderId: "1", name: "Cash" }];
+    expect(openHold(c)).toBeUndefined();
+    c.tenders = [{ ...base, key: "d", ref: "pi_3", finalized: false, isVoid: true }, { ...base, key: "e", ref: "pi_4", finalized: false, sent: true, trayNumber: 2, lineNumber: 3 }];
+    expect(openHold(c)?.key).toBe("e");
   });
 });

@@ -51,6 +51,9 @@ export interface CheckPanelProps {
   guestLocked?: boolean;                   // a modifier flow is open: the seat cannot change mid-flow
   sending?: boolean;
   sendError?: string;
+  /* ---- bar tab hold (Terminal "Bar Tabs"): the open card hold and how far the check has grown past it ---- */
+  hold?: { label: string; amount: number; due: number; canIncrease: boolean };
+  onIncreaseHold?: () => void;
   /* ---- coursing (RevenueCenter.showCourse / rc_backup21) ---- */
   showCourse?: boolean;                    // "C{n}" pills + course headers + chips
   courseOf?: (l: CheckLine) => number;     // effective course for a line (0 = none)
@@ -287,6 +290,12 @@ export default function CheckPanel(p: CheckPanelProps) {
       )}
 
       <div className="cfoot">
+        {p.hold && (
+          <div className="chold">
+            <span>Tab hold · {p.hold.label} · {fmt(p.hold.amount)}{p.hold.due > 0.005 ? ` · ${fmt(p.hold.due)} not held` : ""}</span>
+            {p.hold.canIncrease && p.hold.due > 0.005 && <button className="cnew" disabled={p.sending} onClick={p.onIncreaseHold}>Increase to {fmt(p.hold.amount + p.hold.due)}</button>}
+          </div>
+        )}
         {p.sendError && <div className="cerr">{p.sendError}</div>}
         {selecting ? (
           <div className="cactions">

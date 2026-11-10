@@ -70,7 +70,7 @@ export function useCheck(defaultRcId: string, terminalPosId: string) {
   const setDiningTable = useCallback((diningTableId: string, tableName: string) => mutate((c) => ({ ...c, diningTableId, tableName })), [mutate]);
   const setCheckNumber = useCallback((checkNumber: string) => mutate((c) => ({ ...c, checkNumber })), [mutate]);
 
-  const applyTender = useCallback((t: Omit<TenderLine, "key">) => mutate((c) => addTender(c, t)), [mutate]);
+  const applyTender = useCallback((t: Omit<TenderLine, "key"> & { key?: string }) => mutate((c) => addTender(c, t)), [mutate]);
   const voidTender = useCallback((key: string) => mutate((c) => removeTender(c, key)), [mutate]);
   /** Void a POSTED tender: struck + negative reversal, sent on the next post (voidTenderLine). */
   const voidPostedTender = useCallback((key: string, voidPosId: string, authEmpId: string) => mutate((c) => voidTenderLine(c, key, voidPosId, authEmpId)), [mutate]);

@@ -92,6 +92,10 @@ export interface RevenueCenter {
   showCourse: boolean;        // showCourse — "C{n}" course labels on the check lines
   useCourseButtons: boolean;  // rc_backup21 — course chooser while ordering (ItemsTableVC course bar)
   guestBeforeCourse: boolean; // sort_Guest_Before_Course — kitchen chit groups by guest, then course
+  useRcCcProcessor: boolean;  // use_RC_CC_Processor — this RC overrides the store's card processor
+  ccProcessor: string;        // rc_CreditCardDriver (lower-cased) — the override
+  ccMerchantId: string;       // rc_CC_Merchant_ID
+  ccMerchantBundle: string;   // rc_CC_Merchant_Password — the override's JSON bundle (non-secret)
   _raw: DefRow;
 }
 
@@ -142,6 +146,10 @@ export interface Terminal {
   defaultRevenueCenterId: string; // Default_RevenueCenter_POS_ID
   choosePrinter: boolean;         // Choose_Printer — the Print Options buttons ask which check printer (TerminalConfigManager isChoosePrinter)
   checkPrinterIds: string[];      // Chk_Printer_POS_ID + chk_Printer2..5_POS_ID — the printers that picker offers
+  payAtTable: boolean;            // Pay_At_Table_Active — card payments are one-shot sales (tip first), not auth-then-capture
+  readerId: string;               // TyroTerminalID — the payment device this tablet drives (processor-specific id)
+  useRepeatSale: boolean;         // use_RepeatSale ("Bar Tabs") — Open / Finish / Void Tab on the pay sheet, the hold grows as rounds post
+  disableAutoIncrement: boolean;  // terminal_backup2 ("Disable Auto Increment") — never raise the hold on Send; only the Increase button does
   _raw: DefRow;
 }
 
@@ -248,6 +256,10 @@ export function revenueCenters(): RevenueCenter[] {
     showCourse: s(r, "showCourse") === "1",
     useCourseButtons: s(r, "rc_backup21") === "1",
     guestBeforeCourse: s(r, "sort_Guest_Before_Course") === "1",
+    useRcCcProcessor: s(r, "use_RC_CC_Processor") === "1",
+    ccProcessor: s(r, "rc_CreditCardDriver").trim().toLowerCase(),
+    ccMerchantId: s(r, "rc_CC_Merchant_ID"),
+    ccMerchantBundle: s(r, "rc_CC_Merchant_Password"),
     _raw: r,
   }));
 }
@@ -388,8 +400,20 @@ export interface Tender {
   overpayIsTip: boolean;
   isOnline: boolean;        // Is_Online — processed by a payment gateway; offline card tenders are plain (dummy) records
   roundingAmount: string;   // when Enable_Rounding; e.g. "0.05"
-  appliesToCheck: boolean;
   hidden: boolean;
+  // Card-processing flags (payments seam). Wire names verified on enox store 3, 2026-11-05.
+  onlineVoid: boolean;      // OnlineVoid — a void of this tender is sent to the processor (cancel/refund) before the reversal line
+  captureSignature: boolean; // captureSignature — collect a signature after the auth
+  threshold: number;        // threshold — amount above which a receipt / signature is required (0 = always)
+  tipPresets: number[];     // tip1..tip3 — percent presets on the tip pad (empty = none)
+  promptForCard: boolean;   // PromptForCard — ask for the card number (gift) / keyed card prompt
+  deviceKeyedEntry: boolean; // use_third_party_keyed_entry — tell the PAYMENT DEVICE to allow manual (keyed) entry; what it does depends on the processor (Geoff 2026-11-06)
+  requireApproval: boolean; // require_Appovement — a manager must approve the payment (APPROVE_PAYMENT)
+  captureRequired: boolean; // tender_backup7 slot is unused; captureRequired is not on the feed — derived false
+  incrementalAuth: boolean; // tender_backup6 — bar-tab style: raise the open auth as rounds post
+  autoCapture: boolean;     // tender_backup10 — one-shot sale (capture at payment) even on an auth terminal
+  iCatCode: string;         // iCat_Code — the card brand this (offline) tender records: VISA / MASTERCARD / AMEX / DISCOVER…
+  waitTimeSec: number;      // WaitTime — processor wait before giving up (seconds; 0 = Store CC_Timeout)
   _raw: DefRow;
 }
 
@@ -412,6 +436,16 @@ export interface StoreConfig {
   gcMenuItemId: string;       // gC_MenuItem_POS_ID — gift-card sale item (kept by the idle sweep)
   gcReloadMenuItemId: string; // gC_Reload_MenuItem_POS_ID
   useSyphor: boolean;         // use_Syphor — hides the course chooser on check lines
+  // Card processing (payments seam). Nothing secret rides a definition: MerchantPassword
+  // holds the processor's NON-secret JSON bundle (ids, flags); keys live with the service.
+  ccProcessor: string;        // cC_Processor — "stripe" / "tsys" / "" (lower-cased; anything else leaves online tenders disabled)
+  ccTestMode: boolean;        // cc_test_mode
+  ccTimeoutSec: number;       // CC_Timeout (seconds; 60 when unset)
+  requireAuthTip: boolean;    // require_Auth_Tip — pre-auth with tip room
+  maxTipPercent: number;      // Max_Tip_Percent — a tip at/above this % of the payment needs TIP_AUTH (50 when unset)
+  merchantId: string;         // Merchant_ID — the processor account / MID
+  merchantBundle: string;     // MerchantPassword — the processor's JSON bundle, raw (see payments/config.ts)
+  hostbasedCc: boolean;       // hostbased_cc
 }
 const nativeProcessor = (v: string) => /isis|aireus/i.test(v);
 export function storeConfig(): StoreConfig {
@@ -434,6 +468,14 @@ export function storeConfig(): StoreConfig {
     gcMerchantPassword: s(r, "GCMerchantPassword"),
     loyaltyMerchantId: s(r, "loyalty_MerchantID"),
     loyaltyMerchantPassword: s(r, "loyalty_Merchant_Password"),
+    ccProcessor: (s(r, "CC_Processor") || s(r, "cC_Processor")).trim().toLowerCase(),
+    ccTestMode: s(r, "cc_test_mode") === "1",
+    ccTimeoutSec: Number(s(r, "CC_Timeout")) > 0 ? Number(s(r, "CC_Timeout")) : 60,
+    requireAuthTip: s(r, "require_Auth_Tip") === "1",
+    maxTipPercent: Number(s(r, "Max_Tip_Percent")) > 0 ? Number(s(r, "Max_Tip_Percent")) : 50,
+    merchantId: s(r, "Merchant_ID"),
+    merchantBundle: s(r, "MerchantPassword"),
+    hostbasedCc: s(r, "hostbased_cc") === "1",
   };
 }
 /** Is the store's gift processor the native Aireus one (vs a third-party gateway)? */
@@ -456,8 +498,19 @@ export function tenders(): Tender[] {
     overpayIsTip: s(r, "Overpay_Is_Tip") === "1",
     isOnline: s(r, "Is_Online") === "1",
     roundingAmount: s(r, "Enable_Rounding") === "1" ? s(r, "RoundingAmount") : "",
-    appliesToCheck: s(r, "Applies_To_Check") === "1",
     hidden: s(r, "isHide") === "1",
+    onlineVoid: s(r, "OnlineVoid") === "1",
+    captureSignature: s(r, "captureSignature") === "1",
+    threshold: Number(s(r, "threshold")) || 0,
+    tipPresets: ["tip1", "tip2", "tip3"].map((k) => Number(s(r, k))).filter((n) => n > 0),
+    promptForCard: s(r, "PromptForCard") === "1",
+    deviceKeyedEntry: s(r, "use_third_party_keyed_entry") === "1",
+    requireApproval: s(r, "require_Appovement") === "1",
+    captureRequired: false,
+    incrementalAuth: s(r, "tender_backup6") === "1",
+    autoCapture: s(r, "tender_backup10") === "1",
+    iCatCode: s(r, "iCat_Code").trim().toUpperCase(),
+    waitTimeSec: Number(s(r, "WaitTime")) || 0,
     _raw: r,
   })).filter((t) => t.id);
 }
@@ -493,7 +546,9 @@ export interface Job {
   authTaxExemptions: boolean;
   overridePrice: boolean;   // Override_Price
   applyTender: boolean;     // Apply_Tender (take payment)
-  approvePayment: boolean;
+  approvePayment: boolean;  // approve_Payment (APPROVE_PAYMENT — a tender flagged require_Appovement)
+  approveTip: boolean;      // approve_Tip (TIP_AUTH — a tip at/above Max_Tip_Percent)
+  finalizeTip: boolean;     // finalize_Tip (FINALIZE_CREDIT — finalize other servers' card tenders)
   approveTransfer: boolean;
   noSale: boolean;          // No_Sale / allow_no_sale
   openDrawer: boolean;      // Open_Drawer
@@ -520,6 +575,8 @@ export function jobs(): Job[] {
     overridePrice: s(r, "Override_Price") === "1",
     applyTender: s(r, "Apply_Tender") === "1",
     approvePayment: s(r, "approve_Payment") === "1",
+    approveTip: s(r, "approve_Tip") === "1",
+    finalizeTip: s(r, "finalize_Tip") === "1",
     approveTransfer: s(r, "Approve_Transfer") === "1",
     noSale: s(r, "No_Sale") === "1" || s(r, "allow_no_sale") === "1",
     openDrawer: s(r, "Open_Drawer") === "1",
@@ -632,6 +689,10 @@ export function terminals(): Terminal[] {
     defaultRevenueCenterId: s(r, "Default_RevenueCenter_POS_ID"),
     choosePrinter: s(r, "Choose_Printer") === "1",
     checkPrinterIds: ["Chk_Printer_POS_ID", "chk_Printer2_POS_ID", "chk_Printer3_POS_ID", "chk_Printer4_POS_ID", "chk_Printer5_POS_ID"].map((k) => s(r, k)).filter(Boolean),
+    payAtTable: s(r, "Pay_At_Table_Active") === "1",
+    readerId: s(r, "TyroTerminalID").trim(),
+    useRepeatSale: s(r, "use_RepeatSale") === "1",
+    disableAutoIncrement: s(r, "terminal_backup2") === "1",
     _raw: r,
   }));
 }

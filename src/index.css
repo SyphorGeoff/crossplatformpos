@@ -415,6 +415,7 @@ body { background: var(--cream); color: var(--ink); font-family: "Helvetica Neue
 
 /* Item detail sheet */
 .backdrop { position: fixed; inset: 0; background: rgba(26,20,10,.45); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 20; }
+.backdrop.prompt { z-index: 30; } /* manager-auth and void-reason prompts open from inside other sheets (payment, edit) and must stack above them */
 .sheet { width: min(400px, 92vw); background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 20px; box-shadow: 0 20px 60px rgba(26,26,26,.25); }
 .shead { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .sname { font-size: 20px; font-weight: 800; }
@@ -542,3 +543,28 @@ body { background: var(--cream); color: var(--ink); font-family: "Helvetica Neue
 .bclear { grid-column: 1 / -1; justify-self: end; font: inherit; font-size: 12px; font-weight: 600; color: var(--ink-soft); background: none; border: 1px solid var(--line-hard); border-radius: 999px; padding: 4px 12px; cursor: pointer; }
 .bexp { font-size: 11px; color: var(--ink-dim); text-align: right; }
 
+
+/* ---- Online cards (payments seam) ---- */
+.pvsub { display: block; font-size: 11px; font-weight: 500; color: var(--ink-dim); margin-top: 2px; }
+.pvfit { width: 100%; margin-top: 10px; padding: 12px; border: 1px dashed var(--line-hard); background: var(--card); color: var(--ink); border-radius: 12px; font-size: 13px; font-weight: 700; cursor: pointer; }
+.pvfit:disabled { opacity: .5; cursor: default; }
+.pvprocessing { margin-top: 14px; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 18px 0; }
+.pvproctext { font-size: 15px; color: var(--ink-soft); text-align: center; }
+.pvspin { width: 34px; height: 34px; border-radius: 50%; border: 3px solid var(--line); border-top-color: var(--ink); animation: pvspin .9s linear infinite; }
+@keyframes pvspin { to { transform: rotate(360deg); } }
+.sigpad { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.sigcanvas { width: 100%; height: 180px; background: #fff; border: 1px solid var(--line-hard); border-radius: 12px; touch-action: none; }
+.sigline { font-size: 12px; color: var(--ink-dim); letter-spacing: .1em; margin-top: -4px; }
+.roompad .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.finview { width: min(640px, 94vw); }
+.finlist { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+.finrow { display: grid; grid-template-columns: 1.3fr 1fr 1fr auto; gap: 8px; align-items: center; text-align: left; padding: 12px 14px; border: 1px solid var(--line-hard); background: var(--card); color: var(--ink); border-radius: 12px; font-size: 14px; cursor: pointer; }
+.finrow:hover { border-color: var(--gold); }
+.finrow .finchk { font-weight: 800; }
+.finrow .finwho, .finrow .fincard { color: var(--ink-soft); font-size: 13px; }
+.finrow .finamt { font-weight: 800; font-variant-numeric: tabular-nums; }
+
+/* bar tabs: the hold strip on the check panel and the tab row on the pay sheet */
+.chold { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; margin-bottom: 6px; border-radius: 8px; background: #F1ECE0; font-size: 13px; }
+.pvtab { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px; margin-bottom: 10px; border: 1px dashed var(--line-hard); border-radius: 12px; }
+.pvtabinfo { flex: 1; font-size: 14px; font-weight: 600; }

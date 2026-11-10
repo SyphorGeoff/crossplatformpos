@@ -23,6 +23,9 @@ import ManagerAuth from "./ManagerAuth";
 import ClockInGate from "./ClockInGate";
 import TopBar from "./TopBar";
 import TabsView from "./TabsView";
+import ClosedChecksView from "./ClosedChecksView";
+import { ClockedInList, PickEmployee } from "./ManagerPickers";
+import { jobs as allJobs } from "@/model/catalog";
 import MessagesView, { type ComposeTarget } from "./MessagesView";
 import { useMessages } from "@/state/useMessages";
 import { sendMessage, type InboxMessage } from "@/protocol/messaging";
@@ -43,18 +46,27 @@ import {
 } from "@/model/menu";
 import {
   adjustmentDepartments, adjustments as loadAdjustments, diningRooms, diningTables, employeeJobs, employees, isNativeGift, isNativeLoyalty, jobs,
-  storeConfig, tenders as loadTenders, voidReasons,
+  storeConfig, tenders as loadTenders, terminals as loadTerminals, voidReasons,
 } from "@/model/catalog";
+import { selectProcessor } from "@/payments/select";
+import "@/payments/tsys";                                   // registers the TSYS processor (side effect)
+import "@/payments/stripe";                                 // registers the Stripe processor (side effect)
+import CardSetup from "./CardSetup";
+import type { CardResult, CheckRef } from "@/payments/processor";
+import { fetchUnfinalized, postFinalizeTender, type UnfinalizedTender } from "@/protocol/finalize";
+import FinalizeView from "./FinalizeView";
+import EditPaymentView from "./EditPaymentView";
+import type { CardSupport } from "./PaymentView";
 import type { Adjustment, DiningTable, Employee, Job, MenuItem, ScreenGroup } from "@/model/catalog";
 import { can, jobsForEmployee, permsForEmployee, type AuthAction, type Authorizer } from "@/model/permissions";
-import { clockIn, clockOut, fetchClockedInEmp, fetchClockedInEmpIds } from "@/protocol/timeclock";
+import { clockIn, clockOut, fetchClockedInEmp, fetchClockedInEmpIds, fetchClockedInEmps, type ClockedInEmp } from "@/protocol/timeclock";
 import {
   fetchHighestCheck, resolveBusinessDate, sendCheck,
   type SendContext, type SessionConfig,
 } from "@/protocol/order";
 import { sendPayment, type GiftType, type LoyaltyType, type PaymentContext, type PaymentResult } from "@/protocol/payment";
-import { fetchOpenChecks, fetchUnfinalizedTenders, lockCheck, modifyLineItem, readCheck, unlockCheck, type OpenCheck } from "@/protocol/tables";
-import { absorbSentLines, sweepUnsentForIdle, runningTimedLines, stopTimedLine, timedCost, timedMinutes, addFireCourseRecord, addTransferCheckRecord, applyAutoGratuity, changeRevenueCenter, applyItemAdjustments, applyMovePlan, checkSubtotal, effectiveCourse, firedCourses, guestAssignment, highestGuestNumber, lastLineOf, lineExtended, repeatLastOf, setLineReference, markRoundSent, mergeInto, newCheck, removeLine, setCourse, splitToNewCheck, unsentLines, voidLine, voidTenderLine, type AutoGratDef, type Check, type CheckLine, isVoidReversal } from "@/model/check";
+import { fetchClosedChecks, fetchOpenChecks, fetchUnfinalizedTenders, lockCheck, modifyLineItem, readCheck, unlockCheck, type ClosedCheck, type OpenCheck } from "@/protocol/tables";
+import { absorbSentLines, sweepUnsentForIdle, runningTimedLines, stopTimedLine, timedCost, timedMinutes, addFireCourseRecord, addTransferCheckRecord, applyAutoGratuity, changeRevenueCenter, applyItemAdjustments, applyMovePlan, checkSubtotal, effectiveCourse, firedCourses, guestAssignment, highestGuestNumber, lastLineOf, lineExtended, repeatLastOf, setLineReference, markRoundSent, mergeInto, newCheck, removeLine, setCourse, splitToNewCheck, unsentLines, voidLine, voidTenderLine, mintLineKey, type AutoGratDef, type Check, type CheckLine, isVoidReversal, isCardLine, openHold, tenderApplied, type TenderLine } from "@/model/check";
 import { computeCheckTax, grandTotal, taxGroupsForWire } from "@/model/tax";
 import { adjustCount, countFor, emptyCounts, stockRefusal, withServerCounts, type ItemCounts } from "@/model/itemcounts";
 import { fetchMenuItemCounters, removeMenuItemCounter, setMenuItemCounter } from "@/protocol/itemcounts";
@@ -62,6 +74,7 @@ import ItemTile from "./ItemTile";
 import { loadJSON, saveJSON } from "@/platform/storage";
 
 const IDLE_KEY = "idle.last.v1"; // last touch while signed in (ms epoch)
+const LOCK_KEY = "check.lock.v1"; // the server check lock this terminal holds (released on next launch if left behind)
 import { courseHue } from "./CheckPanel";
 
 /* Muted "food" tile tones (Sr_Simulator counter palette). Index 0/blank = the
@@ -122,8 +135,8 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
   const [sendError, setSendError] = useState("");
   const [bdid, setBdid] = useState("");
   const [showPay, setShowPay] = useState(false);
-  const [mode, setMode] = useState<"floor" | "order" | "tabs" | "manager" | "messages">("order");
-  const [modeBeforeMessages, setModeBeforeMessages] = useState<"floor" | "order" | "tabs" | "manager">("order");
+  const [mode, setMode] = useState<"floor" | "order" | "tabs" | "manager" | "messages" | "closed">("order");
+  const [modeBeforeMessages, setModeBeforeMessages] = useState<"floor" | "order" | "tabs" | "manager" | "closed">("order");
   const [toast, setToast] = useState<InboxMessage | null>(null); // the iOS local notification, in-app
   // 86 / item countdown (MenuItemCountManager): server counts + local rung offsets
   const [counts, setCounts] = useState<ItemCounts>(emptyCounts);
@@ -172,7 +185,18 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
   const [openChecks, setOpenChecks] = useState<OpenCheck[]>([]);
   const [floorLoading, setFloorLoading] = useState(false);
   const [floorStatus, setFloorStatus] = useState("");
-  const [lockedCheck, setLockedCheck] = useState<{ checkNo: string; checkKey: string; bd: string } | null>(null);
+  // The server-side check lock this terminal holds. Persisted: a reload or a closed browser used to
+  // orphan it (2026-11-06: check 200080 stayed locked store-wide), so the record survives and the
+  // next launch gives the lock back before anything else.
+  const [lockedCheck, setLockedCheckState] = useState<{ checkNo: string; checkKey: string; bd: string } | null>(() => loadJSON(LOCK_KEY, null));
+  const setLockedCheck = (v: { checkNo: string; checkKey: string; bd: string } | null) => { setLockedCheckState(v); saveJSON(LOCK_KEY, v); };
+  useEffect(() => {
+    const stale = loadJSON<{ checkNo: string; checkKey: string; bd: string } | null>(LOCK_KEY, null);
+    if (!stale || !settings.token) return;
+    // A lock left by a previous page load: release it. The working check is re-locked when it is picked up again.
+    void unlockCheck(sessionCfg(), { checkNo: stale.checkNo, checkKey: stale.checkKey, businessDateId: stale.bd }).catch(() => undefined);
+    setLockedCheck(null);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [showManager, setShowManager] = useState(false);
   const [confirmTerminal, setConfirmTerminal] = useState(false); // Manager's Menu → Terminal: confirm before de-activating
   const [mgrStatus, setMgrStatus] = useState("");
@@ -196,8 +220,22 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
 
   const ck = useCheck(init.rcId, settings.terminalPosId);
   const checkRef = useRef(ck.check); checkRef.current = ck.check; // always-current check for async flows
-  const payTenders = useMemo(() => loadTenders().filter((t) => t.appliesToCheck && !t.hidden).sort((a, b) => a.sort - b.sort), [defsVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Every tender except hidden ones, like the iPad's payment bank. Applies_To_Check is an unused legacy
+  // flag and is not read anywhere in xpos (Geoff 2026-11-06).
+  const payTenders = useMemo(() => loadTenders().filter((t) => !t.hidden).sort((a, b) => a.sort - b.sort), [defsVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+  const allTenders = useMemo(() => loadTenders(), [defsVersion]); // eslint-disable-line react-hooks/exhaustive-deps
   const store = useMemo(() => storeConfig(), [defsVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+  const terminalDef = useMemo(() => loadTerminals().find((t) => t.id === settings.terminalPosId), [defsVersion, settings.terminalPosId]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The card processor for the working check's revenue center (RC override, else the Store); null = online tenders disabled.
+  const cardSel = useMemo(() => selectProcessor(store, cat.rcById.get(ck.check.revenueCenterId) ?? null), [store, cat, ck.check.revenueCenterId]);
+  const [showFinalize, setShowFinalize] = useState(false);
+  const [showCardSetup, setShowCardSetup] = useState(false);
+  const [showEditPayment, setShowEditPayment] = useState(false);
+  // Manager's Menu work: the Closed Checks list, the employee pickers (Transfer All / Open Empty Check),
+  // the Clocked In list, and "the next pick from the open list is the merge SOURCE" (manager merge).
+  const [closedRows, setClosedRows] = useState<ClosedCheck[] | null>(null);
+  const [mgrPick, setMgrPick] = useState<null | { kind: "xferFrom" } | { kind: "xferTo"; fromId: string } | { kind: "emptyFor" } | { kind: "clockedIn"; rows: ClockedInEmp[] | null }>(null);
+  const [mergeFromPick, setMergeFromPick] = useState(false);
   const tax = useMemo(() => computeCheckTax(cat, ck.check, taxExempt), [cat, ck.check, taxExempt]);
   const empJobs = useMemo(() => (employee ? jobsForEmployee(employee.id) : []), [employee]);
   const perms = useMemo(() => (employee ? permsForEmployee(employee.id) : null), [employee]);
@@ -885,6 +923,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
   const pickCheck = async (occ: OpenCheck, label = `check ${occ.checkNo}`): Promise<boolean> => {
     if (blockIfUnsent()) { setMode("order"); return false; } // the working check's unsent items first
     setFloorLoading(true); setFloorStatus(`Opening ${label}…`);
+    let held: { checkNo: string; checkKey: string; businessDateId: string } | null = null;   // the lock this call took and must give back on any failure
     try {
       const bd = occ.businessDateId || (await ensureBd());
       const lock = await lockCheck(sessionCfg(), { checkNo: occ.checkNo, checkKey: occ.checkKey, businessDateId: bd });
@@ -892,6 +931,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
         setFloorStatus(lock.alreadyLocked ? `${label} is open on another terminal` : `Could not lock: ${lock.message}`);
         setFloorLoading(false); return false;
       }
+      held = { checkNo: occ.checkNo, checkKey: occ.checkKey, businessDateId: bd };
       const names = {
         menuItemName: (id: string) => cat.miById.get(id)?.name ?? `#${id}`,
         prefixQtyMult: (id: string) => cat.prefixById.get(id)?.inventoryMultiplier, prefixName: (id: string) => cat.prefixById.get(id)?.name,
@@ -903,9 +943,15 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
       ck.loadCheck({ ...pulled, businessDateId: bd });
       if (pulled.revenueCenterId && cat.rcById.has(pulled.revenueCenterId)) setRcId(pulled.revenueCenterId);
       setLockedCheck({ checkNo: occ.checkNo, checkKey: occ.checkKey, bd });
+      held = null;   // now owned by lockedCheck; released by releaseLock
       setSendError(""); setFloorStatus(""); setMode("order");
       setFloorLoading(false); return true;
-    } catch (e) { setFloorStatus(String((e as Error).message ?? e)); setFloorLoading(false); return false; }
+    } catch (e) {
+      // 2026-11-06: a read that threw after a successful lock left check 200080 locked for the whole
+      // store (terminal 28 held it; other terminals got "open on another terminal"). Give it back.
+      if (held) { await unlockCheck(sessionCfg(), held).catch(() => undefined); }
+      setFloorStatus(String((e as Error).message ?? e)); setFloorLoading(false); return false;
+    }
   };
 
   /** Move the selected (sent) item family to another check — a table's open
@@ -1276,7 +1322,35 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     setSending(true); setSendError("");
     const r = await postCheck(false, withAutoGrat());
     if (!r.ok) setSendError(r.message);
+    else await autoIncrementHold();
     setSending(false);
+  };
+
+  /** Bar Tabs: after a round posts, raise the open hold to the new balance — unless the terminal says
+   *  "Disable Auto Increment" (terminal_backup2), in which case only the Increase button does it. */
+  const money2 = (n: number) => `$${(Math.round(n * 100) / 100).toFixed(2)}`;
+  const holdGap = (c: Check): { line: TenderLine; due: number } | null => {
+    const line = openHold(c);
+    if (!line || !line.sent) return null;
+    const t = c === ck.check ? tax : computeCheckTax(cat, c, taxExempt);
+    const due = Math.round((grandTotal(checkSubtotal(c), t) - tenderApplied(c)) * 100) / 100;
+    return due > 0.005 ? { line, due } : null;
+  };
+  const autoIncrementHold = async () => {
+    if (!terminalDef?.useRepeatSale || terminalDef.disableAutoIncrement) return;
+    await new Promise((res) => setTimeout(res, 0));          // let the Send's state land so the lines carry tray/line numbers
+    const gap = holdGap(checkRef.current);
+    if (!gap) return;
+    const r = await resizeCardLine(gap.line.key, Math.round((gap.line.amount + gap.due) * 100) / 100);
+    setSendError(r.ok ? `Tab hold raised to ${money2(gap.line.amount + gap.due)}` : `Hold not raised: ${r.message} — press Increase to retry`);
+  };
+  const increaseHold = async () => {
+    const gap = holdGap(ck.check);
+    if (!gap) return;
+    setSending(true);
+    const r = await resizeCardLine(gap.line.key, Math.round((gap.line.amount + gap.due) * 100) / 100);
+    setSending(false);
+    setSendError(r.ok ? `Tab hold raised to ${money2(gap.line.amount + gap.due)}` : `Hold not raised: ${r.message}`);
   };
 
   const settle = () => postCheck(true);
@@ -1304,6 +1378,122 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
       };
       return await sendPayment(type, pctx, { card, amount });
     } catch (e) { return { ok: false, status: "ERROR", message: String((e as Error).message ?? e), fields: {} }; }
+  };
+
+  /* ---- Online cards (payments seam): the check identity every processor call carries,
+   *      the sheet's CardSupport, re-fitting a posted card line, and finalize (capture). ---- */
+  const checkRefFor = (tenderKey: string): CheckRef => ({
+    storeId: settings.storeId, businessDateId: ck.check.businessDateId || bdid, checkNo: ck.check.checkNumber ?? "", checkKey: ck.check.id,
+    tenderKey, terminalPosId: settings.terminalPosId, employeePosId: employee?.id ?? "", revenueCenterId: ck.check.revenueCenterId,
+  });
+
+  /** Re-fit a posted card line to a new amount: an open auth captures less at finalize (no processor
+   *  call) or is incremented above its authorization; a captured sale is adjusted at the processor.
+   *  Then the server line's Line_Amount is modified in place (Trans_Type=Modify) and the local line follows. */
+  const resizeCardLine = async (key: string, newAmount: number): Promise<{ ok: boolean; message: string }> => {
+    const line = ck.check.tenders.find((t) => t.key === key);
+    if (!line || !line.ref || !cardSel) return { ok: false, message: "Not a card line" };
+    const ctx = checkRefFor(line.key);
+    let r: CardResult = { status: "ok", message: "" };
+    try {
+      if (line.finalized) r = await cardSel.processor.adjust(line.ref, { amount: newAmount, tip: line.tip || 0 }, ctx);
+      else if (newAmount > (line.authorizedAmount ?? line.amount) + 0.005) r = await cardSel.processor.increment(line.ref, newAmount, ctx);
+    } catch (e) { r = { status: "error", message: String((e as Error).message ?? e) }; }
+    if (r.status !== "ok") return { ok: false, message: r.message };
+    if (line.sent && line.trayNumber && line.lineNumber) {
+      const { bd, checkNo } = await ensureSession();
+      const m = await modifyLineItem(sessionCfg(), { businessDateId: bd, checkNo, checkKey: ck.check.id, trayNumber: line.trayNumber, lineNumber: line.lineNumber, field: "Line_Amount", value: newAmount.toFixed(2) });
+      if (!m.ok) return m;
+    }
+    ck.update((c) => ({ ...c, tenders: c.tenders.map((t) => t.key !== key ? t : {
+      ...t, amount: newAmount, ref: r.ref ?? t.ref,
+      authorizedAmount: t.finalized ? t.authorizedAmount : Math.max(t.authorizedAmount ?? 0, newAmount),
+      capturedAmount: t.finalized ? Math.round((newAmount + (t.tip || 0)) * 100) / 100 : undefined,
+    }) }));
+    return { ok: true, message: "" };
+  };
+
+  const cardSupport: CardSupport | undefined = cardSel && employee ? {
+    processor: cardSel.processor, processorName: cardSel.config.name,
+    payAtTable: terminalDef?.payAtTable ?? false, readerId: terminalDef?.readerId ?? "",
+    timeoutSec: cardSel.config.timeoutSec, maxTipPercent: store.maxTipPercent, testMode: cardSel.config.testMode,
+    checkRef: checkRefFor,
+    brandTender: (brand) => allTenders.find((t) => t.isCredit && !t.hidden && t.iCatCode === brand),
+    mintKey: mintLineKey,
+    resize: resizeCardLine,
+    barTabs: terminalDef?.useRepeatSale ?? false,
+    finishTab: (key, tip) => finishTab(key, tip),
+  } : undefined;
+
+  /** Finish Tab: the hold is captured for base + tip at the processor, Finalize_Tender records the tip
+   *  and flips the server line to Finalized=1, the local line follows. The hold must be on the server
+   *  first (tray/line numbers for Finalize_Tender), so an unsent one is posted here. */
+  const finishTab = async (key: string, tip: number): Promise<{ ok: boolean; message: string }> => {
+    if (!employee || !cardSel) return { ok: false, message: "No card processor" };
+    let line = ck.check.tenders.find((t) => t.key === key);
+    if (!line?.ref) return { ok: false, message: "No open hold on this check" };
+    if (!line.sent || !line.trayNumber || !line.lineNumber) {
+      const r = await postCheck(false);
+      if (!r.ok) return { ok: false, message: `Could not post the tab: ${r.message}` };
+      await new Promise((res) => setTimeout(res, 0));
+      line = checkRef.current.tenders.find((t) => t.key === key);
+      if (!line?.ref || !line.trayNumber || !line.lineNumber) return { ok: false, message: "The hold did not post with line numbers — try again" };
+    }
+    const ctx = checkRefFor(key);
+    let r: CardResult;
+    try { r = await cardSel.processor.capture(line.ref, { amount: line.amount, tip }, ctx); }
+    catch (e) { return { ok: false, message: String((e as Error).message ?? e) }; }
+    if (r.status !== "ok") return { ok: false, message: r.message };
+    const { bd, checkNo } = await ensureSession();
+    const f = await postFinalizeTender(sessionCfg(), {
+      tip, lineNumber: line.lineNumber, trayNumber: line.trayNumber, checkNo, checkKey: ck.check.id, businessDateId: bd,
+      ref: r.ref ?? line.ref, recordNo: r.recordNo ?? r.ref ?? line.recordNo, authCode: r.authCode ?? line.authCode,
+    });
+    if (!f.ok) return { ok: false, message: `Captured at the processor but Finalize_Tender failed: ${f.message}` };
+    const captured = Math.round((line.amount + tip) * 100) / 100;
+    ck.update((c) => ({ ...c, tenders: c.tenders.map((t) => t.key !== key ? t : { ...t, tip, finalized: true, capturedAmount: captured, ref: r.ref ?? t.ref, recordNo: r.recordNo ?? t.recordNo, authCode: r.authCode ?? t.authCode }) }));
+    return { ok: true, message: "" };
+  };
+
+  /** Edit Payment: a new tip on a CAPTURED card line. The processor adjusts (TSYS either way; Stripe
+   *  refunds a decrease and refuses an increase), then Finalize_Tender re-records the tip on the line. */
+  const adjustCardTip = async (key: string, tip: number, authEmpId?: string): Promise<{ ok: boolean; message: string }> => {
+    if (!employee || !cardSel) return { ok: false, message: "No card processor" };
+    const line = ck.check.tenders.find((t) => t.key === key);
+    if (!line?.ref || !line.finalized) return { ok: false, message: "Not a captured card line" };
+    if (!line.sent || !line.trayNumber || !line.lineNumber) return { ok: false, message: "Send the check first" };
+    if (Math.abs(tip - (line.tip || 0)) < 0.005) return { ok: true, message: "No change" };
+    const ctx = checkRefFor(key);
+    let r: CardResult;
+    try { r = await cardSel.processor.adjust(line.ref, { amount: line.amount, tip }, ctx); }
+    catch (e) { return { ok: false, message: String((e as Error).message ?? e) }; }
+    if (r.status !== "ok") return { ok: false, message: r.message };
+    const { bd, checkNo } = await ensureSession();
+    const f = await postFinalizeTender(sessionCfg(), { tip, lineNumber: line.lineNumber, trayNumber: line.trayNumber, checkNo, checkKey: ck.check.id, businessDateId: bd, authEmpId });
+    if (!f.ok) return { ok: false, message: `Processor adjusted but the server refused the tip: ${f.message}` };
+    const captured = Math.round((line.amount + tip) * 100) / 100;
+    ck.update((c) => ({ ...c, tenders: c.tenders.map((t) => t.key !== key ? t : { ...t, tip, capturedAmount: captured }) }));
+    return { ok: true, message: "" };
+  };
+
+  /** Finalize an authorized tender: capture base + tip at the processor (the row's RC picks the
+   *  processor), then Finalize_Tender records the tip, flips Finalized and stores the capture's ids. */
+  const finalizeTender = async (row: UnfinalizedTender, tip: number, authEmpId?: string): Promise<{ ok: boolean; message: string }> => {
+    if (!employee) return { ok: false, message: "No employee" };
+    const sel = selectProcessor(store, cat.rcById.get(row.revenueCenterId) ?? null);
+    if (!sel) return { ok: false, message: "No card processor for this check's revenue center" };
+    const ctx: CheckRef = {
+      storeId: settings.storeId, businessDateId: row.businessDateId, checkNo: row.checkNo, checkKey: row.checkKey,
+      tenderKey: `${row.checkNo}:${row.trayNumber}:${row.lineNumber}`, terminalPosId: settings.terminalPosId, employeePosId: employee.id, revenueCenterId: row.revenueCenterId,
+    };
+    let r: CardResult;
+    try { r = await sel.processor.capture(row.refNo, { amount: row.baseAmount, tip }, ctx); }
+    catch (e) { return { ok: false, message: String((e as Error).message ?? e) }; }
+    if (r.status !== "ok") return { ok: false, message: r.message };
+    return postFinalizeTender(sessionCfg(), {
+      tip, lineNumber: row.lineNumber, trayNumber: row.trayNumber, checkNo: row.checkNo, checkKey: row.checkKey, businessDateId: row.businessDateId,
+      ref: r.ref ?? row.refNo, recordNo: r.recordNo ?? r.ref ?? row.recordNo, authCode: r.authCode ?? row.authCode, authEmpId,
+    });
   };
 
   /** Run `onOk` directly if the signed-in employee holds `action`, else prompt
@@ -1435,7 +1625,21 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     let next = ck.check;
     for (const k of keys) {
       const tender = next.tenders.find((t) => t.key === k);
-      if (tender) { next = voidTenderLine(next, k, reasonId, auth.id); continue; }   // a posted payment (cash / offline card)
+      if (tender) {
+        // An online card line (OnlineVoid tender): void it at the processor first — an uncaptured auth is
+        // cancelled, a captured sale is cancelled (same day) or refunded — then the reversal line goes out.
+        const def = allTenders.find((t) => t.id === tender.tenderId);
+        if (tender.ref && cardSel && (def?.onlineVoid || tender.finalized !== undefined)) {
+          const ctx = checkRefFor(tender.key);
+          let r: CardResult;
+          try {
+            r = await cardSel.processor.cancel(tender.ref, ctx);
+            if (r.status === "error" && tender.finalized) r = await cardSel.processor.refund(tender.ref, Math.abs(tender.amount) + Math.abs(tender.tip || 0), ctx);
+          } catch (e) { r = { status: "error", message: String((e as Error).message ?? e) }; }
+          if (r.status !== "ok" && r.status !== "cancelled") { setSendError(`Card void failed: ${r.message}`); continue; }
+        }
+        next = voidTenderLine(next, k, reasonId, auth.id); continue;   // a posted payment (cash / card)
+      }
       const line = next.lines.find((l) => l.key === k);
       if (!line) continue;
       if (line.kind === "M" && !line.isVoid) countRing(line.menuItemId, -line.quantity); // isDeleting → count comes back
@@ -1581,6 +1785,174 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
   ) : null;
 
 
+  /* ---- Manager's Menu (iOS ManagerMenuViewController): Closed Checks, Transfer All, Clocked In Employees,
+   *      Open Empty Check, manager Merge. Each is the iPad behaviour re-done on the xpos protocol layer. ---- */
+  const checkNames = () => ({
+    menuItemName: (id: string) => cat.miById.get(id)?.name ?? `#${id}`,
+    prefixQtyMult: (id: string) => cat.prefixById.get(id)?.inventoryMultiplier, prefixName: (id: string) => cat.prefixById.get(id)?.name,
+    tenderName: (id: string) => payTenders.find((t) => t.id === id)?.name ?? `#${id}`,
+    adjustmentName: (id: string) => adjustmentDefs.find((a) => a.id === id)?.name ?? `#${id}`,
+  });
+  const empName = (id: string) => empList.find((e) => e.id === id)?.name ?? id;
+
+  /** Closed Checks: the business date's settled checks. */
+  const loadClosed = async () => {
+    setClosedRows(null); setMgrStatus("");
+    try { const bd = await ensureBd(); setClosedRows(await fetchClosedChecks(sessionCfg(), bd)); }
+    catch (e) { setMgrStatus(String((e as Error).message ?? e)); setClosedRows([]); }
+  };
+  /** Reopen (REOPEN_CHECK): pull the check back, re-POST it with Is_Reopen=1 / Is_Closed=0, lock it and
+   *  land on it in order mode — the morning-after path for editing items or a card tip (Edit Payment). */
+  const reopenClosed = (row: ClosedCheck) => requireAuth(false, `Authorize reopen check ${row.checkNo}`, "reopen", (auth) => void doReopen(row, auth));
+  const doReopen = async (row: ClosedCheck, auth: Authorizer) => {
+    setMgrBusy(true); setMgrStatus(`Reopening check ${row.checkNo}…`);
+    try {
+      const pulled = await readCheck(sessionCfg(), { checkNo: row.checkNo, checkKey: row.checkKey, businessDateId: row.businessDateId }, checkNames());
+      if (!pulled) { setMgrStatus("Check not found on the server"); return; }
+      const c: Check = { ...pulled, checkNumber: row.checkNo, businessDateId: row.businessDateId, lines: pulled.lines.map((l) => ({ ...l, sent: true })), traysSent: Math.max(1, pulled.traysSent || 0) };
+      const res = await sendCheck(settings.enterpriseServerUrl, c, buildCtx(row.businessDateId, row.checkNo), { settle: false, reopen: true, taxGroups: taxGroupsForWire(computeCheckTax(cat, c, taxExempt)) });
+      if (!res.ok) { setMgrStatus(`Reopen failed: ${res.message}`); return; }
+      const lock = await lockCheck(sessionCfg(), { checkNo: row.checkNo, checkKey: row.checkKey, businessDateId: row.businessDateId });
+      if (!lock.ok) { setMgrStatus(lock.alreadyLocked ? `Reopened, but check ${row.checkNo} is open on another terminal` : `Reopened; could not lock: ${lock.message}`); return; }
+      ck.loadCheck(c);
+      if (c.revenueCenterId && cat.rcById.has(c.revenueCenterId)) setRcId(c.revenueCenterId);
+      setLockedCheck({ checkNo: row.checkNo, checkKey: row.checkKey, bd: row.businessDateId });
+      setSendError(`Check ${row.checkNo} reopened (${auth.name})`); setMgrStatus(""); setMode("order");
+    } catch (e) { setMgrStatus(String((e as Error).message ?? e)); }
+    finally { setMgrBusy(false); }
+  };
+  /** Reprint a closed check to this terminal's check printer. */
+  const reprintClosed = async (row: ClosedCheck) => {
+    const pr = checkPrinter(settings.terminalPosId);
+    if (!pr) { setMgrStatus("No check printer assigned"); return; }
+    setMgrBusy(true); setMgrStatus(`Printing check ${row.checkNo}…`);
+    try {
+      const pulled = await readCheck(sessionCfg(), { checkNo: row.checkNo, checkKey: row.checkKey, businessDateId: row.businessDateId }, checkNames());
+      if (!pulled) { setMgrStatus("Check not found on the server"); return; }
+      const text = buildReceiptText(row.checkNo, true, { ...pulled, checkNumber: row.checkNo });
+      lastReceiptRef.current = text;
+      void printTo(pr, text, { enterpriseCode: settings.enterpriseCode, storeId: settings.storeId, backup: backupPrinter(pr) });
+      setMgrStatus(`Check ${row.checkNo} sent to ${pr.name}`);
+    } catch (e) { setMgrStatus(String((e as Error).message ?? e)); }
+    finally { setMgrBusy(false); }
+  };
+
+  /** Transfer All (iOS employeeOpenChecks): every open check owned by FROM moves to TO — lock, pull back,
+   *  owner + transfer record, POST, unlock, one check at a time. Behind Approve_Transfer. */
+  const startTransferAll = () => { setMgrStatus(""); void refreshOpenChecks(); setMgrPick({ kind: "xferFrom" }); };
+  const doTransferAll = async (fromId: string, toId: string, auth: Authorizer) => {
+    setMgrPick(null); setMgrBusy(true);
+    const from = { id: fromId, name: empName(fromId) }, to = { id: toId, name: empName(toId) };
+    const mine = openChecks.filter((o) => o.empPosId === fromId);
+    let done = 0; const failed: string[] = [];
+    for (const occ of mine) {
+      setMgrStatus(`Transferring check ${occ.checkNo} (${done + failed.length + 1} of ${mine.length})…`);
+      const bd = occ.businessDateId;
+      const lock = await lockCheck(sessionCfg(), { checkNo: occ.checkNo, checkKey: occ.checkKey, businessDateId: bd });
+      if (!lock.ok) { failed.push(`${occ.checkNo} (${lock.alreadyLocked ? "open on another terminal" : lock.message})`); continue; }
+      try {
+        const pulled = await readCheck(sessionCfg(), { checkNo: occ.checkNo, checkKey: occ.checkKey, businessDateId: bd }, checkNames());
+        if (!pulled) { failed.push(`${occ.checkNo} (not found)`); continue; }
+        const base: Check = { ...pulled, checkNumber: occ.checkNo, businessDateId: bd, employeePosId: toId, lines: pulled.lines.map((l) => ({ ...l, sent: true })), traysSent: Math.max(1, pulled.traysSent || 0) };
+        const moved = addTransferCheckRecord(base, from, to, auth.id);
+        const res = await sendCheck(settings.enterpriseServerUrl, moved, buildCtx(bd, occ.checkNo), { settle: false, taxGroups: taxGroupsForWire(computeCheckTax(cat, moved, taxExempt)) });
+        if (res.ok) done++; else failed.push(`${occ.checkNo} (${res.message})`);
+      } catch (e) { failed.push(`${occ.checkNo} (${String((e as Error).message ?? e)})`); }
+      finally { await unlockCheck(sessionCfg(), { checkNo: occ.checkNo, checkKey: occ.checkKey, businessDateId: bd }).catch(() => undefined); }
+    }
+    if (done) void sendEmployeeNotice(sessionCfg(), { fromEmpId: employee!.id, toEmpId: toId, subject: "CheckTransfer", body: `${done} check${done > 1 ? "s" : ""} from ${from.name} transferred to you!` });
+    setMgrStatus(`${done} of ${mine.length} check${mine.length === 1 ? "" : "s"} transferred from ${from.name} to ${to.name}${failed.length ? ` — not moved: ${failed.join(", ")}` : ""}`);
+    setMgrBusy(false); void refreshOpenChecks();
+  };
+
+  /** Clocked In Employees: who is on the clock; tap to clock them out (with their open-check count shown). */
+  const openClockedIn = async () => {
+    setMgrStatus(""); setMgrPick({ kind: "clockedIn", rows: null });
+    try { const [rows] = await Promise.all([fetchClockedInEmps(sessionCfg()), refreshOpenChecks()]); setMgrPick({ kind: "clockedIn", rows }); }
+    catch (e) { setMgrStatus(String((e as Error).message ?? e)); setMgrPick({ kind: "clockedIn", rows: [] }); }
+  };
+  const clockOutEmployee = async (row: ClockedInEmp) => {
+    if (employee && row.empId === employee.id) { setMgrPick(null); await doClockOut(); return; }   // yourself: the normal clock-out (chit, shift state)
+    setMgrBusy(true); setMgrStatus(`Clocking out ${empName(row.empId)}…`);
+    try {
+      const bd = row.businessDateId || (await ensureBd());
+      const r = await clockOut(sessionCfg(), { businessDateId: bd, empPosId: row.empId, sequence: row.sequence });
+      setMgrStatus(r.ok ? `${empName(row.empId)} clocked out` : `Clock out failed: ${r.message}`);
+      const rows = await fetchClockedInEmps(sessionCfg()); setMgrPick({ kind: "clockedIn", rows });
+    } catch (e) { setMgrStatus(String((e as Error).message ?? e)); }
+    finally { setMgrBusy(false); }
+  };
+
+  /** Open Empty Check (iOS Empty_Check): a new check owned by a non-manager employee, then order on it. */
+  const openEmptyCheckFor = (empId: string) => {
+    setMgrPick(null);
+    if (blockIfUnsent()) return;
+    void releaseLock(); setTransferMode(false); ck.reset(rcId);
+    ck.update((c) => ({ ...c, employeePosId: empId }));
+    setSendError(`New check for ${empName(empId)}`); setMode("order");
+  };
+
+  /** Manager Merge: pick the SOURCE from the open list (next pick), then the destination as in the employee merge. */
+  const startManagerMerge = () => {
+    setMergeFromPick(true); setTabsFromManager(true); setFloorStatus("Pick the check to merge FROM");
+    setTabsMineOnly(false);
+    setMode("tabs"); void refreshOpenChecks();
+  };
+  const pickForMerge = async (occ: OpenCheck) => {
+    setMergeFromPick(false);
+    const ok = await pickCheck(occ);
+    if (ok) requireAuth(false, "Authorize merge checks", "transfer", (a) => { setMergePick(a); void refreshOpenChecks(); });
+  };
+
+  const authEl = pendingAuth ? (
+    <ManagerAuth
+      title={pendingAuth.title} action={pendingAuth.action}
+      onAuthorized={(a) => { const cb = pendingAuth.onOk; setPendingAuth(null); cb(a); }}
+      onCancel={() => setPendingAuth(null)}
+    />
+  ) : null;
+  const mgrPickers = (
+    <>
+      {mgrPick?.kind === "xferFrom" && (
+        <PickEmployee title="Transfer all checks from" sub="Every open check this employee owns moves to the next pick" busy={mgrBusy}
+          rows={Array.from(new Set(openChecks.map((o) => o.empPosId))).map((id) => ({ id, name: empName(id), note: `${openChecks.filter((o) => o.empPosId === id).length} open` }))}
+          emptyText="No open checks right now." onPick={(id) => setMgrPick({ kind: "xferTo", fromId: id })} onCancel={() => setMgrPick(null)} />
+      )}
+      {mgrPick?.kind === "xferTo" && (
+        <PickEmployee title={`Transfer ${empName(mgrPick.fromId)}'s checks to`} busy={mgrBusy}
+          rows={empList.filter((e) => e.id !== mgrPick.fromId).map((e) => ({ id: e.id, name: e.name }))}
+          emptyText="No other employees." onPick={(id) => { const fromId = mgrPick.fromId; requireAuth(false, "Authorize transfer all checks", "transfer", (a) => void doTransferAll(fromId, id, a)); }} onCancel={() => setMgrPick(null)} />
+      )}
+      {mgrPick?.kind === "emptyFor" && (
+        <PickEmployee title="Open an empty check for" busy={mgrBusy}
+          rows={empList.filter((e) => !permsForEmployee(e.id).manager).map((e) => ({ id: e.id, name: e.name }))}
+          emptyText="No non-manager employees." onPick={openEmptyCheckFor} onCancel={() => setMgrPick(null)} />
+      )}
+      {mgrPick?.kind === "clockedIn" && (
+        <ClockedInList rows={mgrPick.rows} status={mgrStatus} busy={mgrBusy}
+          nameForEmp={empName} nameForJob={(id) => allJobs().find((j) => j.id === id)?.name ?? id}
+          openChecksOf={(id) => openChecks.filter((o) => o.empPosId === id).length}
+          onClockOut={(row) => void clockOutEmployee(row)} onCancel={() => setMgrPick(null)} />
+      )}
+    </>
+  );
+
+  // Finalize cards (tips + capture) is reachable from the Functions panel on the floor AND in order mode
+  // (2026-11-06: from the floor the panel closed and nothing opened — the view was only rendered in order mode).
+  const finalizeEl = showFinalize && employee ? (
+    <FinalizeView
+      load={async () => fetchUnfinalized(sessionCfg(), await ensureBd())}
+      empPosId={employee.id} canAll={!!perms && (perms.manager || perms.finalizeCredit)}
+      tenderName={(id) => allTenders.find((t) => t.id === id)?.name ?? `#${id}`}
+      employeeName={(id) => empList.find((e) => e.id === id)?.name ?? id}
+      tipPresets={(id) => allTenders.find((t) => t.id === id)?.tipPresets ?? []}
+      maxTipPercent={store.maxTipPercent}
+      finalize={finalizeTender}
+      authorize={(title, ok) => requireAuth(false, title, "tipAuth", (a) => ok(a.id))}
+      onClose={() => setShowFinalize(false)}
+    />
+  ) : null;
+
   if (mode === "manager") {
     return (<>
       <ManagerMenu
@@ -1591,10 +1963,17 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
           queryByTable: () => { if (blockIfUnsent()) return; setMode("floor"); void refreshOpenChecks(); },
           openChecks: () => { if (blockIfUnsent()) return; setTabsFromManager(true); setMode("tabs"); void refreshOpenChecks(); },
           clockOut: () => void doClockOut(),
+          openClosedChecks: () => { if (blockIfUnsent()) return; setMode("closed"); void loadClosed(); },
+          mergeChecks: () => { if (blockIfUnsent()) return; startManagerMerge(); },
+          transferAll: startTransferAll,
+          clockedInEmployees: () => void openClockedIn(),
+          openEmptyCheck: () => { setMgrStatus(""); setMgrPick({ kind: "emptyFor" }); },
           terminal: () => setConfirmTerminal(true),
           exit: () => void doSignOut(),
         }}
       />
+      {mgrPickers}
+      {authEl}
       {terminalConfirm}
       {toastEl}
       {unsentModal}
@@ -1612,9 +1991,14 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
           hasCheck={ck.check.lines.length > 0} busy={mgrBusy} status={mgrStatus}
           onClockIn={(j) => { void clockInPost(j).then((r) => { if (r.ok) commitShift({ jobId: j.id, jobName: j.name, sequence: r.sequence, defaultRoomId: "" }); }); }}
           onClockOut={doClockOut} onNoSale={doNoSale} onCancelCheck={doCancelCheck}
-          onDiscount={doDiscount} onClose={() => setShowManager(false)}
+          onDiscount={doDiscount} onFinalize={cardSel ? () => { setShowManager(false); setShowFinalize(true); } : undefined}
+          onCardSetup={cardSel?.config.name === "stripe" ? () => { setShowManager(false); setShowCardSetup(true); } : undefined} onClose={() => setShowManager(false)}
         />
       )}
+      {showCardSetup && cardSel && (
+        <CardSetup config={cardSel.config} terminalReaderId={terminalDef?.readerId ?? ""} onClose={() => setShowCardSetup(false)} />
+      )}
+      {finalizeEl}
       <Floorplan
         storeName={settings.storeName || settings.storeId}
         employeeName={employee.name}
@@ -1623,6 +2007,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
         occupancy={occupancy}
         onPick={pickTable}
         onQuickSale={quickSale}
+        onOpenChecks={() => void goToTabs()}
         onMessages={openMessages} unread={msgs.unread}
         onRefresh={refreshOpenChecks}
         onSignOut={() => void doSignOut()}
@@ -1970,6 +2355,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     transferCheck: ck.check.lines.length ? () => setXferPick("menu") : undefined, // Person / Table / Person And Table / Merge
     mergeCheck: ck.check.lines.length ? () => requireAuth(false, "Authorize merge checks", "transfer", (a) => { setMergePick(a); void refreshOpenChecks(); }) : undefined,
     searchMenu: () => { setEditing(false); },                                  // back to the menu (search lives there)
+    editPayment: cardSel && ck.check.tenders.some((t) => isCardLine(t) && t.finalized) ? () => { setEditing(false); setShowEditPayment(true); } : undefined,
     changeRc: () => requireAuth(false, "Authorize change revenue center", "manager", () => setShowRcPick(true)),
     nameTab: () => { const v = window.prompt("Name this tab:", ck.check.tableName); if (v !== null) ck.setTable(v.trim()); },
     guestCount: () => { const v = Number(window.prompt("Guest count:", String(ck.check.guestCount)) ?? ""); if (v >= 1) ck.setGuests(Math.floor(v)); },
@@ -2029,6 +2415,28 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     );
   }
 
+  if (mode === "closed") {
+    return (
+      <div className="pos">
+        <TopBar
+          onLogout={() => void doSignOut()} onTables={() => void goToFloor()} onTabs={() => void goToTabs()}
+          onHub={() => setShowHub(true)} onEdit={() => {}} editing={false}
+          onSendStay={() => {}} onSend={() => {}} onPay={() => {}}
+          canSend={false} canSendExit={false} canPay={false} sending={mgrBusy}
+          onMessages={openMessages} unread={msgs.unread}
+        />
+        <ClosedChecksView
+          rows={closedRows} status={mgrStatus} busy={mgrBusy}
+          nameForEmp={empName} nameForTable={(id) => tables.find((t) => t.id === id)?.name ?? id}
+          onReopen={reopenClosed} onReprint={(r) => void reprintClosed(r)} onRefresh={() => void loadClosed()}
+          onBack={() => { setMgrStatus(""); setMode("manager"); }}
+        />
+        {authEl}
+        {toastEl}
+      </div>
+    );
+  }
+
   if (mode === "tabs") {
     return (
       <div className="pos">
@@ -2043,7 +2451,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
           openChecks={openChecks}
           nameForTable={(id) => tables.find((t) => t.id === id)?.name ?? id}
           nameForEmp={(id) => empList.find((e) => e.id === id)?.name ?? ""}
-          onPick={(occ) => void pickCheck(occ)}
+          onPick={(occ) => void (mergeFromPick ? pickForMerge(occ) : pickCheck(occ))}
           onNewTab={() => { if (blockIfUnsent()) { setMode("order"); return; } void releaseLock(); ck.reset(rcId); setSendError(""); setMode("order"); }}
           onRefresh={refreshOpenChecks}
           loading={floorLoading}
@@ -2174,6 +2582,8 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
           guestLocked={!!pending || !!pricePrompt}
           sending={sending}
           sendError={sendError}
+          hold={terminalDef?.useRepeatSale && openHold(ck.check) ? (() => { const h = openHold(ck.check)!; const gap = holdGap(ck.check); return { label: `${h.name}${h.last4 ? ` ••${h.last4}` : ""}`, amount: h.amount, due: gap?.due ?? 0, canIncrease: !!gap }; })() : undefined}
+          onIncreaseHold={() => void increaseHold()}
           showCourse={currentRc()?.showCourse ?? false}
           courseOf={courseOfLine}
           courseLabel={courseLabelFor}
@@ -2269,8 +2679,12 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
           hasCheck={ck.check.lines.length > 0} busy={mgrBusy} status={mgrStatus}
           onClockIn={(j) => { void clockInPost(j).then((r) => { if (r.ok) commitShift({ jobId: j.id, jobName: j.name, sequence: r.sequence, defaultRoomId: "" }); }); }}
           onClockOut={doClockOut} onNoSale={doNoSale} onCancelCheck={doCancelCheck}
-          onDiscount={doDiscount} onClose={() => setShowManager(false)}
+          onDiscount={doDiscount} onFinalize={cardSel ? () => { setShowManager(false); setShowFinalize(true); } : undefined}
+          onCardSetup={cardSel?.config.name === "stripe" ? () => { setShowManager(false); setShowCardSetup(true); } : undefined} onClose={() => setShowManager(false)}
         />
+      )}
+      {showCardSetup && cardSel && (
+        <CardSetup config={cardSel.config} terminalReaderId={terminalDef?.readerId ?? ""} onClose={() => setShowCardSetup(false)} />
       )}
 
       {pendingAuth && (
@@ -2282,7 +2696,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
       )}
 
       {voidReason && (
-        <div className="backdrop" onClick={() => setVoidReason(null)}>
+        <div className="backdrop prompt" onClick={() => setVoidReason(null)}>
           <div className="authbox" onClick={(e) => e.stopPropagation()}>
             <div className="authtitle">Void reason</div>
             <div className="mgrlist">
@@ -2711,6 +3125,18 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
         </div>
       )}
 
+      {finalizeEl}
+      {showEditPayment && employee && (
+        <EditPaymentView
+          lines={ck.check.tenders.filter((t) => isCardLine(t) && !!t.finalized)}
+          tipPresets={(id) => allTenders.find((t) => t.id === id)?.tipPresets ?? []}
+          maxTipPercent={store.maxTipPercent}
+          adjust={adjustCardTip}
+          authorize={(title, ok) => requireAuth(false, title, "tipAuth", (a) => ok(a.id))}
+          onClose={() => setShowEditPayment(false)}
+        />
+      )}
+
       {showPay && (
         <PaymentView
           check={ck.check}
@@ -2721,7 +3147,8 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
           voidPostedTender={(key) => requireAuth(false, "Authorize void", "void", (auth) => setVoidReason({ keys: [key], auth }))}
           processGift={processGift}
           settle={settle}
-          authorize={(title, ok) => requireAuth(false, title, "manager", () => ok())}
+          authorize={(title, ok) => requireAuth(false, title, "tipAuth", () => ok())}
+          card={cardSupport}
           onClose={() => void closePay()}
           onClosed={() => {
             const wasTable = !!ck.check.diningTableId;

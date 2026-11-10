@@ -120,11 +120,16 @@ function xmlLineItem(line: CheckLine, lineNumber: number, trayNumber: number, pa
   return `<LineItem ${attrs}>${parts.join("")}</LineItem>`;
 }
 
-/** One <LineItem Type="T"> — a tender/payment (FinancialCheckManager.m:7224/12255). */
+/** Masked account number as the iPad stores it (AcctNo / TruncatedAcctNo): 12 X's + last four. */
+export const maskedAcct = (last4: string): string => `XXXXXXXXXXXX${last4.slice(-4)}`;
+
+/** One <LineItem Type="T"> — a tender/payment (FinancialCheckManager.m:7224/12255).
+ *  A card line produced by a processor carries its RefNo / RecordNo / AuthCode / masked
+ *  account, and Finalized="0" while it is only authorized (captured later at finalize). */
 function xmlTenderLine(t: TenderLine, lineNumber: number, trayNumber: number): string {
   const attrs = [
     `Is_Held="0"`, `Is_Void="${t.isVoid ? "1" : "0"}"`, `Transfered_Out="0"`, `Print_On_Check="1"`,
-    `Show_On_Display="0"`, `Type="T"`, `Finalized="1"`, `Is_Split="0"`,
+    `Show_On_Display="0"`, `Type="T"`, `Finalized="${t.finalized === false ? "0" : "1"}"`, `Is_Split="0"`,
     `lineitemkey="${escapeXml(t.key)}"`, `posted="0"`,
   ].join(" ");
   const parts: string[] = [];
@@ -142,6 +147,14 @@ function xmlTenderLine(t: TenderLine, lineNumber: number, trayNumber: number): s
   if (t.change) parts.push(el("Change_Given", t.change.toFixed(2)));
   if (t.balanceRef) parts.push(el("Transaction_Ref", t.balanceRef));
   if (t.reference) parts.push(el("Reference", t.reference));
+  if (t.ref) {
+    // processor card fields, in the iPad's element order (lineItemtoString :12334-12437)
+    if (t.last4) parts.push(el("TruncatedAcctNo", maskedAcct(t.last4)));
+    parts.push(el("RecordNo", t.recordNo || t.ref));
+    if (t.authCode) parts.push(el("AuthCode", t.authCode));
+    parts.push(el("RefNo", t.ref));
+    if (t.last4) parts.push(el("AcctNo", maskedAcct(t.last4)));
+  }
   parts.push(el("Line_Amount", t.amount.toFixed(2)));
   return `<LineItem ${attrs}>${parts.join("")}</LineItem>`;
 }
@@ -151,6 +164,7 @@ export interface WireTaxGroup { reportGroupId: string; amount: string; isExempt:
 
 export interface SendOpts {
   settle?: boolean;        // Is_Closed + Is_Settled (tendered out)
+  reopen?: boolean;        // Is_Reopen=1 + Is_Closed=0 + Is_Settled=0 — a settled check pulled back open (REOPEN_CHECK)
   cancel?: boolean;        // Is_Cancelled + Is_Closed
   close?: boolean;         // Is_Closed only — a source emptied by a split/transfer
   transferred?: boolean;   // Is_Transferred=1 — a merge source
@@ -191,7 +205,7 @@ export function buildFinancialCheck(check: Check, ctx: SendContext, opts: SendOp
   const checkAttrs = [
     `Is_Cancelled="${flag(cancel)}"`, `Is_Return="0"`, `Print_Count="0"`, `Is_Transferred="${flag(opts.transferred ?? false)}"`,
     `is_FutureOrder="0"`, `Is_Split="0"`, `Is_Tax_Exempt="0"`,
-    `Guest_Count="${check.guestCount}"`, `Is_Closed="${flag(settle || cancel || close)}"`, `Is_Reopen="0"`,
+    `Guest_Count="${check.guestCount}"`, `Is_Closed="${flag(!opts.reopen && (settle || cancel || close))}"`, `Is_Reopen="${flag(!!opts.reopen)}"`,
     // is_Settled (lowercase) is always empty on the wire; Is_Settled carries the flag.
     `is_Settled=""`, `Is_Settled="${flag(settle)}"`,
     `Check_Name="${escapeXml(check.tableName || "")}"`, `Is_New="${flag(check.traysSent === 0)}"`,

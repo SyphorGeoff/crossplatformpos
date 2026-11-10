@@ -67,7 +67,27 @@ export interface TenderLine {
   authEmpId?: string;       // AuthorizingEmployee_ID on the reversal
   parentTrayNumber?: number; // reversal → the ORIGINAL tender's Tray_Number (Void_Parent_Tray_Number)
   parentLineNumber?: number; // … and Line_Number (Void_Line_Item_ID)
+  // Online card fields (payments seam). On the wire these are the Type="T" elements HBroker
+  // already stores and returns: RefNo / RecordNo / AuthCode / TruncatedAcctNo + AcctNo (masked)
+  // and the Finalized attribute ("0" authorized, "1" captured). Absent on cash / offline cards.
+  processor?: string;       // which processor module produced `ref` ("stripe" / "tsys" / "mock")
+  ref?: string;             // processor transaction id (RefNo)
+  recordNo?: string;        // secondary processor id when the processor has one (RecordNo); else = ref
+  authCode?: string;        // AuthCode
+  last4?: string;           // last four of the card (TruncatedAcctNo / AcctNo, masked)
+  brand?: string;           // card brand as the processor reported it (VISA / MASTERCARD / AMEX / DISCOVER…)
+  finalized?: boolean;      // false = authorized only (capture pending at finalize); true = captured; undefined = not a card line
+  authorizedAmount?: number; // what the processor approved (a partial approval is less than asked)
+  capturedAmount?: number;  // what was captured (sale, or capture at finalize)
+  signatureCaptured?: boolean; // a signature was collected for this line (pad or device)
 }
+
+/** An online card line that has been authorized but not yet captured. */
+export const isUncapturedCard = (t: TenderLine): boolean => !!t.ref && t.finalized === false && !t.isVoid;
+/** Any card line produced by a processor (authorized or captured). */
+export const isCardLine = (t: TenderLine): boolean => !!t.ref && !t.isVoid;
+/** The bar tab's hold: the check's one open (uncaptured) card line, sent or not. */
+export const openHold = (c: Check): TenderLine | undefined => c.tenders.find(isUncapturedCard);
 
 export interface Check {
   id: string;               // local check id / check_key (uuid-ish)
@@ -426,9 +446,10 @@ const round2 = (n: number): number => Math.round(n * 100) / 100;
 export const isPaid = (check: Check): boolean =>
   check.lines.length > 0 && balanceDue(check) <= 0.005;
 
-/** Append a tender (payment) to the check. */
-export function addTender(check: Check, t: Omit<TenderLine, "key">): Check {
-  return { ...check, tenders: [...check.tenders, { ...t, key: mintLineKey() }] };
+/** Append a tender (payment) to the check. A caller that already minted the key
+ *  (an online card: the processor was told the lineitemkey) passes it along. */
+export function addTender(check: Check, t: Omit<TenderLine, "key"> & { key?: string }): Check {
+  return { ...check, tenders: [...check.tenders, { ...t, key: t.key || mintLineKey() }] };
 }
 
 /**
