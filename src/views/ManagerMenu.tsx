@@ -20,6 +20,7 @@ export interface ManagerMenuActions {
   printerTest?: () => void;
   printGroupTest?: () => void;
   openEmptyCheck?: () => void;
+  cardSetup?: () => void;         // payment reader setup — the tile shows only when the store's card processor has one
   drawerAssignment?: () => void;
   addTips?: () => void;
   terminalRead?: () => void;
@@ -44,6 +45,7 @@ const ORDER: { key: keyof ManagerMenuActions; label: string }[] = [
   { key: "clockOut", label: "Clock Out" },
   { key: "clockedInEmployees", label: "Clocked In Employees" },
   { key: "openEmptyCheck", label: "Open Empty Check" },
+  { key: "cardSetup", label: "Card Setup" },
 ];
 
 export default function ManagerMenu({ storeName, employeeName, jobName, status, busy, actions, unread = 0 }: {
@@ -61,6 +63,7 @@ export default function ManagerMenu({ storeName, employeeName, jobName, status, 
       <div className="ecgrid">
         {ORDER.map(({ key, label }) => {
           const fn = actions[key];
+          if (key === "cardSetup" && !fn) return null;
           return (
             <button key={key} className="ecfn" onClick={fn} disabled={!fn || busy} title={fn ? label : `${label} — not built yet`}>
               <span className="ecfnlabel">{label}{key === "messages" && unread ? <span className="tbbadge">{unread}</span> : null}</span>

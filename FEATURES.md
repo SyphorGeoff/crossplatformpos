@@ -37,6 +37,7 @@ Last updated: 2026-10-08
 | Apply a discount from the payment screen | Not started | |
 | Credit Card Threshold (under $5.00, pay at table on/off) | Not started | |
 | Max Check Amount | Built | Store max_check_amount; "Your check reaches max limit" |
+| Save every card decline | Not started | Required (Geoff 2026-11-10). Keep a record of each declined card attempt. Not scoped yet: do not design or build until Geoff says. The decline wording shown on the payment sheet stays as the processor sends it |
 
 ## Ordering
 

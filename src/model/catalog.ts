@@ -391,6 +391,7 @@ export interface Tender {
   sort: number;
   isCash: boolean;
   isCredit: boolean;        // deferred — stubbed in the UI
+  isDebit: boolean;         // Is_Debit — a debit tender: charged in one step, and money goes back only with the card present on the payment device
   isGift: boolean;          // Is_GiftCert (native Aireus/HBroker)
   isLoyalty: boolean;       // is_Loyalty (native ISISLOYALTY)
   isRoomCharge: boolean;    // roomCharge (PMS)
@@ -487,6 +488,7 @@ export function tenders(): Tender[] {
     sort: Number(s(r, "Sort_Order")) || 0,
     isCash: s(r, "Is_Cash") === "1",
     isCredit: s(r, "Is_Credit") === "1",
+    isDebit: s(r, "Is_Debit") === "1",
     isGift: s(r, "Is_GiftCert") === "1",
     isLoyalty: s(r, "is_Loyalty") === "1",
     isRoomCharge: s(r, "roomCharge") === "1",

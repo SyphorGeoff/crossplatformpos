@@ -1,7 +1,8 @@
 /*
- * Card setup — the per-terminal side of the Stripe processor: the reader this
- * tablet drives when the Terminal definition's TyroTerminalID is empty, and a
- * check that the back-office credentials work. Credentials themselves live in
+ * Card setup — the per-terminal side of the Stripe processor: register or pick
+ * the reader this terminal drives, keep it locally, and save it to the
+ * terminal's Terminal ID on the server (TEMPORARY route, see protocol/devicecode.ts);
+ * plus a check that the back-office credentials work. Credentials themselves live in
  * the back office (Credit Card interface) and are never entered here. Test mode
  * adds "Create simulated reader" so the whole flow runs before a device arrives.
  * Manager-only (gated upstream). Presentation + the setup calls in stripe.ts.
@@ -15,7 +16,9 @@ import {
 
 export interface CardSetupProps {
   config: ProcessorConfig;
-  terminalReaderId: string;   // Terminal TyroTerminalID from the definitions ("" = none)
+  terminalReaderId: string;   // the terminal's Terminal ID (TyroTerminalID) from the definitions ("" = none)
+  /** Save the reader id to this terminal's Terminal ID on the server. */
+  saveReader: (readerId: string) => Promise<{ ok: boolean; message: string }>;
   onClose: () => void;
 }
 
@@ -45,21 +48,28 @@ export default function CardSetup(p: CardSetupProps) {
     return () => { on = false; };
   }, [hasKey, effectiveReader, p.config]);
 
+  /** Keep the reader on this terminal and save it to the terminal's Terminal ID on the server. */
+  const assign = async (id: string): Promise<string> => {
+    setStripeLocalReader(id); setLocalReader(id);
+    const s = await p.saveReader(id);
+    return s.ok ? "saved to this terminal's Terminal ID"
+      : `kept on this terminal only — saving to the server failed (${s.message}); enter it in the back office under Devices → Terminal Configuration → Terminal ID`;
+  };
+
   const testKey = () => run("Checking credentials", async () => (await checkStripeKey(p.config)).message);
 
   const createSimulated = () => run("Creating simulated reader", async () => {
     const r = await registerReader(p.config, SIMULATED_READER_CODE, "Simulated reader");
     if (!r.ok) return r.message;
-    setStripeLocalReader(r.reader.id); setLocalReader(r.reader.id);
-    return `Simulated reader ${r.reader.id} created and assigned to this terminal`;
+    return `Simulated reader ${r.reader.id} created, ${await assign(r.reader.id)}`;
   });
 
   const register = () => run("Registering reader", async () => {
     if (!pairing.trim()) return "Enter the pairing code shown on the reader";
     const r = await registerReader(p.config, pairing, "Terminal reader");
     if (!r.ok) return r.message;
-    setStripeLocalReader(r.reader.id); setLocalReader(r.reader.id); setPairing("");
-    return `Reader ${r.reader.id} (${r.reader.deviceType}) registered. Put it in the back office Terminal → TyroTerminalID to make it permanent.`;
+    setPairing("");
+    return `Reader ${r.reader.id} (${r.reader.deviceType}) registered, ${await assign(r.reader.id)}`;
   });
 
   const loadReaders = () => run("Listing readers", async () => {
@@ -69,7 +79,7 @@ export default function CardSetup(p: CardSetupProps) {
     return r.readers.length ? `${r.readers.length} reader(s)` : "No readers on this account/location yet";
   });
 
-  const pick = (id: string) => { setStripeLocalReader(id); setLocalReader(id); setStatus(`Reader ${id} assigned to this terminal`); };
+  const pick = (id: string) => run("Assigning reader", async () => `Reader ${id} assigned, ${await assign(id)}`);
   const clearLocal = () => { setStripeLocalReader(""); setLocalReader(""); setStatus("Terminal-local reader cleared"); };
 
   return (
@@ -96,7 +106,7 @@ export default function CardSetup(p: CardSetupProps) {
           <div className="mgrlabel">Reader</div>
           <div className="mgrrow" style={{ cursor: "default" }}>
             {effectiveReader || "None assigned"}
-            <span>{p.terminalReaderId ? "from Terminal TyroTerminalID" : localReader ? "terminal-local" : "set TyroTerminalID or register below"}</span>
+            <span>{p.terminalReaderId ? "from the terminal's Terminal ID" : localReader ? "kept on this terminal" : "register a reader below"}</span>
           </div>
           {live && <div className="mgrsub">{live.label || live.deviceType} · {live.deviceType} · {live.status || "status unknown"}{live.actionStatus ? ` · last action ${live.actionType} ${live.actionStatus}` : ""}</div>}
           <label className="fld"><span>Pairing code</span><input value={pairing} onChange={(e) => setPairing(e.target.value)} placeholder="shown on the reader" autoComplete="off" /></label>

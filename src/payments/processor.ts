@@ -60,6 +60,17 @@ export interface CardResult {
   capturedAmount?: number;
   tip?: number;
   receipt?: { customer?: string; merchant?: string }; // processor-rendered receipt text (EMV lines), when provided
+  /** The processor will only give this money back with the card present on the payment device
+   *  (debit / Interac always; some processors once the batch has closed). `amount` = what to refund. */
+  needsCardPresent?: { amount: number };
+}
+
+/** A refund made with the card present: the cardholder presents the same card on the payment device.
+ *  `start` answers `pending` while the device prompts; poll `status` until it settles; `abort` clears the prompt. */
+export interface PresentRefund {
+  start(ref: string, amount: number, ctx: CheckRef, readerId?: string): Promise<CardResult>;
+  status(ref: string, ctx: CheckRef): Promise<CardResult>;
+  abort(ref: string, ctx: CheckRef): Promise<void>;
 }
 
 export interface CardProcessor {
@@ -80,6 +91,8 @@ export interface CardProcessor {
   refund(ref: string, amount: number, ctx: CheckRef): Promise<CardResult>;
   /** Current state of a transaction (poll while `pending`; recover after a timeout). */
   status(ref: string, ctx: CheckRef): Promise<CardResult>;
+  /** Card-present refund, for processors whose device can take one. Optional. */
+  presentRefund?: PresentRefund;
 }
 
 /** Shorthand results. */

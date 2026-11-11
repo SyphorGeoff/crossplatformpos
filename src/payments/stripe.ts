@@ -83,7 +83,7 @@ function txns(): Record<string, StripeTxn> { return loadJSON<Record<string, Stri
 function getTxn(pi: string): StripeTxn | undefined { return txns()[pi]; }
 function putTxn(t: StripeTxn): void { const all = txns(); all[t.pi] = t; saveJSON(TXNS, all); }
 /** Test/dev helper: forget every recorded Stripe transaction, the local reader and cached currencies. */
-export function resetStripe(): void { saveJSON(TXNS, {}); saveJSON(READER, ""); resetStripeCurrency(); }
+export function resetStripe(): void { saveJSON(TXNS, {}); saveJSON(READER, ""); resetStripeCurrency(); presentRefunds.clear(); }
 
 /* ---------------- wire ---------------- */
 
@@ -157,12 +157,22 @@ function chargeOf(pi: Obj): { charge: Obj; card: Obj } {
   return { charge, card };
 }
 
+/** Interac (debit) charges can only be refunded with the card present on the reader: Stripe refuses the API. */
+const isInterac = (pi: Obj): boolean => str(obj(obj(pi.latest_charge).payment_method_details).type) === "interac_present";
+/** A refund the API refused because it has to be made in person. */
+const refusedInPerson = (r: StripeReply): boolean => /in[- ]person|card[- ]present|interac/i.test(`${r.error?.message ?? ""} ${r.error?.code ?? ""}`);
+const needsPresent = (ref: string, amountCents: number): CardResult =>
+  failed("This payment can only be refunded with the card present on the reader", { ref, needsCardPresent: { amount: round2(amountCents / 100) } });
+/** Card-present refunds in flight: payment id → the reader prompting for the card. */
+const presentRefunds = new Map<string, { readerId: string }>();
+
 /** EMV receipt lines a slip prints (same text for customer and merchant copies). */
 export function receiptLines(card: Obj): string | undefined {
   const r = obj(card.receipt);
   const lines: string[] = [];
   if (str(r.application_preferred_name)) lines.push(`${r.application_preferred_name}`);
   if (str(r.dedicated_file_name)) lines.push(`AID ${r.dedicated_file_name}`);
+  if (str(r.account_type)) lines.push(`ACCOUNT ${r.account_type}`);   // credit / checking / prepaid — card networks require it on receipts outside the US
   if (str(r.authorization_code)) lines.push(`AUTH ${r.authorization_code}`);
   if (str(r.terminal_verification_results)) lines.push(`TVR ${r.terminal_verification_results}`);
   if (str(r.transaction_status_information)) lines.push(`TSI ${r.transaction_status_information}`);
@@ -323,8 +333,12 @@ export function makeStripe(cfg: ProcessorConfig): CardProcessor {
     const tip = kind === "sale" ? round2(req.tip ?? 0) : 0;
     const total = round2(req.amount + tip);
     const currency = await stripeCurrency(cfg);
+    // Debit (Interac, Canada) is a one-step charge made by the customer on the pinpad: counter service and
+    // pay at table. A one-shot sale in CAD therefore accepts Interac as well as credit cards. A hold
+    // (authorize) stays credit-only: Interac cannot be held, so Stripe declines it there, which is wanted.
+    const types = kind === "sale" && currency.toLowerCase() === "cad" ? ["card_present", "interac_present"] : ["card_present"];
     const created = await call(cfg, "POST", "/payment_intents", {
-      amount: cents(total), currency, payment_method_types: ["card_present"],
+      amount: cents(total), currency, payment_method_types: types,
       capture_method: kind === "auth" ? "manual" : "automatic",
       payment_method_options: { card_present: { request_incremental_authorization_support: kind === "auth" ? true : undefined, request_extended_authorization: kind === "auth" ? true : undefined } },
       description: `Check ${req.checkNo}`, metadata: metadata(req), ...EXPAND,
@@ -428,8 +442,9 @@ export function makeStripe(cfg: ProcessorConfig): CardProcessor {
       const base = intentResult(pi);
       if (wantC > netC) return failed("A captured Stripe payment cannot be increased — take a second payment for the difference");
       if (wantC === netC) return { ...base, status: "ok", message: "No change", tip: round2(amounts.tip), capturedAmount: round2(netC / 100) };
+      if (isInterac(pi)) return needsPresent(ref, netC - wantC);
       const r = await call(cfg, "POST", "/refunds", { payment_intent: ref, amount: netC - wantC, metadata: metadata(ctx) }, idem(ctx, `adjust:${wantC}`));
-      if (!r.ok) return replyFailure(r, ref);
+      if (!r.ok) return refusedInPerson(r) ? needsPresent(ref, netC - wantC) : replyFailure(r, ref);
       return { ...base, status: "ok", message: "Adjusted", tip: round2(amounts.tip), capturedAmount: round2(wantC / 100) };
     },
 
@@ -465,8 +480,9 @@ export function makeStripe(cfg: ProcessorConfig): CardProcessor {
         const netC = (numv(charge.amount_captured) ?? numv(pi.amount) ?? 0) - (numv(charge.amount_refunded) ?? 0);
         const amt = amount !== undefined ? Math.min(cents(amount), netC) : netC;
         if (amt <= 0) return failed("Nothing left to refund");
+        if (isInterac(pi)) return needsPresent(ref, amt);
         const r = await call(cfg, "POST", "/refunds", { payment_intent: ref, amount: amt, metadata: metadata(ctx) }, idem(ctx, `void:${amt}`));
-        if (!r.ok) return replyFailure(r, ref);
+        if (!r.ok) return refusedInPerson(r) ? needsPresent(ref, amt) : replyFailure(r, ref);
         const partial = amt < netC;
         return partial
           ? { ...base, status: "ok", message: "Partially refunded", capturedAmount: round2((netC - amt) / 100) }
@@ -494,11 +510,51 @@ export function makeStripe(cfg: ProcessorConfig): CardProcessor {
       if (!cur.ok) return replyFailure(cur, ref);
       if (str(cur.body.status) !== "succeeded") return failed("Not captured — void it instead");
       const amt = cents(amount);
+      if (isInterac(cur.body)) return needsPresent(ref, amt);
       const r = await call(cfg, "POST", "/refunds", { payment_intent: ref, amount: amt, metadata: metadata(ctx) }, idem(ctx, `refund:${amt}`));
-      if (!r.ok) return replyFailure(r, ref);
+      if (!r.ok) return refusedInPerson(r) ? needsPresent(ref, amt) : replyFailure(r, ref);
       const base = intentResult(cur.body);
       const refundId = str(r.body.id) ?? `${ref}R`;
       return { ...base, status: "ok", message: str(r.body.status) === "pending" ? "Refund pending" : "Refunded", ref: refundId, recordNo: refundId, capturedAmount: round2(amt / 100) };
+    },
+
+    /** Card-present refund (Terminal refund_payment): the reader asks for the card that made the payment.
+     *  Mandatory for Interac; also the fallback when Stripe refuses a refund through the API. */
+    presentRefund: {
+      async start(ref, amount, ctx, readerId) {
+        const notReady = ready(); if (notReady) return notReady;
+        const rid = (readerId || getTxn(ref)?.readerId || stripeLocalReader()).trim();
+        if (!rid) return failed("No Stripe reader is assigned to this terminal — a card-present refund needs one", { ref });
+        const amt = cents(amount);
+        if (amt <= 0) return failed("Nothing to refund", { ref });
+        const r = await call(cfg, "POST", `/terminal/readers/${encodeURIComponent(rid)}/refund_payment`, { payment_intent: ref, amount: amt, metadata: metadata(ctx) });
+        if (!r.ok) return replyFailure(r, ref);
+        presentRefunds.set(ref, { readerId: rid });
+        // Simulated reader in test mode: present the card so the flow runs end to end from the POS.
+        if (readerInfo(r.body).simulated && cfg.testMode) {
+          const pi = await getIntent(ref);
+          await call(cfg, "POST", `/test_helpers/terminal/readers/${encodeURIComponent(rid)}/present_payment_method`, { type: pi.ok && isInterac(pi.body) ? "interac_present" : "card_present" });
+        }
+        return { status: "pending", message: `Present the same card on the reader to refund $${round2(amount).toFixed(2)}`, ref };
+      },
+      async status(ref) {
+        const rec = presentRefunds.get(ref);
+        if (!rec) return failed("No card-present refund is in progress", { ref });
+        const rd = await getReader(cfg, rec.readerId);
+        if (!rd.ok) return failed(`Stripe: ${rd.message}`, { ref });
+        const a = rd.reader;
+        if (a.actionType !== "refund_payment") return failed("The reader is not processing the refund", { ref });
+        if (a.actionStatus === "in_progress") return { status: "pending", message: "Present the same card on the reader…", ref };
+        presentRefunds.delete(ref);
+        if (a.actionStatus === "succeeded") return { status: "ok", message: "Refunded on the reader", ref };
+        if (a.failureCode === "customer_canceled") return { status: "cancelled", message: "Cancelled on the reader", ref };
+        return failed(`Reader: ${a.failureMessage || a.failureCode || "refund failed"}`, { ref });
+      },
+      async abort(ref) {
+        const rec = presentRefunds.get(ref);
+        presentRefunds.delete(ref);
+        if (rec) await call(cfg, "POST", `/terminal/readers/${encodeURIComponent(rec.readerId)}/cancel_action`);
+      },
     },
   };
 }

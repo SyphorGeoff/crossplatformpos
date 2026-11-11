@@ -24,7 +24,7 @@ import { balanceWithTax, grandTotal, type TaxResult } from "@/model/tax";
 import type { Tender } from "@/model/catalog";
 import type { GiftType, LoyaltyType, PaymentResult } from "@/protocol/payment";
 import type { CardBrand, CardProcessor, CardResult, CheckRef } from "@/payments/processor";
-import { runCard, type RunHandle } from "@/payments/run";
+import { runCard, undoCard, type RunHandle } from "@/payments/run";
 import NumberPad from "./NumberPad";
 
 const fmt = (n: number) => (n < 0 ? `-$${Math.abs(n).toFixed(2)}` : `$${n.toFixed(2)}`);
@@ -33,6 +33,7 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 type Mode = { kind: "tenders" } | { kind: "cash" } | { kind: "gift"; tender: Tender } | { kind: "room"; tender: Tender }
   | { kind: "card"; tender: Tender } | { kind: "tip"; tender: Tender; amount: number } | { kind: "divide" }
   | { kind: "processing"; tender: Tender; text: string }                     // waiting on the processor / device
+  | { kind: "refunding"; title: string; text: string }                       // card-present refund: waiting for the card on the device
   | { kind: "tabtip"; line: TenderLine };                                     // Finish Tab: the tip before the capture
 
 /** What the sheet needs from the processor seam when the store has one. */
@@ -202,12 +203,21 @@ export default function PaymentView(p: PaymentViewProps) {
   const voidUnsent = async (t: TenderLine) => {
     if (t.ref && t.processor && p.card) {
       setBusy(true);
-      let r: CardResult;
-      try {
-        const ctx = p.card.checkRef(t.key);
-        r = await p.card.processor.cancel(t.ref, ctx);
-        if (r.status === "error" && t.finalized) r = await p.card.processor.refund(t.ref, round2(Math.abs(t.amount) + Math.abs(t.tip || 0)), ctx);
-      } catch (e) { r = { status: "error", message: String((e as Error).message ?? e) }; }
+      // A debit payment (tender Is_Debit) goes back with the card present on the reader; any other does when
+      // the processor says the refund must be made in person (payments/run undoCard).
+      const card = p.card, ref = t.ref, ctx = card.checkRef(t.key);
+      const total = round2(Math.abs(t.amount) + Math.abs(t.tip || 0));
+      const debit = t.finalized === true && !!p.tenders.find((x) => x.id === t.tenderId)?.isDebit;
+      const r: CardResult = await undoCard(card.processor, ref, ctx, async () => {
+        let x = await card.processor.cancel(ref, ctx);
+        if (x.status === "error" && !x.needsCardPresent && t.finalized) x = await card.processor.refund(ref, total, ctx);
+        return x;
+      }, {
+        timeoutSec: card.timeoutSec, debit, amount: total, readerId: card.readerId || undefined,
+        onPresent: (h, amt) => { runRef.current = h; setMode({ kind: "refunding", title: `${t.name} refund`, text: `Present the same card on the reader to refund ${fmt(amt)}` }); },
+      });
+      runRef.current = null;
+      setMode({ kind: "tenders" });
       setBusy(false);
       if (r.status !== "ok" && r.status !== "cancelled") { setMsg(`${t.name} void failed: ${r.message}`); return; }
       p.voidTender(t.key); setMsg(`${t.name} voided — ${r.message}`); return;
@@ -353,6 +363,14 @@ export default function PaymentView(p: PaymentViewProps) {
         {mode.kind === "tabtip" && (
           <NumberPad key={`tabtip-${mode.line.key}`} title="Finish Tab — tip" sub={`${mode.line.name} ${fmt(mode.line.amount)} held — enter the tip (OK alone = no tip), then the card is captured and the check closed`} mode="money"
             onOk={(v) => void finishTab(mode.line, round2(v))} onCancel={() => setMode({ kind: "tenders" })} />
+        )}
+        {mode.kind === "refunding" && (
+          <div className="pvprocessing">
+            <div className="pvspin" />
+            <div className="pvtitle">{mode.title}</div>
+            <div className="pvproctext">{mode.text}</div>
+            <div className="pvactions"><button className="mfbtn ghost" onClick={() => runRef.current?.cancel()}>Cancel</button></div>
+          </div>
         )}
         {mode.kind === "processing" && (
           <div className="pvprocessing">

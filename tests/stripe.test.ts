@@ -52,7 +52,7 @@ const charge = (over: Record<string, unknown> = {}, card: Record<string, unknown
   id: "ch_1", object: "charge", captured: false, amount: 2000, amount_captured: 0, amount_refunded: 0,
   payment_method_details: { type: "card_present", card_present: {
     brand: "visa", last4: "4242", amount_authorized: 2000, overcapture_supported: true, incremental_authorization_supported: true, read_method: "contact_emv",
-    receipt: { authorization_code: "123456", application_preferred_name: "VISA CREDIT", dedicated_file_name: "A0000000031010", terminal_verification_results: "0000008000", transaction_status_information: "E800", application_cryptogram: "ABCDEF0123456789", cardholder_verification_method: "none" },
+    receipt: { authorization_code: "123456", application_preferred_name: "VISA CREDIT", dedicated_file_name: "A0000000031010", account_type: "credit", terminal_verification_results: "0000008000", transaction_status_information: "E800", application_cryptogram: "ABCDEF0123456789", cardholder_verification_method: "none" },
     ...card,
   } }, ...over,
 });
@@ -79,7 +79,7 @@ describe("encoding and helpers", () => {
   });
   it("receipt lines carry the EMV fields a slip prints", () => {
     const lines = receiptLines((charge().payment_method_details as { card_present: Record<string, unknown> }).card_present)!;
-    expect(lines).toContain("AID A0000000031010"); expect(lines).toContain("AUTH 123456"); expect(lines).toContain("TVR 0000008000"); expect(lines).toContain("ENTRY contact emv");
+    expect(lines).toContain("AID A0000000031010"); expect(lines).toContain("ACCOUNT credit"); expect(lines).toContain("AUTH 123456"); expect(lines).toContain("TVR 0000008000"); expect(lines).toContain("ENTRY contact emv");
   });
 });
 
@@ -222,6 +222,21 @@ describe("sale (one-shot)", () => {
     expect(p.amount).toBe("2300"); expect(p.capture_method).toBe("automatic");
     expect(p["payment_method_options[card_present][request_incremental_authorization_support]"]).toBeUndefined();
     expect(params(calls[1])["process_config[skip_tipping]"]).toBe("true");
+  });
+  it("a CAD sale accepts Interac debit as well as credit; a USD sale and a CAD hold stay credit-only", async () => {
+    const types = (c: Call) => new URLSearchParams(c.body).getAll("payment_method_types[]");
+    const cad = () => cfg({ bundle: { locationId: "tml_TEST1", secretKey: TEST_KEY, testMode: true, currency: "cad" } });
+    replies = [{ body: intent("requires_payment_method") }, { body: reader(null, "stripe_s700") }];
+    await makeStripe(cad()).sale(req(20));
+    expect(types(calls[0])).toEqual(["card_present", "interac_present"]);
+    calls.length = 0; resetStripe();
+    replies = [{ body: intent("requires_payment_method") }, { body: reader(null, "stripe_s700") }];
+    await makeStripe(cfg()).sale(req(20));
+    expect(types(calls[0])).toEqual(["card_present"]);
+    calls.length = 0; resetStripe();
+    replies = [{ body: intent("requires_payment_method") }, { body: reader(null, "stripe_s700") }];
+    await makeStripe(cad()).authorize(req(20));
+    expect(types(calls[0])).toEqual(["card_present"]);
   });
   it("promptTip without a POS tip lets the reader prompt, tip-eligible = the base amount", async () => {
     replies = [{ body: intent("requires_payment_method") }, { body: reader(null, "stripe_s700") }];
@@ -371,5 +386,77 @@ describe("seam registration and secrets", () => {
     await makeStripe(cfg()).authorize(req(20));
     for (const c of calls) { expect(c.url).not.toContain(TEST_KEY); expect(c.body).not.toContain(TEST_KEY); expect(c.headers.Authorization).toBe(`Bearer ${TEST_KEY}`); }
     for (let i = 0; i < localStorage.length; i++) { expect(localStorage.getItem(localStorage.key(i)!)).not.toContain(TEST_KEY); }
+  });
+});
+
+describe("card-present refund", () => {
+  const interac = () => charge({ captured: true, amount_captured: 2000, payment_method_details: { type: "interac_present", interac_present: { last4: "1933" } } });
+  it("an Interac payment is never refunded through the API: cancel, refund and adjust ask for the card instead", async () => {
+    const p = makeStripe(cfg());
+    replies = [{ body: intent("succeeded", { latest_charge: interac() }) }];
+    const a = await p.cancel("pi_1", ctx);
+    expect(a.status).toBe("error"); expect(a.needsCardPresent).toEqual({ amount: 20 });
+    replies = [{ body: intent("succeeded", { latest_charge: interac() }) }];
+    expect((await p.refund("pi_1", 5, ctx)).needsCardPresent).toEqual({ amount: 5 });
+    replies = [{ body: intent("succeeded", { latest_charge: interac() }) }];
+    expect((await p.adjust("pi_1", { amount: 15, tip: 2 }, ctx)).needsCardPresent).toEqual({ amount: 3 });
+    expect(calls.map(path)).toEqual(["/payment_intents/pi_1", "/payment_intents/pi_1", "/payment_intents/pi_1"]);   // no /refunds call
+  });
+  it("an API refund Stripe refuses as in-person asks for the card the same way", async () => {
+    replies = [{ body: intent("succeeded", { latest_charge: charge({ captured: true, amount_captured: 2000 }) }) },
+      { status: 400, body: { error: { type: "invalid_request_error", message: "This payment must be refunded in person with the card present." } } }];
+    const r = await makeStripe(cfg()).refund("pi_1", 8, ctx);
+    expect(r.status).toBe("error"); expect(r.needsCardPresent).toEqual({ amount: 8 });
+  });
+  it("any other refund failure is a plain error", async () => {
+    replies = [{ body: intent("succeeded", { latest_charge: charge({ captured: true, amount_captured: 2000 }) }) },
+      { status: 400, body: { error: { type: "invalid_request_error", message: "Refund amount exceeds the charge" } } }];
+    const r = await makeStripe(cfg()).refund("pi_1", 8, ctx);
+    expect(r.status).toBe("error"); expect(r.needsCardPresent).toBeUndefined();
+  });
+  it("start hands the refund to the reader; status follows the reader action; a settled action is forgotten", async () => {
+    const pr = makeStripe(cfg()).presentRefund!;
+    replies = [{ body: reader({ type: "refund_payment", status: "in_progress" }, "stripe_s710") }];
+    const s = await pr.start("pi_1", 5, ctx, "tmr_SIM1");
+    expect(s.status).toBe("pending"); expect(s.message).toMatch(/\$5\.00/);
+    expect(path(calls[0])).toBe("/terminal/readers/tmr_SIM1/refund_payment");
+    expect(params(calls[0]).payment_intent).toBe("pi_1"); expect(params(calls[0]).amount).toBe("500");
+    expect(calls).toHaveLength(1);                                               // a physical reader: no test-helper call
+    replies = [{ body: reader({ type: "refund_payment", status: "in_progress" }, "stripe_s710") }];
+    expect((await pr.status("pi_1", ctx)).status).toBe("pending");
+    replies = [{ body: reader({ type: "refund_payment", status: "succeeded" }, "stripe_s710") }];
+    expect(await pr.status("pi_1", ctx)).toMatchObject({ status: "ok", message: "Refunded on the reader" });
+    expect((await pr.status("pi_1", ctx)).status).toBe("error");                 // nothing in progress any more
+  });
+  it("a cancel on the reader, a failure, and a reader doing something else are reported as such", async () => {
+    const pr = makeStripe(cfg()).presentRefund!;
+    const begin = async () => { replies = [{ body: reader({ type: "refund_payment", status: "in_progress" }, "stripe_s710") }]; await pr.start("pi_1", 5, ctx, "tmr_SIM1"); };
+    await begin();
+    replies = [{ body: reader({ type: "refund_payment", status: "failed", failure_code: "customer_canceled" }, "stripe_s710") }];
+    expect((await pr.status("pi_1", ctx)).status).toBe("cancelled");
+    await begin();
+    replies = [{ body: reader({ type: "refund_payment", status: "failed", failure_code: "card_mismatch", failure_message: "The card does not match the original payment" }, "stripe_s710") }];
+    expect(await pr.status("pi_1", ctx)).toMatchObject({ status: "error", message: "Reader: The card does not match the original payment" });
+    await begin();
+    replies = [{ body: reader({ type: "process_payment_intent", status: "in_progress" }, "stripe_s710") }];
+    expect((await pr.status("pi_1", ctx)).message).toMatch(/not processing the refund/);
+  });
+  it("abort clears the reader prompt", async () => {
+    const pr = makeStripe(cfg()).presentRefund!;
+    replies = [{ body: reader({ type: "refund_payment", status: "in_progress" }, "stripe_s710") }];
+    await pr.start("pi_1", 5, ctx, "tmr_SIM1"); calls.length = 0;
+    await pr.abort("pi_1", ctx);
+    expect(path(calls[0])).toBe("/terminal/readers/tmr_SIM1/cancel_action");
+  });
+  it("needs a reader, and an amount", async () => {
+    const pr = makeStripe(cfg()).presentRefund!;
+    expect((await pr.start("pi_9", 5, ctx)).message).toMatch(/No Stripe reader/);
+    expect((await pr.start("pi_9", 0, ctx, "tmr_SIM1")).message).toMatch(/Nothing to refund/);
+    expect(calls).toHaveLength(0);
+  });
+  it("a simulated reader in test mode has the matching card type presented for it", async () => {
+    replies = [{ body: reader({ type: "refund_payment", status: "in_progress" }) }, { body: intent("succeeded", { latest_charge: interac() }) }, { body: reader() }];
+    await makeStripe(cfg()).presentRefund!.start("pi_1", 5, ctx, "tmr_SIM1");
+    expect(path(calls[2])).toBe("/test_helpers/terminal/readers/tmr_SIM1/present_payment_method"); expect(params(calls[2]).type).toBe("interac_present");
   });
 });

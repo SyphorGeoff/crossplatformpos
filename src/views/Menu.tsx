@@ -52,6 +52,8 @@ import { selectProcessor } from "@/payments/select";
 import "@/payments/tsys";                                   // registers the TSYS processor (side effect)
 import "@/payments/stripe";                                 // registers the Stripe processor (side effect)
 import CardSetup from "./CardSetup";
+import { saveDeviceId } from "@/protocol/devicecode";
+import { undoCard } from "@/payments/run";
 import type { CardResult, CheckRef } from "@/payments/processor";
 import { fetchUnfinalized, postFinalizeTender, type UnfinalizedTender } from "@/protocol/finalize";
 import FinalizeView from "./FinalizeView";
@@ -230,6 +232,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
   const cardSel = useMemo(() => selectProcessor(store, cat.rcById.get(ck.check.revenueCenterId) ?? null), [store, cat, ck.check.revenueCenterId]);
   const [showFinalize, setShowFinalize] = useState(false);
   const [showCardSetup, setShowCardSetup] = useState(false);
+  const [presentRun, setPresentRun] = useState<{ text: string; cancel: () => void } | null>(null);   // a card-present refund waiting for the card
   const [showEditPayment, setShowEditPayment] = useState(false);
   // Manager's Menu work: the Closed Checks list, the employee pickers (Transfer All / Open Empty Check),
   // the Clocked In list, and "the next pick from the open list is the merge SOURCE" (manager merge).
@@ -1387,6 +1390,20 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     tenderKey, terminalPosId: settings.terminalPosId, employeePosId: employee?.id ?? "", revenueCenterId: ck.check.revenueCenterId,
   });
 
+  /** Give money back on a card payment (void, tip reduction, a shrunk sale). A payment on a debit tender
+   *  (Is_Debit) is refunded with the card present from the start; any other falls back to that when the
+   *  processor says the refund must be made in person. The operator sees the prompt and can cancel it. */
+  const undoCardPayment = async (line: TenderLine, amount: number, attempt: () => Promise<CardResult>): Promise<CardResult> => {
+    if (!cardSel || !line.ref) return { status: "error", message: "No card processor" };
+    const debit = line.finalized === true && !!allTenders.find((t) => t.id === line.tenderId)?.isDebit;
+    try {
+      return await undoCard(cardSel.processor, line.ref, checkRefFor(line.key), attempt, {
+        timeoutSec: cardSel.config.timeoutSec, debit, amount, readerId: terminalDef?.readerId || undefined,
+        onPresent: (h, amt) => setPresentRun({ text: `Present the same card on the reader to refund $${amt.toFixed(2)}`, cancel: h.cancel }),
+      });
+    } finally { setPresentRun(null); }
+  };
+
   /** Re-fit a posted card line to a new amount: an open auth captures less at finalize (no processor
    *  call) or is incremented above its authorization; a captured sale is adjusted at the processor.
    *  Then the server line's Line_Amount is modified in place (Trans_Type=Modify) and the local line follows. */
@@ -1396,7 +1413,11 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     const ctx = checkRefFor(line.key);
     let r: CardResult = { status: "ok", message: "" };
     try {
-      if (line.finalized) r = await cardSel.processor.adjust(line.ref, { amount: newAmount, tip: line.tip || 0 }, ctx);
+      if (line.finalized) {
+        const proc = cardSel.processor, ref = line.ref;
+        const back = Math.round((line.amount - newAmount) * 100) / 100;   // what goes back to the card when the sale shrinks
+        r = await undoCardPayment(line, Math.max(0, back), () => proc.adjust(ref, { amount: newAmount, tip: line.tip || 0 }, ctx));
+      }
       else if (newAmount > (line.authorizedAmount ?? line.amount) + 0.005) r = await cardSel.processor.increment(line.ref, newAmount, ctx);
     } catch (e) { r = { status: "error", message: String((e as Error).message ?? e) }; }
     if (r.status !== "ok") return { ok: false, message: r.message };
@@ -1465,7 +1486,9 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     if (Math.abs(tip - (line.tip || 0)) < 0.005) return { ok: true, message: "No change" };
     const ctx = checkRefFor(key);
     let r: CardResult;
-    try { r = await cardSel.processor.adjust(line.ref, { amount: line.amount, tip }, ctx); }
+    const proc = cardSel.processor, ref = line.ref;
+    const back = Math.round(((line.tip || 0) - tip) * 100) / 100;         // what goes back to the card when the tip drops
+    try { r = await undoCardPayment(line, Math.max(0, back), () => proc.adjust(ref, { amount: line.amount, tip }, ctx)); }
     catch (e) { return { ok: false, message: String((e as Error).message ?? e) }; }
     if (r.status !== "ok") return { ok: false, message: r.message };
     const { bd, checkNo } = await ensureSession();
@@ -1632,9 +1655,14 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
         if (tender.ref && cardSel && (def?.onlineVoid || tender.finalized !== undefined)) {
           const ctx = checkRefFor(tender.key);
           let r: CardResult;
+          const proc = cardSel.processor, ref = tender.ref;
+          const total = Math.round((Math.abs(tender.amount) + Math.abs(tender.tip || 0)) * 100) / 100;
           try {
-            r = await cardSel.processor.cancel(tender.ref, ctx);
-            if (r.status === "error" && tender.finalized) r = await cardSel.processor.refund(tender.ref, Math.abs(tender.amount) + Math.abs(tender.tip || 0), ctx);
+            r = await undoCardPayment(tender, total, async () => {
+              let x = await proc.cancel(ref, ctx);
+              if (x.status === "error" && !x.needsCardPresent && tender.finalized) x = await proc.refund(ref, total, ctx);
+              return x;
+            });
           } catch (e) { r = { status: "error", message: String((e as Error).message ?? e) }; }
           if (r.status !== "ok" && r.status !== "cancelled") { setSendError(`Card void failed: ${r.message}`); continue; }
         }
@@ -1953,6 +1981,38 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     />
   ) : null;
 
+  // Dashboard → Functions. One element for every screen that has the Dashboard button, so the panel
+  // opens where it was asked for (it used to exist only on the table layout and the order screen:
+  // asked for from the open-checks list it stayed hidden and popped up later on the table layout).
+  const functionsEl = showManager && perms ? (
+    <ManagerPanel
+      employee={employee} perms={perms} clocked={clock} jobs={empJobs} adjustments={adjustmentDefs}
+      hasCheck={ck.check.lines.length > 0} busy={mgrBusy} status={mgrStatus}
+      onClockIn={(j) => { void clockInPost(j).then((r) => { if (r.ok) commitShift({ jobId: j.id, jobName: j.name, sequence: r.sequence, defaultRoomId: "" }); }); }}
+      onClockOut={doClockOut} onNoSale={doNoSale} onCancelCheck={doCancelCheck}
+      onDiscount={doDiscount} onFinalize={cardSel ? () => { setShowManager(false); setShowFinalize(true); } : undefined}
+      onClose={() => setShowManager(false)}
+    />
+  ) : null;
+
+  // A card-present refund is waiting for the card on the reader (void / tip reduction on a debit payment,
+  // or any refund the processor will only make in person).
+  const presentEl = presentRun ? (
+    <div className="backdrop">
+      <div className="authbox" onClick={(e) => e.stopPropagation()}>
+        <div className="authtitle">Card-present refund</div>
+        <div className="authsub">{presentRun.text}</div>
+        <button className="mfbtn ghost" onClick={presentRun.cancel}>Cancel</button>
+      </div>
+    </div>
+  ) : null;
+
+  // Card Setup lives on the Manager's Menu (Geoff 2026-11-10: credit configuration is a manager function, not the employee Dashboard).
+  const cardSetupEl = showCardSetup && cardSel ? (
+    <CardSetup config={cardSel.config} terminalReaderId={terminalDef?.readerId ?? ""} onClose={() => setShowCardSetup(false)}
+      saveReader={(id) => saveDeviceId({ enterpriseServerUrl: settings.enterpriseServerUrl, storeId: settings.storeId, terminalUid: settings.terminalUid }, id)} />
+  ) : null;
+
   if (mode === "manager") {
     return (<>
       <ManagerMenu
@@ -1968,11 +2028,13 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
           transferAll: startTransferAll,
           clockedInEmployees: () => void openClockedIn(),
           openEmptyCheck: () => { setMgrStatus(""); setMgrPick({ kind: "emptyFor" }); },
+          cardSetup: cardSel?.config.name === "stripe" ? () => { setMgrStatus(""); setShowCardSetup(true); } : undefined,
           terminal: () => setConfirmTerminal(true),
           exit: () => void doSignOut(),
         }}
       />
       {mgrPickers}
+      {cardSetupEl}
       {authEl}
       {terminalConfirm}
       {toastEl}
@@ -1985,19 +2047,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
       {coverPad}
       {toastEl}
       {showHub && hubMenu}
-      {showManager && perms && (
-        <ManagerPanel
-          employee={employee} perms={perms} clocked={clock} jobs={empJobs} adjustments={adjustmentDefs}
-          hasCheck={ck.check.lines.length > 0} busy={mgrBusy} status={mgrStatus}
-          onClockIn={(j) => { void clockInPost(j).then((r) => { if (r.ok) commitShift({ jobId: j.id, jobName: j.name, sequence: r.sequence, defaultRoomId: "" }); }); }}
-          onClockOut={doClockOut} onNoSale={doNoSale} onCancelCheck={doCancelCheck}
-          onDiscount={doDiscount} onFinalize={cardSel ? () => { setShowManager(false); setShowFinalize(true); } : undefined}
-          onCardSetup={cardSel?.config.name === "stripe" ? () => { setShowManager(false); setShowCardSetup(true); } : undefined} onClose={() => setShowManager(false)}
-        />
-      )}
-      {showCardSetup && cardSel && (
-        <CardSetup config={cardSel.config} terminalReaderId={terminalDef?.readerId ?? ""} onClose={() => setShowCardSetup(false)} />
-      )}
+      {functionsEl}
       {finalizeEl}
       <Floorplan
         storeName={settings.storeName || settings.storeId}
@@ -2411,6 +2461,8 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
           onSend={sendFromCompose}
         />
         {showHub && hubMenu}
+        {functionsEl}
+        {finalizeEl}
       </div>
     );
   }
@@ -2431,6 +2483,9 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
           onReopen={reopenClosed} onReprint={(r) => void reprintClosed(r)} onRefresh={() => void loadClosed()}
           onBack={() => { setMgrStatus(""); setMode("manager"); }}
         />
+        {showHub && hubMenu}
+        {functionsEl}
+        {finalizeEl}
         {authEl}
         {toastEl}
       </div>
@@ -2463,6 +2518,8 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
           onToggleMine={() => setTabsMineOnly((v) => !v)}
         />
         {showHub && hubMenu}
+        {functionsEl}
+        {finalizeEl}
         {toastEl}
       </div>
     );
@@ -2673,19 +2730,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
         <ModifierFlow itemName={pending.item.name} steps={pending.steps} stepsFor={(mi) => modifierSteps(cat, mi.modChainId, rcId)} onDone={finishMods} onCancel={() => setPending(null)} />
       )}
 
-      {showManager && perms && (
-        <ManagerPanel
-          employee={employee} perms={perms} clocked={clock} jobs={empJobs} adjustments={adjustmentDefs}
-          hasCheck={ck.check.lines.length > 0} busy={mgrBusy} status={mgrStatus}
-          onClockIn={(j) => { void clockInPost(j).then((r) => { if (r.ok) commitShift({ jobId: j.id, jobName: j.name, sequence: r.sequence, defaultRoomId: "" }); }); }}
-          onClockOut={doClockOut} onNoSale={doNoSale} onCancelCheck={doCancelCheck}
-          onDiscount={doDiscount} onFinalize={cardSel ? () => { setShowManager(false); setShowFinalize(true); } : undefined}
-          onCardSetup={cardSel?.config.name === "stripe" ? () => { setShowManager(false); setShowCardSetup(true); } : undefined} onClose={() => setShowManager(false)}
-        />
-      )}
-      {showCardSetup && cardSel && (
-        <CardSetup config={cardSel.config} terminalReaderId={terminalDef?.readerId ?? ""} onClose={() => setShowCardSetup(false)} />
-      )}
+      {functionsEl}
 
       {pendingAuth && (
         <ManagerAuth
@@ -3160,6 +3205,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
           }}
         />
       )}
+      {presentEl}
     </div>
   );
 }
