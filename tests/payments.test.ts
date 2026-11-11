@@ -73,7 +73,7 @@ describe("processorConfig / selectProcessor", () => {
 describe("brandFromText", () => {
   it("maps processor brand codes to iCat_Code vocabulary", () => {
     expect(brandFromText("V")).toBe("VISA"); expect(brandFromText("mastercard")).toBe("MASTERCARD");
-    expect(brandFromText("X")).toBe("AMEX"); expect(brandFromText("R")).toBe("DISCOVER"); expect(brandFromText("zz")).toBe("OTHER"); expect(brandFromText("")).toBeUndefined();
+    expect(brandFromText("X")).toBe("AMEX"); expect(brandFromText("R")).toBe("DISCOVER"); expect(brandFromText("interac")).toBe("INTERAC"); expect(brandFromText("zz")).toBe("OTHER"); expect(brandFromText("")).toBeUndefined();
   });
 });
 

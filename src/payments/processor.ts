@@ -20,7 +20,7 @@
 
 export type ProcessorName = "stripe" | "tsys" | "mock";
 
-export type CardBrand = "VISA" | "MASTERCARD" | "AMEX" | "DISCOVER" | "JCB" | "DINERS" | "UNIONPAY" | "OTHER";
+export type CardBrand = "VISA" | "MASTERCARD" | "AMEX" | "DISCOVER" | "JCB" | "DINERS" | "UNIONPAY" | "INTERAC" | "OTHER";
 
 /** Where a transaction belongs on the Aireus side. */
 export interface CheckRef {
@@ -110,5 +110,6 @@ export function brandFromText(v: string | undefined): CardBrand | undefined {
   if (/^(J|JCB)$/.test(t)) return "JCB";
   if (/^(D|DC|DINERS|DINERS CLUB)$/.test(t)) return "DINERS";
   if (/^(U|UP|UNIONPAY|CUP)$/.test(t)) return "UNIONPAY";
+  if (/^(INTERAC)$/.test(t)) return "INTERAC";
   return "OTHER";
 }

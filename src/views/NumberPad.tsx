@@ -6,16 +6,19 @@
  */
 
 import { useState } from "react";
+import { padKey, padStart } from "@/model/numpad";
 
-export default function NumberPad({ title, sub, mode, initial = "", allowZero = false, onOk, onCancel }: {
-  title: string; sub?: string; mode: "money" | "count"; initial?: string; allowZero?: boolean;
+export default function NumberPad({ title, sub, mode, initial = "", prefill = false, allowZero = false, onOk, onCancel }: {
+  title: string; sub?: string; mode: "money" | "count"; initial?: string; prefill?: boolean; allowZero?: boolean;
   onOk: (value: number) => void; onCancel: () => void;
 }) {
-  const [digits, setDigits] = useState(initial.replace(/\D/g, ""));
+  // prefill: the pad opens showing `initial` and the first digit typed replaces it (card amount = the balance).
+  const [pad, setPad] = useState(() => (prefill ? padStart(initial, true) : { digits: initial.replace(/\D/g, ""), fresh: false }));
+  const digits = pad.digits;
   const value = mode === "money" ? Number(digits || "0") / 100 : Number(digits || "0");
   const shown = mode === "money" ? `$${value.toFixed(2)}` : digits || "0";
-  const press = (k: string) => setDigits((d) => (d + k).replace(/^0+(?=\d)/, "").slice(0, 9));
-  const del = () => setDigits((d) => d.slice(0, -1));
+  const press = (k: string) => setPad((p) => (p.fresh ? padKey(p, k) : { digits: (p.digits + k).replace(/^0+(?=\d)/, "").slice(0, 9), fresh: false }));
+  const del = () => setPad((p) => padKey(p, "⌫"));
   const ok = () => { if (mode === "count" && value < 1 && !allowZero) return; onOk(value); };
   return (
     <div className="backdrop" onClick={onCancel}>

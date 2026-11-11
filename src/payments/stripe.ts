@@ -150,10 +150,13 @@ const obj = (v: unknown): Obj => (v && typeof v === "object" && !Array.isArray(v
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 const numv = (v: unknown): number | undefined => (typeof v === "number" ? v : undefined);
 
-/** The latest_charge of an intent (expanded) and its card_present details. */
+/** The latest_charge of an intent (expanded) and its card details. A credit card's details sit under
+ *  card_present; an Interac (debit) card's sit under interac_present with the same field names
+ *  (brand, last4, read_method, receipt). */
 function chargeOf(pi: Obj): { charge: Obj; card: Obj } {
   const charge = obj(pi.latest_charge);
-  const card = obj(obj(charge.payment_method_details).card_present);
+  const details = obj(charge.payment_method_details);
+  const card = obj(str(details.type) === "interac_present" ? details.interac_present : details.card_present);
   return { charge, card };
 }
 
@@ -191,7 +194,7 @@ export function intentResult(pi: Obj, waitingText = "Present the card on the rea
   const captured = charge.captured === true;
   const base: Partial<CardResult> = {
     ref: id, recordNo: str(charge.id) ?? id,
-    authCode: str(r.authorization_code), last4: str(card.last4), brand: brandFromText(str(card.brand) ?? str(card.network)),
+    authCode: str(r.authorization_code), last4: str(card.last4), brand: isInterac(pi) ? "INTERAC" : brandFromText(str(card.brand) ?? str(card.network)),
     authorizedAmount: dollars(numv(card.amount_authorized)) ?? dollars(numv(pi.amount)),
     capturedAmount: captured ? dollars(numv(charge.amount_captured)) : undefined,
     tip: dollars(numv(obj(obj(pi.amount_details).tip).amount)),

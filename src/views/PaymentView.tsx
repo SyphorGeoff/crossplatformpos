@@ -347,7 +347,8 @@ export default function PaymentView(p: PaymentViewProps) {
         {mode.kind === "cash" && cash && <CashPad due={share} rounding={cash.roundingAmount} onApply={applyCash} onBack={() => setMode({ kind: "tenders" })} />}
 
         {mode.kind === "card" && (
-          <NumberPad key="card" title={mode.tender.name} sub={`Amount — OK alone pays ${fmt(share)}${divideNum > 1 ? ` (share of ${fmt(due)})` : ""}`} mode="money"
+          <NumberPad key={`card-${share}`} title={mode.tender.name} sub={divideNum > 1 ? `Amount — share of ${fmt(due)}` : "Amount"} mode="money"
+            initial={String(Math.round(share * 100))} prefill
             onOk={(v) => cardAmount(mode.tender, v)} onCancel={() => setMode({ kind: "tenders" })} />
         )}
         {mode.kind === "tip" && (
