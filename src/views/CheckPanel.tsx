@@ -129,13 +129,17 @@ function LineRow({ line, selecting, checked, showGuest, onToggle, onQty, onRemov
 
 /** A payment on the check, drawn like any other line (iPad CheckTableCellView.m isTypeTender 456-471,
  *  813-820): the tender name with the card's last four in brackets, the amount, and the tip under it.
- *  A voided payment is struck through; its reversal line is not shown. (The iPad's guest badge on a
+ *  A voided payment is struck through; its reversal line is not shown. In Edit mode it is selectable
+ *  like an item, and Void Selected voids it (manager authorization and a reason). (The iPad's guest badge on a
  *  payment needs applied_to_guests on tender lines, which posx does not record yet.) */
-function TenderRow({ t }: { t: TenderLine }) {
+function TenderRow({ t, selecting, checked, onToggle }: { t: TenderLine; selecting: boolean; checked: boolean; onToggle: (k: string) => void }) {
   const name = `${t.name}${t.last4 ? `(${t.last4})` : ""}`;
+  const selectable = selecting && !t.isVoid;   // Edit mode: pick it like an item, then Void Selected
   return (
-    <div className={`cl tender ${t.sent ? "sent" : "fresh"} ${t.isVoid ? "void" : ""}`}>
+    <div className={`cl tender ${t.sent ? "sent" : "fresh"} ${t.isVoid ? "void" : ""} ${selectable ? "selectable" : ""} ${checked ? "picked" : ""}`}
+      onClick={selectable ? () => onToggle(t.key) : undefined}>
       <div className="clmain">
+        {selectable && <span className="clcheck">{checked ? "☑" : "☐"}</span>}
         <span className="clqty" />
         <span className="clname">{name}{t.finalized === false && <span className="clheld">AUTH</span>}{t.reference && <span className="clitemnote">{t.reference}</span>}</span>
         <span className="clamt">{fmt(t.amount)}{t.tip > 0 && <span className="cltip">tip {fmt(t.tip)}</span>}</span>
@@ -292,7 +296,7 @@ export default function CheckPanel(p: CheckPanelProps) {
             {unsentHeads.length > 0 && <button className="csentpill collapse" onClick={() => setSentExpanded(false)}>▲ BACK TO NEW ITEMS</button>}
           </>
         )}
-        {payments.map((t) => <TenderRow key={t.key} t={t} />)}
+        {payments.map((t) => <TenderRow key={t.key} t={t} selecting={selecting} checked={sel.has(t.key)} onToggle={p.onToggleLine ?? (() => {})} />)}
       </div>
 
       {!selecting && p.onSelectGuest && (

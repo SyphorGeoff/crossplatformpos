@@ -1707,8 +1707,11 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
   // Void selected lines (from the check-panel select mode). Sent lines need a
   // manager auth + reason; unsent lines are just removed.
   const voidSelected = (keys: Set<string>) => {
-    const sentKeys = [...keys].filter((k) => ck.check.lines.find((l) => l.key === k)?.sent);
-    if (sentKeys.length === 0) { keys.forEach((k) => removeCounted(k)); return; }
+    // A selected payment always goes through the authorized void (applyVoid reverses a card at the
+    // processor first, then posts the reversal); unsent items are simply removed.
+    const isPayment = (k: string) => ck.check.tenders.some((t) => t.key === k && !t.isVoid);
+    const needsAuth = [...keys].some((k) => isPayment(k) || ck.check.lines.find((l) => l.key === k)?.sent);
+    if (!needsAuth) { keys.forEach((k) => removeCounted(k)); return; }
     requireAuth(false, "Authorize void", "void", (auth) => setVoidReason({ keys: [...keys], auth }));
   };
   /** Void: reduce the check HERE (pure reducers) and POST that exact object — the
