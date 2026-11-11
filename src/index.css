@@ -591,3 +591,10 @@ body { background: var(--cream); color: var(--ink); font-family: "Helvetica Neue
 .psempty { padding: 18px 0; text-align: center; white-space: normal; font: 12px/1.4 -apple-system, "Helvetica Neue", Arial, sans-serif; color: #8a8478; }
 .psimpill { position: fixed; z-index: 40; padding: 9px 16px; border: none; border-radius: 999px; background: var(--ink); color: var(--cream); font-weight: 700; font-size: 13px; box-shadow: 0 8px 24px rgba(26,26,26,.3); cursor: pointer; touch-action: none; user-select: none; -webkit-user-select: none; }
 .loginfoot .lvernum { cursor: pointer; }
+
+/* Red padlock: the check is locked by another terminal (tab cards, floor tables, the lock dialog). */
+.lockico { display: inline-flex; align-items: center; color: #D0312D; margin-left: 5px; vertical-align: -1px; }
+.table .tchk .lockico { margin-left: 3px; }
+.table .tchk .lockico svg { width: 10px; height: 10px; }
+.authtitle .lockico { margin: 0 6px 0 0; }
+.authtitle .lockico svg { width: 15px; height: 15px; }

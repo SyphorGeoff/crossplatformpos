@@ -169,19 +169,20 @@ const needsPresent = (ref: string, amountCents: number): CardResult =>
 /** Card-present refunds in flight: payment id → the reader prompting for the card. */
 const presentRefunds = new Map<string, { readerId: string }>();
 
-/** EMV receipt lines a slip prints (same text for customer and merchant copies). */
+/** The card lines a slip prints, in slip order: Account / APN / AID / TVR / TSI / Cryptogram / ENTRY.
+ *  Account (credit / checking / savings / prepaid) is on every card: card networks require it on
+ *  receipts outside the US, and Interac always. Same text for the merchant and the guest copy. */
 export function receiptLines(card: Obj): string | undefined {
   const r = obj(card.receipt);
   const lines: string[] = [];
-  if (str(r.application_preferred_name)) lines.push(`${r.application_preferred_name}`);
-  if (str(r.dedicated_file_name)) lines.push(`AID ${r.dedicated_file_name}`);
-  if (str(r.account_type)) lines.push(`ACCOUNT ${r.account_type}`);   // credit / checking / prepaid — card networks require it on receipts outside the US
-  if (str(r.authorization_code)) lines.push(`AUTH ${r.authorization_code}`);
-  if (str(r.terminal_verification_results)) lines.push(`TVR ${r.terminal_verification_results}`);
-  if (str(r.transaction_status_information)) lines.push(`TSI ${r.transaction_status_information}`);
-  if (str(r.application_cryptogram)) lines.push(`AC ${r.application_cryptogram}`);
-  if (str(r.cardholder_verification_method)) lines.push(`CVM ${String(r.cardholder_verification_method).replace(/_/g, " ")}`);
-  if (str(card.read_method)) lines.push(`ENTRY ${String(card.read_method).replace(/_/g, " ")}`);
+  const account = str(r.account_type) ?? str(card.funding);
+  if (account) lines.push(`Account: ${account}`);
+  if (str(r.application_preferred_name)) lines.push(`APN: ${r.application_preferred_name}`);
+  if (str(r.dedicated_file_name)) lines.push(`AID: ${r.dedicated_file_name}`);
+  if (str(r.terminal_verification_results)) lines.push(`TVR: ${r.terminal_verification_results}`);
+  if (str(r.transaction_status_information)) lines.push(`TSI: ${r.transaction_status_information}`);
+  if (str(r.application_cryptogram)) lines.push(`Cryptogram: ${r.application_cryptogram}`);
+  if (str(card.read_method)) lines.push(`ENTRY: ${String(card.read_method).replace(/_/g, " ")}`);
   return lines.length ? lines.join("\n") : undefined;
 }
 

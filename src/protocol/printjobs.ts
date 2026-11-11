@@ -203,7 +203,7 @@ function tokenValue(tok: string, t: TokenCtx): string {
 }
 
 /** Replace {…} tokens in a wrapper line (parseCheckTrailerToken/loopThroughTrailertokens). */
-function replaceTokens(line: string, t: TokenCtx): string {
+export function replaceTokens(line: string, t: TokenCtx): string {
   if (!line.includes("{")) return line;
   return line.split(/[{}]/).map((seg, i) => (i % 2 === 0 ? seg : tokenValue(seg, t))).join("");
 }

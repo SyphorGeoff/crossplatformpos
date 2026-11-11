@@ -54,6 +54,9 @@ export interface CardSupport {
   barTabs: boolean;
   /** Finish Tab: capture the hold for base + tip, record the tip on the server line (Finalize_Tender), mark it finalized. */
   finishTab?: (key: string, tip: number) => Promise<{ ok: boolean; message: string }>;
+  /** A card payment was approved: the parent prints its slip. `tender` is the tender that was pressed (its
+   *  threshold decides printing). Not called when a bar tab is opened; that slip prints when the tab is finished. */
+  onApproved?: (a: { kind: "sale" | "auth"; tender: Tender; cardType: string; last4?: string; authCode?: string; amount: number; tip: number; cardLines: string[] }) => void;
 }
 
 export interface PaymentViewProps {
@@ -186,6 +189,10 @@ export default function PaymentView(p: PaymentViewProps) {
       finalized: sale, authorizedAmount: approved, capturedAmount: sale ? round2((partial ? approved : amount) + round2(r.tip ?? tip)) : undefined,
     };
     const note = `${line.name} ${fmt(line.amount)}${line.tip ? ` + tip ${fmt(line.tip)}` : ""}${line.last4 ? ` ••${line.last4}` : ""}${sale ? "" : " authorized"}${partial ? ` · partial approval (${fmt(approved)} of ${fmt(amount)})` : ""}`;
+    if (!forceAuth) card.onApproved?.({
+      kind: sale ? "sale" : "auth", tender, cardType: r.brand ?? line.name, last4: line.last4, authCode: line.authCode,
+      amount: line.amount, tip: line.tip, cardLines: (r.receipt?.customer ?? "").split("\n").filter((l) => l.trim() !== ""),
+    });
     recordWithKey(key, line, note);
   };
 

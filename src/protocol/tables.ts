@@ -26,6 +26,12 @@ export interface OpenCheck {
   printCount: number;
   isAllergy: boolean;
   lastModified: string;
+  lockedBy?: string;        // Locking_Terminal_POS_ID when Is_Locked="1" ("?" if the server names no terminal); "" / absent = not locked
+}
+
+/** True when another terminal holds the check's lock (this terminal's own lock is the check it is working on). */
+export function lockedElsewhere(oc: Pick<OpenCheck, "lockedBy"> | undefined, myTerminalId: string): boolean {
+  return !!oc?.lockedBy && oc.lockedBy !== myTerminalId;
 }
 
 /** A settled check of the business date (Manager's Menu → Closed Checks). */
@@ -68,7 +74,11 @@ export async function fetchOpenChecks(cfg: SessionConfig, businessDateId: string
   const xml = `${XML_HEAD}${TRANS_DTD}<Transactional_Request Trans_Type="Open_Checks">` +
     el("ISIS_Ver", cfg.isisVer) + el("Store_ID", cfg.storeId) + el("Security_Token", cfg.token) +
     el("BusinessDate_ID", businessDateId) + emp + `</Transactional_Request>`;
-  const parsed = parseXmlResponse(await postXml(apiServerAddress(cfg.enterpriseServerUrl), xml));
+  return parseOpenChecks(parseXmlResponse(await postXml(apiServerAddress(cfg.enterpriseServerUrl), xml)), businessDateId);
+}
+
+/** The Open_Checks reply → rows. Is_Locked is an attribute of <Open_Check>; a locked row names its terminal. */
+export function parseOpenChecks(parsed: XmlDict, businessDateId: string): OpenCheck[] {
   return asList(findKey(parsed, "Open_Check")).map((r: XmlDict) => ({
     tableId: textOf(findKey(r, "Table_POS_ID")),
     checkNo: textOf(findKey(r, "Check_Number")),
@@ -79,6 +89,7 @@ export async function fetchOpenChecks(cfg: SessionConfig, businessDateId: string
     printCount: Number(textOf(findKey(r, "Print_Count"))) || 0,
     isAllergy: textOf(findKey(r, "Is_Allergy")) === "1",
     lastModified: textOf(findKey(r, "Last_Modified_Time")) || textOf(findKey(r, "last_Modified_Time")),
+    lockedBy: textOf(r["Is_Locked"]) === "1" ? (textOf(findKey(r, "Locking_Terminal_POS_ID")) || "?") : "",
   }));
 }
 

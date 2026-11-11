@@ -79,7 +79,8 @@ describe("encoding and helpers", () => {
   });
   it("receipt lines carry the EMV fields a slip prints", () => {
     const lines = receiptLines((charge().payment_method_details as { card_present: Record<string, unknown> }).card_present)!;
-    expect(lines).toContain("AID A0000000031010"); expect(lines).toContain("ACCOUNT credit"); expect(lines).toContain("AUTH 123456"); expect(lines).toContain("TVR 0000008000"); expect(lines).toContain("ENTRY contact emv");
+    expect(lines).toContain("AID: A0000000031010"); expect(lines).toContain("Account: credit"); expect(lines).not.toContain("AUTH"); expect(lines).toContain("TVR: 0000008000");
+    expect(lines!.split("\n")[0]).toBe("Account: credit"); expect(lines).toContain("APN: VISA CREDIT"); expect(lines).toContain("Cryptogram: ABCDEF0123456789"); expect(lines).not.toMatch(/CVM/); expect(lines).toContain("ENTRY: contact emv");
   });
 });
 
@@ -88,7 +89,7 @@ describe("intent → CardResult", () => {
     const r = intentResult(intent("requires_capture", { latest_charge: charge() }));
     expect(r.status).toBe("ok"); expect(r.message).toBe("Authorized"); expect(r.ref).toBe("pi_1"); expect(r.recordNo).toBe("ch_1");
     expect(r.authCode).toBe("123456"); expect(r.last4).toBe("4242"); expect(r.brand).toBe("VISA"); expect(r.authorizedAmount).toBe(20); expect(r.capturedAmount).toBeUndefined();
-    expect(r.receipt?.customer).toContain("AUTH 123456");
+    expect(r.receipt?.customer).toContain("TSI: E800"); expect(r.receipt?.customer).toContain("ENTRY: contact emv");
   });
   it("an Interac (debit) charge: details come from interac_present and the brand is INTERAC", () => {
     const interac = { id: "ch_2", object: "charge", captured: true, amount: 632, amount_captured: 632, amount_refunded: 0,
@@ -99,7 +100,7 @@ describe("intent → CardResult", () => {
     const r = intentResult(intent("succeeded", { amount: 632, latest_charge: interac }));
     expect(r.status).toBe("ok"); expect(r.brand).toBe("INTERAC"); expect(r.last4).toBe("1933"); expect(r.authCode).toBe("654321");
     expect(r.capturedAmount).toBe(6.32); expect(r.recordNo).toBe("ch_2");
-    expect(r.receipt?.customer).toContain("ACCOUNT checking"); expect(r.receipt?.customer).toContain("ENTRY contactless emv");
+    expect(r.receipt?.customer).toContain("Account: checking"); expect(r.receipt?.customer).toContain("ENTRY: contactless emv");
   });
   it("succeeded = captured amount, tip from amount_details", () => {
     const r = intentResult(intent("succeeded", { amount: 2300, amount_details: { tip: { amount: 300 } }, latest_charge: charge({ captured: true, amount: 2300, amount_captured: 2300 }) }));

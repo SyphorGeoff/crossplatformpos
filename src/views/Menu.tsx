@@ -38,6 +38,7 @@ import { memberLookup, type Member } from "@/protocol/memberlookup";
 import { backupPrinter, checkPrinter, checkPrinters, checkWrapper, prepPrintersForGroups, printers as loadPrinters, terminalChoosesPrinter, type Printer } from "@/model/printers";
 import { buildClockChit, buildCustomerCheck, buildFireChit, buildNoteChit, buildPrepChit, type CheckLineOut, type CourseOpts, type PrepCtx, type PrepItem } from "@/protocol/printjobs";
 import { printReceipt, printTo } from "@/platform/print";
+import { buildCardSlips, shouldPrintCardSlip, type SlipKind } from "@/protocol/cardslip";
 import { simulatorOn } from "@/platform/printsim";
 import { DRAWER_KICK } from "@/platform/escpos";
 import { buildKdsOrderJson, sendKdsOrder, type KdsItem } from "@/protocol/kdsorder";
@@ -58,9 +59,10 @@ import { undoCard } from "@/payments/run";
 import type { CardResult, CheckRef } from "@/payments/processor";
 import { fetchUnfinalized, postFinalizeTender, type UnfinalizedTender } from "@/protocol/finalize";
 import FinalizeView from "./FinalizeView";
+import LockIcon from "./LockIcon";
 import EditPaymentView from "./EditPaymentView";
 import type { CardSupport } from "./PaymentView";
-import type { Adjustment, DiningTable, Employee, Job, MenuItem, ScreenGroup } from "@/model/catalog";
+import type { Adjustment, DiningTable, Employee, Job, MenuItem, ScreenGroup, Tender } from "@/model/catalog";
 import { can, jobsForEmployee, permsForEmployee, type AuthAction, type Authorizer } from "@/model/permissions";
 import { clockIn, clockOut, fetchClockedInEmp, fetchClockedInEmpIds, fetchClockedInEmps, type ClockedInEmp } from "@/protocol/timeclock";
 import {
@@ -188,6 +190,8 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
   const [openChecks, setOpenChecks] = useState<OpenCheck[]>([]);
   const [floorLoading, setFloorLoading] = useState(false);
   const [floorStatus, setFloorStatus] = useState("");
+  // A check another terminal holds: popped as a dialog, not left in the status line (Geoff 2026-11-11).
+  const [lockNotice, setLockNotice] = useState<string | null>(null);
   // The server-side check lock this terminal holds. Persisted: a reload or a closed browser used to
   // orphan it (2026-11-06: check 200080 stayed locked store-wide), so the record survives and the
   // next launch gives the lock back before anything else.
@@ -228,6 +232,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
   const payTenders = useMemo(() => loadTenders().filter((t) => !t.hidden).sort((a, b) => a.sort - b.sort), [defsVersion]); // eslint-disable-line react-hooks/exhaustive-deps
   const allTenders = useMemo(() => loadTenders(), [defsVersion]); // eslint-disable-line react-hooks/exhaustive-deps
   const store = useMemo(() => storeConfig(), [defsVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+  const terminalName = (id: string) => loadTerminals().find((t) => t.id === id)?.name || id;
   const terminalDef = useMemo(() => loadTerminals().find((t) => t.id === settings.terminalPosId), [defsVersion, settings.terminalPosId]); // eslint-disable-line react-hooks/exhaustive-deps
   // The card processor for the working check's revenue center (RC override, else the Store); null = online tenders disabled.
   const cardSel = useMemo(() => selectProcessor(store, cat.rcById.get(ck.check.revenueCenterId) ?? null), [store, cat, ck.check.revenueCenterId]);
@@ -932,7 +937,12 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
       const bd = occ.businessDateId || (await ensureBd());
       const lock = await lockCheck(sessionCfg(), { checkNo: occ.checkNo, checkKey: occ.checkKey, businessDateId: bd });
       if (!lock.ok) {
-        setFloorStatus(lock.alreadyLocked ? `${label} is open on another terminal` : `Could not lock: ${lock.message}`);
+        if (lock.alreadyLocked) {
+          setFloorStatus("");
+          const by = occ.lockedBy && occ.lockedBy !== "?" && occ.lockedBy !== settings.terminalPosId ? terminalName(occ.lockedBy) : "";
+          setLockNotice(`Check ${occ.checkNo} is locked${by ? ` by terminal ${by}` : " by another terminal"}. It has to be closed there before it can be opened here.`);
+          void refreshOpenChecks();   // pick up the lock so the red lock shows on the list
+        } else setFloorStatus(`Could not lock: ${lock.message}`);
         setFloorLoading(false); return false;
       }
       held = { checkNo: occ.checkNo, checkKey: occ.checkKey, businessDateId: bd };
@@ -1435,6 +1445,33 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     return { ok: true, message: "" };
   };
 
+  /** Card slip (iPad PrintManager printReceipt): Merchant Copy, then Guest Copy, on the terminal's check
+   *  printer. Prints on approval (a hold or a one-shot sale) and when a bar tab is finished; never at
+   *  Finalize cards. The pressed tender's threshold and the store's print-on-demand setting decide. */
+  const printCardSlip = (a: { kind: SlipKind; tender?: Tender; cardType: string; last4?: string; authCode?: string; amount: number; tip: number; cardLines: string[] }) => {
+    if (!employee) return;
+    if (!shouldPrintCardSlip(a.kind, a.amount + a.tip, a.tender?.threshold ?? 0, store.printReceiptOnDemand)) return;
+    const pr = receiptPrinter();
+    if (!pr) return;
+    const c = checkRef.current;
+    const rc = cat.rcById.get(c.revenueCenterId);
+    const now = new Date();
+    const two = (n: number) => String(n).padStart(2, "0");
+    const nm = employee.name.trim().split(/\s+/);
+    const slips = buildCardSlips({
+      store: { identification: store.identification || settings.storeName || "", address1: store.address1, address2: store.address2, city: store.city },
+      server: employee.name,
+      time: now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
+      date: `${two(now.getMonth() + 1)}/${two(now.getDate())}/${now.getFullYear()}`,
+      checkNo: c.checkNumber ?? "", tabName: c.tableName ?? "",
+      kind: a.kind, cardType: a.cardType, last4: a.last4 ?? "", amount: a.amount, tip: a.tip, authCode: a.authCode ?? "", cardLines: a.cardLines,
+      trailerLines: rc?.printTrailerOnPaymentReceipt ? checkWrapper(c.revenueCenterId).trailerLines : undefined,
+      tokens: { firstName: nm[0] ?? "", lastName: nm.slice(1).join(" "), tabName: c.tableName ?? "" },
+    }, pr.charsPerLine);
+    const opts = { enterpriseCode: settings.enterpriseCode, storeId: settings.storeId, backup: backupPrinter(pr) };
+    void (async () => { for (const job of slips) await printReceipt(pr, job, opts); })();   // Merchant Copy first, then Guest Copy
+  };
+
   const cardSupport: CardSupport | undefined = cardSel && employee ? {
     processor: cardSel.processor, processorName: cardSel.config.name,
     payAtTable: terminalDef?.payAtTable ?? false, readerId: terminalDef?.readerId ?? "",
@@ -1442,6 +1479,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     checkRef: checkRefFor,
     brandTender: (brand) => allTenders.find((t) => t.isCredit && !t.hidden && t.iCatCode === brand),
     mintKey: mintLineKey,
+    onApproved: (a) => printCardSlip(a),
     resize: resizeCardLine,
     barTabs: terminalDef?.useRepeatSale ?? false,
     finishTab: (key, tip) => finishTab(key, tip),
@@ -1474,6 +1512,11 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     if (!f.ok) return { ok: false, message: `Captured at the processor but Finalize_Tender failed: ${f.message}` };
     const captured = Math.round((line.amount + tip) * 100) / 100;
     ck.update((c) => ({ ...c, tenders: c.tenders.map((t) => t.key !== key ? t : { ...t, tip, finalized: true, capturedAmount: captured, ref: r.ref ?? t.ref, recordNo: r.recordNo ?? t.recordNo, authCode: r.authCode ?? t.authCode }) }));
+    // A bar tab's slip prints now, with the tip and the total (the hold itself printed nothing).
+    printCardSlip({
+      kind: "sale", tender: allTenders.find((t) => t.id === line!.tenderId), cardType: r.brand ?? line.brand ?? line.name, last4: r.last4 ?? line.last4,
+      authCode: r.authCode ?? line.authCode, amount: line.amount, tip, cardLines: (r.receipt?.customer ?? "").split("\n").filter((l) => l.trim() !== ""),
+    });
     return { ok: true, message: "" };
   };
 
@@ -1710,12 +1753,24 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
 
   // While checking the server for an existing shift.
   // In-app stand-in for the iOS local notification: tap = open the inbox; fades after 8 s.
-  const toastEl = toast ? (
-    <div className="msgtoast" onClick={openMessages}>
-      <div className="mtfrom">{toast.fromName ? toast.fromName.split(",").reverse().join(" ").trim() : (empList.find((e) => e.id === toast.fromEmpId)?.name ?? "Message")}</div>
-      <div className="mttext">{toast.subject ? `${toast.subject}: ${toast.body}` : toast.body}</div>
+  const lockNoticeEl = lockNotice ? (
+    <div className="backdrop prompt" onClick={() => setLockNotice(null)}>
+      <div className="authbox" onClick={(e) => e.stopPropagation()}>
+        <div className="authtitle"><LockIcon /> Check locked</div>
+        <div className="authsub">{lockNotice}</div>
+        <button className="mfbtn" onClick={() => setLockNotice(null)}>OK</button>
+      </div>
     </div>
   ) : null;
+  const toastEl = (<>
+    {toast ? (
+      <div className="msgtoast" onClick={openMessages}>
+        <div className="mtfrom">{toast.fromName ? toast.fromName.split(",").reverse().join(" ").trim() : (empList.find((e) => e.id === toast.fromEmpId)?.name ?? "Message")}</div>
+        <div className="mttext">{toast.subject ? `${toast.subject}: ${toast.body}` : toast.body}</div>
+      </div>
+    ) : null}
+    {lockNoticeEl}
+  </>);
 
   if (!clock && signingIn) return (
     <div className="login"><div className="loginpad"><div className="loginprompt">Signing in…</div></div>{toastEl}</div>
@@ -2073,6 +2128,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
         onDashboard={() => setShowHub(true)}
         loading={floorLoading}
         status={floorStatus}
+        myTerminalId={settings.terminalPosId} nameForTerminal={terminalName}
         transferMode={transferMode || !!transferItemKeys}
         onCancelTransfer={() => { setTransferMode(false); setTransferItemKeys(null); setXferEmp(null); setMode("order"); }}
         roomId={floorRoomId} onRoomChange={setFloorRoomId}
@@ -2522,6 +2578,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
           status={floorStatus}
           onBack={tabsFromManager ? () => { setTabsFromManager(false); setMode("manager"); } : undefined}
           myEmpId={employee.id}
+          myTerminalId={settings.terminalPosId} nameForTerminal={terminalName}
           mineOnly={tabsMineOnly}
           canSeeAll={!!clock && !!empJobs.find((j) => j.id === clock.jobId)?.seeAllChecks}
           onToggleMine={() => setTabsMineOnly((v) => !v)}

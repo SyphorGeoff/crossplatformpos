@@ -28,7 +28,7 @@ const mi = (id: string, name: string, o: Partial<MenuItem> & { hide?: string; nl
   askForPrice: false, isTimedItem: false, forceTabName: false, nonRevenue: false, imageId: "", description: "", printSortOrder: 0, cost: 0, affinityId: "", top16: false, mainToppingGroupId: "",
   _raw: { Hide_From_Store: o.hide ?? "0", NLU: o.nlu ?? "" },
 });
-const rc = (id: string, name: string, filter = false): RevenueCenter => ({ id, name, screenGroupFilter: filter, alwaysAskForTab: false, disableAutoGrat: false, timeoutActive: true, logoutAfterPayment: false, showCourse: false, useCourseButtons: false, guestBeforeCourse: false, useRcCcProcessor: false, ccProcessor: "", ccMerchantId: "", ccMerchantBundle: "", _raw: {} });
+const rc = (id: string, name: string, filter = false): RevenueCenter => ({ id, name, screenGroupFilter: filter, alwaysAskForTab: false, disableAutoGrat: false, timeoutActive: true, logoutAfterPayment: false, showCourse: false, useCourseButtons: false, guestBeforeCourse: false, useRcCcProcessor: false, printTrailerOnPaymentReceipt: false, ccProcessor: "", ccMerchantId: "", ccMerchantBundle: "", _raw: {} });
 const term = (id: string, defRc = "", defSg = ""): Terminal => ({
   id, name: "T" + id, defaultScreenGroupId: defSg, defaultRevenueCenterId: defRc, choosePrinter: false, checkPrinterIds: [], payAtTable: false, readerId: "", useRepeatSale: false, disableAutoIncrement: false, _raw: {},
 });

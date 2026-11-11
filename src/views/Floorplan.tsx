@@ -9,7 +9,8 @@
 
 import { useMemo } from "react";
 import type { DiningRoom, DiningTable } from "@/model/catalog";
-import type { OpenCheck } from "@/protocol/tables";
+import { lockedElsewhere, type OpenCheck } from "@/protocol/tables";
+import LockIcon from "./LockIcon";
 
 const DESIGN_W = 768; // the iPad room canvas width; tables are placed within it
 
@@ -29,6 +30,9 @@ export interface FloorplanProps {
   onDashboard: () => void;         // iOS Dashboard (functions: clock in/out, no sale, …)
   loading: boolean;
   status?: string;
+  /** This terminal's POS id and a terminal-name lookup: a check locked by another terminal shows a red lock. */
+  myTerminalId?: string;
+  nameForTerminal?: (id: string) => string;
   transferMode?: boolean;
   onCancelTransfer?: () => void;
   roomId?: string;                 // the room to show (Menu remembers it across Send / Tables)
@@ -94,7 +98,7 @@ export default function Floorplan(p: FloorplanProps) {
                 title={occ ? `Check ${occ.checkNo}` : `Table ${t.name}`}
               >
                 <span className="tnum">{t.name}</span>
-                {occ && <span className="tchk">#{occ.checkNo}</span>}
+                {occ && <span className="tchk">#{occ.checkNo}{lockedElsewhere(occ, p.myTerminalId ?? "") && <LockIcon title={`Locked by ${p.nameForTerminal?.(occ.lockedBy ?? "") ?? occ.lockedBy}`} />}</span>}
                 {t.seats > 0 && !occ && <span className="tseats">{t.seats}</span>}
               </button>
             );

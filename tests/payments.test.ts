@@ -24,11 +24,12 @@ const store = (over: Partial<StoreConfig> = {}): StoreConfig => ({
   loyaltyMerchantId: "", loyaltyMerchantPassword: "", allowRefire: false, maxCheckAmount: 1e6, printCourseLine: false, chitItemSpacing: false,
   terminalTimeoutSec: 0, gcMenuItemId: "", gcReloadMenuItemId: "", useSyphor: false,
   ccProcessor: "", ccTestMode: false, ccTimeoutSec: 60, requireAuthTip: false, maxTipPercent: 50, merchantId: "", merchantBundle: "", hostbasedCc: false,
+  identification: "", address1: "", address2: "", city: "", printReceiptOnDemand: false,
   ...over,
 });
 const rc = (over: Partial<RevenueCenter> = {}): RevenueCenter => ({
   id: "1", name: "Bar", screenGroupFilter: false, alwaysAskForTab: false, disableAutoGrat: false, timeoutActive: true, logoutAfterPayment: false,
-  showCourse: false, useCourseButtons: false, guestBeforeCourse: false, useRcCcProcessor: false, ccProcessor: "", ccMerchantId: "", ccMerchantBundle: "", _raw: {}, ...over,
+  showCourse: false, useCourseButtons: false, guestBeforeCourse: false, useRcCcProcessor: false, printTrailerOnPaymentReceipt: false, ccProcessor: "", ccMerchantId: "", ccMerchantBundle: "", _raw: {}, ...over,
 });
 const ctx: CheckRef = { storeId: "3", businessDateId: "90042", checkNo: "280001", checkKey: "1234567", tenderKey: "7654321", terminalPosId: "28", employeePosId: "5" };
 const req = (amount: number, over: Partial<CardRequest> = {}): CardRequest => ({ ...ctx, amount, tenderId: "16", timeoutSec: 10, ...over });

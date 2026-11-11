@@ -93,6 +93,7 @@ export interface RevenueCenter {
   useCourseButtons: boolean;  // rc_backup21 — course chooser while ordering (ItemsTableVC course bar)
   guestBeforeCourse: boolean; // sort_Guest_Before_Course — kitchen chit groups by guest, then course
   useRcCcProcessor: boolean;  // use_RC_CC_Processor — this RC overrides the store's card processor
+  printTrailerOnPaymentReceipt: boolean; // backup3 — the guest copy of a card slip carries the check trailer (Revenue_Center.m isPrintTrailerOnPaymentReceipt)
   ccProcessor: string;        // rc_CreditCardDriver (lower-cased) — the override
   ccMerchantId: string;       // rc_CC_Merchant_ID
   ccMerchantBundle: string;   // rc_CC_Merchant_Password — the override's JSON bundle (non-secret)
@@ -257,6 +258,7 @@ export function revenueCenters(): RevenueCenter[] {
     useCourseButtons: s(r, "rc_backup21") === "1",
     guestBeforeCourse: s(r, "sort_Guest_Before_Course") === "1",
     useRcCcProcessor: s(r, "use_RC_CC_Processor") === "1",
+    printTrailerOnPaymentReceipt: s(r, "backup3") === "1",
     ccProcessor: s(r, "rc_CreditCardDriver").trim().toLowerCase(),
     ccMerchantId: s(r, "rc_CC_Merchant_ID"),
     ccMerchantBundle: s(r, "rc_CC_Merchant_Password"),
@@ -411,6 +413,7 @@ export interface Tender {
   captureRequired: boolean; // tender_backup7 slot is unused; captureRequired is not on the feed — derived false
   incrementalAuth: boolean; // tender_backup6 — bar-tab style: raise the open auth as rounds post
   autoCapture: boolean;     // tender_backup10 — one-shot sale (capture at payment) even on an auth terminal
+  threshold: number;        // threshold — a card slip prints when payment + tip reaches it (Tender.m getThresholdValue; 0 = none)
   iCatCode: string;         // iCat_Code — the card brand this (offline) tender records: VISA / MASTERCARD / AMEX / DISCOVER…
   waitTimeSec: number;      // WaitTime — processor wait before giving up (seconds; 0 = Store CC_Timeout)
   _raw: DefRow;
@@ -442,6 +445,11 @@ export interface StoreConfig {
   ccTimeoutSec: number;       // CC_Timeout (seconds; 60 when unset)
   requireAuthTip: boolean;    // require_Auth_Tip — pre-auth with tip room
   maxTipPercent: number;      // Max_Tip_Percent — a tip at/above this % of the payment needs TIP_AUTH (50 when unset)
+  identification: string;     // Store_Identification — first line of a card slip (PrintManager getReceiptHeader)
+  address1: string;           // Address_1
+  address2: string;           // Address_2
+  city: string;               // City
+  printReceiptOnDemand: boolean; // store_backup22 — receipts for non-cash payments print only on request (Store.m isPrint_Receipt_On_Demand)
   merchantId: string;         // Merchant_ID — the processor account / MID
   merchantBundle: string;     // MerchantPassword — the processor's JSON bundle, raw (see payments/config.ts)
   hostbasedCc: boolean;       // hostbased_cc
@@ -472,6 +480,8 @@ export function storeConfig(): StoreConfig {
     ccTimeoutSec: Number(s(r, "CC_Timeout")) > 0 ? Number(s(r, "CC_Timeout")) : 60,
     requireAuthTip: s(r, "require_Auth_Tip") === "1",
     maxTipPercent: Number(s(r, "Max_Tip_Percent")) > 0 ? Number(s(r, "Max_Tip_Percent")) : 50,
+    identification: s(r, "Store_Identification").trim(), address1: s(r, "Address_1").trim(), address2: s(r, "Address_2").trim(), city: s(r, "City").trim(),
+    printReceiptOnDemand: s(r, "store_backup22") === "1",
     merchantId: s(r, "Merchant_ID"),
     merchantBundle: s(r, "MerchantPassword"),
     hostbasedCc: s(r, "hostbased_cc") === "1",
@@ -507,6 +517,7 @@ export function tenders(): Tender[] {
     captureRequired: false,
     incrementalAuth: s(r, "tender_backup6") === "1",
     autoCapture: s(r, "tender_backup10") === "1",
+    threshold: Number(s(r, "threshold")) || 0,
     iCatCode: s(r, "iCat_Code").trim().toUpperCase(),
     waitTimeSec: Number(s(r, "WaitTime")) || 0,
     _raw: r,

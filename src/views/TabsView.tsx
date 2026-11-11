@@ -5,7 +5,8 @@
  * locks + reads that check back into the order screen.
  */
 
-import type { OpenCheck } from "@/protocol/tables";
+import { lockedElsewhere, type OpenCheck } from "@/protocol/tables";
+import LockIcon from "./LockIcon";
 
 export interface TabsViewProps {
   openChecks: OpenCheck[];
@@ -21,6 +22,9 @@ export interface TabsViewProps {
   /** Open-checks visibility: default = only the signed-in employee's checks; a job
    *  with see_All_Checks may toggle to everyone's (Geoff 2026-10-16). */
   myEmpId: string;
+  /** This terminal's POS id and a terminal-name lookup: a check locked by another terminal shows a red lock. */
+  myTerminalId: string;
+  nameForTerminal: (id: string) => string;
   mineOnly: boolean;
   canSeeAll: boolean;
   onToggleMine: () => void;
@@ -60,7 +64,7 @@ export default function TabsView(p: TabsViewProps) {
           return (
             <button key={`${oc.checkNo}-${oc.checkKey}`} className="tabcard" onClick={() => p.onPick(oc)} disabled={p.loading}>
               <div className="tabcardtop">
-                <span className="tabcheckno">#{oc.checkNo}</span>
+                <span className="tabcheckno">#{oc.checkNo}{lockedElsewhere(oc, p.myTerminalId) && <LockIcon title={`Locked by ${p.nameForTerminal(oc.lockedBy ?? "")}`} />}</span>
                 <span className={`tabdot ${st.cls}`} title={st.label} />
               </div>
               <div className="tabcardlabel">{label}</div>
