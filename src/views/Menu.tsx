@@ -37,7 +37,8 @@ import { checkHtmlUrl, sendEmailCheck, sendEmployeeNotice, sendTextCheck } from 
 import { memberLookup, type Member } from "@/protocol/memberlookup";
 import { backupPrinter, checkPrinter, checkPrinters, checkWrapper, prepPrintersForGroups, printers as loadPrinters, terminalChoosesPrinter, type Printer } from "@/model/printers";
 import { buildClockChit, buildCustomerCheck, buildFireChit, buildNoteChit, buildPrepChit, type CheckLineOut, type CourseOpts, type PrepCtx, type PrepItem } from "@/protocol/printjobs";
-import { printTo } from "@/platform/print";
+import { printReceipt, printTo } from "@/platform/print";
+import { simulatorOn } from "@/platform/printsim";
 import { DRAWER_KICK } from "@/platform/escpos";
 import { buildKdsOrderJson, sendKdsOrder, type KdsItem } from "@/protocol/kdsorder";
 import {
@@ -1542,11 +1543,19 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     } catch (e) { return { ok: false, sequence: "", message: String((e as Error).message ?? e) }; }
   };
   /** Finalize the shift (after clock-in + optional default-room pick) → opens ordering. */
+  /** The printer this terminal's local receipt jobs go to. With the printer simulator on and no check
+   *  printer assigned, a stand-in, so the job still shows on screen (nothing is sent anywhere). */
+  const receiptPrinter = (): Printer | undefined => checkPrinter(settings.terminalPosId) ?? (simulatorOn() ? {
+    id: "sim", name: "Check printer (none assigned)", address: "", port: 9100, backupId: "", isKDS: false, isHttpServer: false,
+    charsPerLine: 40, cutPaper: true, hasCashDrawer: false, printLargeTotal: false, includeSeat: false, useCourse: false,
+    courseNames: [], printCourseRed: false, holdUnfiredCourses: false,
+  } : undefined);
+
   const printClockChit = (action: "IN" | "OUT", jobName: string, rate?: number) => {
-    const pr = checkPrinter(settings.terminalPosId);
+    const pr = receiptPrinter();
     if (!pr || !employee) return;
     const job = buildClockChit({ storeName: settings.storeName || settings.storeId, empName: employee.name, action, jobName, time: new Date().toLocaleString(), rate }, pr.charsPerLine);
-    void printTo(pr, job, { enterpriseCode: settings.enterpriseCode, storeId: settings.storeId, backup: backupPrinter(pr) });
+    void printReceipt(pr, job, { enterpriseCode: settings.enterpriseCode, storeId: settings.storeId, backup: backupPrinter(pr) });
   };
 
   const commitShift = (c: { jobId: string; jobName: string; sequence: string; defaultRoomId: string }) => {
@@ -1851,7 +1860,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
   };
   /** Reprint a closed check to this terminal's check printer. */
   const reprintClosed = async (row: ClosedCheck) => {
-    const pr = checkPrinter(settings.terminalPosId);
+    const pr = receiptPrinter();
     if (!pr) { setMgrStatus("No check printer assigned"); return; }
     setMgrBusy(true); setMgrStatus(`Printing check ${row.checkNo}…`);
     try {
@@ -1859,7 +1868,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
       if (!pulled) { setMgrStatus("Check not found on the server"); return; }
       const text = buildReceiptText(row.checkNo, true, { ...pulled, checkNumber: row.checkNo });
       lastReceiptRef.current = text;
-      void printTo(pr, text, { enterpriseCode: settings.enterpriseCode, storeId: settings.storeId, backup: backupPrinter(pr) });
+      void printReceipt(pr, text, { enterpriseCode: settings.enterpriseCode, storeId: settings.storeId, backup: backupPrinter(pr) });
       setMgrStatus(`Check ${row.checkNo} sent to ${pr.name}`);
     } catch (e) { setMgrStatus(String((e as Error).message ?? e)); }
     finally { setMgrBusy(false); }
@@ -2102,13 +2111,13 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
    *  drawer for cash / drawer-opening tenders (PrintManager printReceipt + drawer
    *  kick). Call before the check is reset (needs its tenders). */
   const printSettleReceipt = () => {
-    const pr = checkPrinter(settings.terminalPosId);
+    const pr = receiptPrinter();
     if (!pr) return;
     let text = buildReceiptText(ck.check.checkNumber ?? "", false);
     const opensDrawer = ck.check.tenders.some((t) => { const def = payTenders.find((pt) => pt.id === t.tenderId); return def?.openCashDrawer || def?.isCash; });
     if (opensDrawer) text += DRAWER_KICK;
     lastReceiptRef.current = text;
-    void printTo(pr, text, { enterpriseCode: settings.enterpriseCode, storeId: settings.storeId, backup: backupPrinter(pr) });
+    void printReceipt(pr, text, { enterpriseCode: settings.enterpriseCode, storeId: settings.storeId, backup: backupPrinter(pr) });
   };
 
   /** Print the current check to the terminal's check printer (Print button).
@@ -2117,7 +2126,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
    *  can never exist for lines the server has not seen. A failed send prints nothing. */
   const doPrintCheck = async () => {
     if (blockIfTimerRunning("printing")) return;
-    const pr = checkPrinter(settings.terminalPosId);
+    const pr = receiptPrinter();
     if (!pr) { setSendError("No check printer assigned"); return; }
     let c: Check;
     if (unsentLines(ck.check).length > 0 || ck.check.tenders.some((t) => !t.sent)) {
@@ -2131,15 +2140,15 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     }
     const text = buildReceiptText(c.checkNumber ?? "", false, c);
     lastReceiptRef.current = text;
-    void printTo(pr, text, { enterpriseCode: settings.enterpriseCode, storeId: settings.storeId, backup: backupPrinter(pr) });
+    void printReceipt(pr, text, { enterpriseCode: settings.enterpriseCode, storeId: settings.storeId, backup: backupPrinter(pr) });
     setSendError(`Printing check to ${pr.name}`);
   };
 
   const doReprintLast = () => {
-    const pr = checkPrinter(settings.terminalPosId);
+    const pr = receiptPrinter();
     if (!pr) { setSendError("No check printer assigned"); return; }
     if (!lastReceiptRef.current) { setSendError("No check to reprint yet"); return; }
-    void printTo(pr, lastReceiptRef.current, { enterpriseCode: settings.enterpriseCode, storeId: settings.storeId, backup: backupPrinter(pr) });
+    void printReceipt(pr, lastReceiptRef.current, { enterpriseCode: settings.enterpriseCode, storeId: settings.storeId, backup: backupPrinter(pr) });
     setSendError("Reprinting last check");
   };
 
@@ -2165,7 +2174,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     return withAutoGrat();
   };
   const runPrintOption = async (kind: PrintKind, guests: number[], printer?: Printer) => {
-    const pr = printer ?? checkPrinter(settings.terminalPosId);
+    const pr = printer ?? receiptPrinter();
     if (!pr) { setSendError("No check printer assigned"); return; }
     const c = await sentCheckForPrint();
     if (!c) return;
@@ -2176,11 +2185,11 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     if (kind === "separate") {
       // one cut receipt per guest, in guest order (printMultipleChecks → printCurrentCheckGuest)
       const gs = guests.length ? guests : [...guestsWithItems(c)].sort((a, b) => a - b);
-      for (const g of gs) { const t = buildReceiptText(checkNo, false, c, { guests: [g], printer: pr }); text += t; void printTo(pr, t, popts); }
+      for (const g of gs) { const t = buildReceiptText(checkNo, false, c, { guests: [g], printer: pr }); text += t; void printReceipt(pr, t, popts); }
       setSendError(`Printing ${gs.length} separate check${gs.length === 1 ? "" : "s"} to ${pr.name}`);
     } else {
       text = buildReceiptText(checkNo, false, c, { guests: allGuests ? undefined : guests, byGuest: kind === "subtotal", byTime: kind === "time", printer: pr });
-      void printTo(pr, text, popts);
+      void printReceipt(pr, text, popts);
       setSendError(`Printing ${kind === "subtotal" ? "check by subtotal" : kind === "time" ? "check by time" : "check"} to ${pr.name}`);
     }
     lastReceiptRef.current = text;

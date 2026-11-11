@@ -12,7 +12,8 @@
  * since we render vector, not PNGs).
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { setSimulatorOn, simState, subscribeSim } from "@/platform/printsim";
 import { ISIS_VER, type Settings } from "@/state/useSettings";
 import { loadJSON, saveJSON } from "@/platform/storage";
 import { clearBroadcast, fetchBroadcasts, type BroadcastNotice } from "@/protocol/messaging";
@@ -111,7 +112,11 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
   const [authId, setAuthId] = useState("");
   const [authEntry, setAuthEntry] = useState("");
   const [authError, setAuthError] = useState("");
-  const [authPurpose, setAuthPurpose] = useState<"update" | "reset">("update");
+  const [authPurpose, setAuthPurpose] = useState<"update" | "reset" | "console">("update");
+  // Manager Console: press the version number → manager ID + PIN → terminal settings (the printer simulator for now).
+  const [consoleOpen, setConsoleOpen] = useState(false);
+  const sim = useSyncExternalStore(subscribeSim, simState);
+  const askConsole = () => { setAuthPurpose("console"); setAuthPhase("id"); setAuthId(""); setAuthEntry(""); setAuthError(""); setAuthOpen(true); };
   const [confirmReset, setConfirmReset] = useState(false);
   const askUpdate = () => { setAuthPurpose("update"); setAuthPhase("id"); setAuthId(""); setAuthEntry(""); setAuthError(""); setUpdStatus(""); setAuthOpen(true); };
   // Reset terminal: press and HOLD the terminal name (1.5 s) → manager ID + PIN → confirm.
@@ -135,6 +140,7 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
     if (!isManager(found.id)) { setAuthError("Manager required"); setAuthPhase("id"); setAuthId(""); setAuthEntry(""); return; }
     setAuthOpen(false);
     if (authPurpose === "reset") { setConfirmReset(true); return; }
+    if (authPurpose === "console") { setConsoleOpen(true); return; }
     void doUpdate();
   };
   const doUpdate = async () => {
@@ -200,10 +206,23 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
       </div>
     </div>
   ) : null;
-  const authModal = authOpen && (authPurpose === "reset" || update) ? (
+  const consoleModal = consoleOpen ? (
+    <div className="backdrop" onClick={() => setConsoleOpen(false)}>
+      <div className="authbox updauth" onClick={(e) => e.stopPropagation()}>
+        <div className="authtitle">Manager Console</div>
+        <div className="authsub">Settings for this terminal</div>
+        <div className="mgrlist">
+          <button className="mgrrow" onClick={() => setSimulatorOn(!sim.on)}>Printer simulator<span>{sim.on ? "On" : "Off"}</span></button>
+        </div>
+        <div className="authsub">Shows this terminal's receipts, check prints and clock chits in a window on screen. They still go to the printer.</div>
+        <div className="mfactions"><button className="mfbtn go" onClick={() => setConsoleOpen(false)}>Done</button></div>
+      </div>
+    </div>
+  ) : null;
+  const authModal = authOpen && (authPurpose !== "update" || update) ? (
     <div className="backdrop" onClick={() => setAuthOpen(false)}>
       <div className="authbox updauth" onClick={(e) => e.stopPropagation()}>
-        <div className="authtitle">{authPurpose === "reset" ? "Reset terminal" : `Update to ${update?.versionName}`}</div>
+        <div className="authtitle">{authPurpose === "reset" ? "Reset terminal" : authPurpose === "console" ? "Manager Console" : `Update to ${update?.versionName}`}</div>
         <div className="authsub">{authPhase === "id" ? "Manager ID, then Ent" : `PIN for ${lookup(authId)?.name ?? authId}, then Ent`}</div>
         <div className="loginentry small">{authEntry ? authEntry.replace(/./g, "•") : " "}</div>
         {authError && <div className="loginerr">{authError}</div>}
@@ -222,6 +241,7 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
       {progressModal}
       {authModal}
       {resetModal}
+      {consoleModal}
       <div className="loginhead">AIREUS</div>
       <div className="loginbody">
       <div className="loginpad">
@@ -255,7 +275,7 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
       </div>
       <div className="loginfoot">
         <span className="lver">
-          {installed ? `v${installed.versionName}` : `v${__APP_VERSION__}`}
+          <span className="lvernum" role="button" onClick={askConsole}>{installed ? `v${installed.versionName}` : `v${__APP_VERSION__}`}</span>
           {update ? <button className="lupd" disabled={!!progress && !progress.failed} onClick={askUpdate}>Update to {update.versionName}</button> : null}
         </span>
         <span className="ltag">{TAGLINE}</span>

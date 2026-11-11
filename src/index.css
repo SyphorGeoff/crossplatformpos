@@ -565,3 +565,29 @@ body { background: var(--cream); color: var(--ink); font-family: "Helvetica Neue
 .chold { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; margin-bottom: 6px; border-radius: 8px; background: #F1ECE0; font-size: 13px; }
 .pvtab { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px; margin-bottom: 10px; border: 1px dashed var(--line-hard); border-radius: 12px; }
 .pvtabinfo { flex: 1; font-size: 14px; font-weight: 600; }
+
+/* ---- Printer simulator (Manager Console): a floating paper roll over the POS ---- */
+.psim { position: fixed; z-index: 40; display: flex; flex-direction: column; max-width: 96vw; max-height: 72vh; background: #f4f1ea; color: #1a1a1a; border: 1px solid var(--line-hard); border-radius: 12px; box-shadow: 0 16px 50px rgba(26,26,26,.3); }
+.psimbar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); font-size: 12px; font-weight: 800; letter-spacing: .04em; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+.psimbar span { flex: 1; }
+.psbtn { padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line-hard); background: #fff; color: #1a1a1a; font: inherit; font-size: 12px; cursor: pointer; }
+.psbtn:disabled { opacity: .45; cursor: default; }
+.psroll { overflow: auto; padding: 12px 14px 16px; background: #fff; border-radius: 0 0 12px 12px; font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.pstick { margin: 0 auto; }
+.pstick + .pstick { margin-top: 16px; }
+.psthead { font: 600 10px/1.3 -apple-system, "Helvetica Neue", Arial, sans-serif; color: #8a8478; margin: 0 0 6px; }
+.psline { white-space: pre-wrap; word-break: break-all; min-height: 1.35em; }
+.psline.al-center { text-align: center; }
+.psline.al-right { text-align: right; }
+.psb { font-weight: 800; }
+.psbig { font-size: 2em; line-height: 1.15; }
+.pswide { display: inline-block; transform: scaleX(2); transform-origin: left center; }
+.al-center .pswide { transform-origin: center; }
+.al-right .pswide { transform-origin: right center; }
+.pstall { display: inline-block; transform: scaleY(2); transform-origin: center; margin: .5em 0; }
+.psred { color: #b3261e; }
+.pscut { margin: 12px 0 14px; padding-top: 3px; border-top: 1px dashed #9a948a; text-align: center; font: 10px/1 -apple-system, Arial, sans-serif; color: #9a948a; }
+.psnote { margin: 4px 0; text-align: center; font: 10px/1.2 -apple-system, Arial, sans-serif; color: #8a8478; }
+.psempty { padding: 18px 0; text-align: center; white-space: normal; font: 12px/1.4 -apple-system, "Helvetica Neue", Arial, sans-serif; color: #8a8478; }
+.psimpill { position: fixed; z-index: 40; padding: 9px 16px; border: none; border-radius: 999px; background: var(--ink); color: var(--cream); font-weight: 700; font-size: 13px; box-shadow: 0 8px 24px rgba(26,26,26,.3); cursor: pointer; touch-action: none; user-select: none; -webkit-user-select: none; }
+.loginfoot .lvernum { cursor: pointer; }

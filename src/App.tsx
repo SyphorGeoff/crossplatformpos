@@ -6,6 +6,8 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import PrinterSim from "@/views/PrinterSim";
+import { reloadSimulator } from "@/platform/printsim";
 import Setup from "./views/Setup";
 import Menu from "./views/Menu";
 import { ISIS_VER, useSettings } from "./state/useSettings";
@@ -135,7 +137,7 @@ export default function App() {
   if (!settings.activated) {
     // A (re)activation starts the terminal from nothing: drop every cached table,
     // the revision map and any local check, then let the launch effect full-sync.
-    return <Setup initial={settings} onDone={(patch) => { clearTerminalData(); started.current = false; update(patch); }} />;
+    return <Setup initial={settings} onDone={(patch) => { clearTerminalData(); reloadSimulator(); started.current = false; update(patch); }} />;
   }
 
   if (phase === "syncing") {
@@ -150,12 +152,13 @@ export default function App() {
     );
   }
 
-  return (
+  return (<>
     <Menu
       settings={settings}
       defsVersion={defsVersion}
       refreshDefinitions={refreshDefinitions}
       onChangeStation={() => { started.current = false; update({ activated: false, token: "" }); }}
     />
-  );
+    <PrinterSim />
+  </>);
 }

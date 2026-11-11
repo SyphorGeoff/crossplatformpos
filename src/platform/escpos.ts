@@ -105,3 +105,64 @@ export class PrintDoc {
   cut(): this { this.buf += LF.repeat(6) + CUT; return this; } // feed clear of the cutter first
   toString(): string { return this.buf; }
 }
+
+/* ---------------- paper rendering (printer simulator) ---------------- */
+
+export interface PaperSeg { text: string; bold: boolean; wide: boolean; tall: boolean; red: boolean; }
+export type PaperLine =
+  | { kind: "text"; align: "left" | "center" | "right"; segs: PaperSeg[] }
+  | { kind: "cut" }
+  | { kind: "drawer" };
+
+/** Read a job back the way a receipt printer would lay it out: lines of styled text, where the paper is
+ *  cut, and where the cash drawer is kicked. Understands the commands this app emits (ESC @ / a / ! / r / p,
+ *  GS V) plus ESC E, ESC d and GS !; anything else is skipped. Blank feed lines before a cut are dropped. */
+export function renderPaper(job: string): PaperLine[] {
+  const out: PaperLine[] = [];
+  type Align = "left" | "center" | "right";
+  let align = "left" as Align, lineAlign = "left" as Align;
+  let bold = false, wide = false, tall = false, red = false;
+  let segs: PaperSeg[] = [], cur = "", drawerPending = false;
+  const pushSeg = () => { if (cur) { segs.push({ text: cur, bold, wide, tall, red }); cur = ""; } };
+  const lineEmpty = () => segs.length === 0 && !cur;
+  const endLine = () => {
+    pushSeg();
+    out.push({ kind: "text", align: lineAlign, segs });
+    segs = []; lineAlign = align;
+    if (drawerPending) { out.push({ kind: "drawer" }); drawerPending = false; }
+  };
+  const blank = (l: PaperLine | undefined) => !!l && l.kind === "text" && l.segs.every((x) => !x.text.trim());
+  const trimBlank = () => { while (blank(out[out.length - 1])) out.pop(); };
+  const ALIGNS = ["left", "center", "right"] as const;
+
+  let i = 0;
+  while (i < job.length) {
+    const c = job[i];
+    const n = job[i + 1] ?? "";
+    const v = job.charCodeAt(i + 2);   // NaN past the end; the bit tests below then read as 0
+    if (c === ESC) {
+      if (n === "@") { pushSeg(); align = "left"; bold = wide = tall = red = false; if (lineEmpty()) lineAlign = align; i += 2; }
+      else if (n === "a") { pushSeg(); align = ALIGNS[(v & 3) % 3] ?? "left"; if (lineEmpty()) lineAlign = align; i += 3; }
+      else if (n === "!") { pushSeg(); bold = !!(v & 0x08); wide = !!(v & 0x20); tall = !!(v & 0x10); i += 3; }
+      else if (n === "E") { pushSeg(); bold = !!(v & 1); i += 3; }
+      else if (n === "r") { pushSeg(); red = !!(v & 1); i += 3; }
+      else if (n === "d") { for (let k = 0; k < (v || 0); k++) endLine(); i += 3; }
+      else if (n === "p") { if (lineEmpty()) out.push({ kind: "drawer" }); else drawerPending = true; i += 5; }
+      else i += 2;
+    } else if (c === GS) {
+      if (n === "V") {
+        if (!lineEmpty()) endLine();
+        trimBlank();
+        out.push({ kind: "cut" });
+        i += v === 65 || v === 66 ? 4 : 3;
+      } else if (n === "!") { pushSeg(); wide = (v & 0xf0) > 0; tall = (v & 0x0f) > 0; i += 3; }
+      else i += 3;
+    } else if (c === LF) { endLine(); i++; }
+    else if (c.charCodeAt(0) < 32) i++;
+    else { cur += c; i++; }
+  }
+  if (!lineEmpty()) endLine();
+  if (drawerPending) out.push({ kind: "drawer" });
+  trimBlank();
+  return out;
+}

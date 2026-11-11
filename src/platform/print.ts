@@ -13,6 +13,7 @@
 
 import { capacitor, httpRequest, isNative } from "./http";
 import type { Printer } from "@/model/printers";
+import { pushSimJob, simulatorOn } from "./printsim";
 
 export function canPrintDirect(): boolean {
   return isNative() && !!capacitor()?.Plugins?.TcpPrint;
@@ -82,4 +83,12 @@ export async function printTo(printer: Printer | undefined, job: string, opts: P
   if (ok) return true;
   if (opts.backup && opts.backup.id !== printer.id) return printTo(opts.backup, job, { enterpriseCode: opts.enterpriseCode, storeId: opts.storeId });
   return false;
+}
+
+/** Print a LOCAL receipt job — a customer check, a reprint, a clock chit, a card slip — on the terminal's
+ *  check printer. With the printer simulator on (Manager Console) the job is also shown on screen; it still
+ *  goes to the printer. Kitchen orders use printTo and are never shown. */
+export async function printReceipt(printer: Printer | undefined, job: string, opts: PrintOpts = {}): Promise<boolean> {
+  if (printer && job && simulatorOn()) pushSimJob({ printer: printer.name, address: printer.address, cpl: printer.charsPerLine, job });
+  return printTo(printer, job, opts);
 }
