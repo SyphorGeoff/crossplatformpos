@@ -660,7 +660,13 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     if (signInMsgChecked.current || msgs.pollCount === 0) return;
     signInMsgChecked.current = true;
     const job = empJobs.find((j) => j.id === clock.jobId);
-    if (job?.checkForMessagesOnSignIn && msgs.messages.length > 0) openMessages();
+    if (job?.checkForMessagesOnSignIn && msgs.messages.length > 0) {
+      // Leaving the inbox goes to where this sign-in lands (a manager → the Manager's Menu). openMessages()
+      // would remember `mode` as this effect saw it, which in the commit shared with the landing effect is
+      // still the previous screen: a manager came out of Messages on the order screen (2026-11-11).
+      setModeBeforeMessages(landingMode(employee.id, clock.jobId));
+      setMode("messages"); setToast(null);
+    }
   }, [employee, clock, msgs.pollCount]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Resolve BusinessDate_ID and a check number, assigning the number once. */

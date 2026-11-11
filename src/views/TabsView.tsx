@@ -5,7 +5,7 @@
  * locks + reads that check back into the order screen.
  */
 
-import { lockedElsewhere, type OpenCheck } from "@/protocol/tables";
+import { checkLabel, lockedElsewhere, type OpenCheck } from "@/protocol/tables";
 import LockIcon from "./LockIcon";
 
 export interface TabsViewProps {
@@ -59,7 +59,7 @@ export default function TabsView(p: TabsViewProps) {
       <div className="tabsgrid">
         {rows.map((oc) => {
           const st = statusOf(oc);
-          const label = oc.tableId ? `Table ${p.nameForTable(oc.tableId)}` : "Counter tab";
+          const label = checkLabel(oc.tableId ? p.nameForTable(oc.tableId) : "", oc.checkName, "Counter tab");   // table number and tab name
           const server = p.nameForEmp(oc.empPosId);
           return (
             <button key={`${oc.checkNo}-${oc.checkKey}`} className="tabcard" onClick={() => p.onPick(oc)} disabled={p.loading}>

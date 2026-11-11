@@ -7,12 +7,12 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { checkSubtotal, highestGuestNumber, isVoidReversal, lineExtended, refIsShown, sortLinesByGuest, unsentLines, type Check, type CheckLine, isTimedRunning } from "@/model/check";
+import { checkSubtotal, highestGuestNumber, isVoidReversal, lineExtended, refIsShown, sortLinesByGuest, tenderApplied, unsentLines, type Check, type CheckLine, type TenderLine, isTimedRunning } from "@/model/check";
 
 /** Paul's ten course hues (CheckTableViewController _courseTintForCourse), style only. */
 export const COURSE_HUES = [30, 148, 198, 45, 282, 342, 210, 15, 120, 260];
 export const courseHue = (n: number): number => COURSE_HUES[((Math.max(1, n) - 1) % 10)];
-import { grandTotal, type TaxResult } from "@/model/tax";
+import { balanceWithTax, grandTotal, type TaxResult } from "@/model/tax";
 
 const fmt = (n: number): string => (n < 0 ? `-$${Math.abs(n).toFixed(2)}` : `$${n.toFixed(2)}`);
 const firstName = (s: string): string => (s || "").trim().split(/\s+/)[0] || "";
@@ -127,6 +127,23 @@ function LineRow({ line, selecting, checked, showGuest, onToggle, onQty, onRemov
   );
 }
 
+/** A payment on the check, drawn like any other line (iPad CheckTableCellView.m isTypeTender 456-471,
+ *  813-820): the tender name with the card's last four in brackets, the amount, and the tip under it.
+ *  A voided payment is struck through; its reversal line is not shown. (The iPad's guest badge on a
+ *  payment needs applied_to_guests on tender lines, which posx does not record yet.) */
+function TenderRow({ t }: { t: TenderLine }) {
+  const name = `${t.name}${t.last4 ? `(${t.last4})` : ""}`;
+  return (
+    <div className={`cl tender ${t.sent ? "sent" : "fresh"} ${t.isVoid ? "void" : ""}`}>
+      <div className="clmain">
+        <span className="clqty" />
+        <span className="clname">{name}{t.finalized === false && <span className="clheld">AUTH</span>}{t.reference && <span className="clitemnote">{t.reference}</span>}</span>
+        <span className="clamt">{fmt(t.amount)}{t.tip > 0 && <span className="cltip">tip {fmt(t.tip)}</span>}</span>
+      </div>
+    </div>
+  );
+}
+
 const nGuestsFor = (c: Check) => highestGuestNumber(c);
 
 export default function CheckPanel(p: CheckPanelProps) {
@@ -142,6 +159,10 @@ export default function CheckPanel(p: CheckPanelProps) {
   const shown = check.lines.filter((l) =>
     !l.transferOut && !l.isSplit && !isVoidReversal(l) && !(l.kind === "R" && !refIsShown(l)));
   const itemCount = shown.filter((l) => l.kind === "M").length;
+  // Payments show on the check like any other line (a void's reversal line is hidden, as for items).
+  const payments = check.tenders.filter((t) => !(t.isVoid && t.parentLineNumber !== undefined));
+  const paid = tenderApplied(check);
+  const balance = balanceWithTax(subtotal, tax, paid);
   // Sort Guest: order item families (item + its modifiers) by guest number.
   const display = p.sortByGuest ? sortLinesByGuest(shown) : shown;
 
@@ -202,7 +223,7 @@ export default function CheckPanel(p: CheckPanelProps) {
           <div className="ctotal">{fmt(total)}</div>
           {itemCount > 0 && (
             <div className="cbreak">
-              Subtotal {fmt(subtotal)} · Tax {fmt(tax.taxTotal)}
+              Subtotal {fmt(subtotal)} · Tax {fmt(tax.taxTotal)}{paid > 0.005 ? ` · Paid ${fmt(paid)} · Balance ${fmt(Math.max(0, balance))}` : ""}
               {tax.groups.some((g) => g.isExempt) && <span className="cexempt"> · Exempt: {tax.groups.filter((g) => g.isExempt).map((g) => g.name).join(", ")}</span>}
             </div>
           )}
@@ -271,6 +292,7 @@ export default function CheckPanel(p: CheckPanelProps) {
             {unsentHeads.length > 0 && <button className="csentpill collapse" onClick={() => setSentExpanded(false)}>▲ BACK TO NEW ITEMS</button>}
           </>
         )}
+        {payments.map((t) => <TenderRow key={t.key} t={t} />)}
       </div>
 
       {!selecting && p.onSelectGuest && (

@@ -191,6 +191,11 @@ body { background: var(--cream); color: var(--ink); font-family: "Helvetica Neue
 
 /* Shown Type="R" reference note lines on the check */
 .cl.ref { background: transparent; border: none; padding: 3px 11px; }
+/* A payment on the check (iPad checkTenderTextColour): same row as an item, green name and amount, tip under the amount. */
+.cl.tender .clname, .cl.tender .clamt { color: #2E7D4F; }
+.cl.tender .clamt { display: flex; flex-direction: column; align-items: flex-end; }
+.cl.tender .cltip { font-size: 11px; font-weight: 700; }
+.cl.tender.void .clname, .cl.tender.void .clamt { text-decoration: line-through; color: var(--ink-dim); }
 .clnote { flex: 1; font-size: 12px; font-style: italic; color: var(--ink-soft); }
 
 /* Guest selector bar (avatars · + · T) — order-by-guest */

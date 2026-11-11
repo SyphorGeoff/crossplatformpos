@@ -7,13 +7,13 @@
 
 import { describe, expect, it } from "vitest";
 import { parseXmlResponse } from "@/protocol/hbroker";
-import { lockedElsewhere, parseOpenChecks } from "@/protocol/tables";
+import { checkLabel, lockedElsewhere, parseOpenChecks } from "@/protocol/tables";
 
 const REPLY = `<?xml version="1.0"?><Open_Checks>
 <Open_Check Is_Locked="0"><Store_ID>3</Store_ID><Table_POS_ID/><BusinessDate_ID>90119</BusinessDate_ID><Last_Modified_Time>2026-11-11 12:01</Last_Modified_Time>
 <Check_Number>280020</Check_Number><check_key>111</check_key><Emp_POS_ID>5</Emp_POS_ID><Print_Count>1</Print_Count><Held_Item>0</Held_Item><Is_Allergy>0</Is_Allergy></Open_Check>
 <Open_Check Is_Locked="1"><Store_ID>3</Store_ID><Table_POS_ID>92</Table_POS_ID><BusinessDate_ID>90111</BusinessDate_ID><Last_Modified_Time>2026-11-06 12:46</Last_Modified_Time>
-<Check_Number>200080</Check_Number><check_key>8811378</check_key><Emp_POS_ID>1</Emp_POS_ID><Print_Count>0</Print_Count><Held_Item>0</Held_Item>
+<Check_Number>200080</Check_Number><Check_Name>Yy</Check_Name><check_key>8811378</check_key><Emp_POS_ID>1</Emp_POS_ID><Print_Count>0</Print_Count><Held_Item>0</Held_Item>
 <Locking_Terminal_POS_ID>20</Locking_Terminal_POS_ID><Is_Allergy>0</Is_Allergy></Open_Check>
 <Open_Check Is_Locked="1"><Check_Number>280021</Check_Number><check_key>222</check_key><Emp_POS_ID>1</Emp_POS_ID></Open_Check>
 </Open_Checks>`;
@@ -28,6 +28,21 @@ describe("parseOpenChecks", () => {
   it("an unlocked check has no locking terminal", () => { expect(rows[0].lockedBy).toBe(""); });
   it("a locked check names the terminal holding it", () => { expect(rows[1].lockedBy).toBe("20"); });
   it("locked with no terminal named is still locked", () => { expect(rows[2].lockedBy).toBe("?"); });
+  it("carries the tab name", () => { expect(rows[1].checkName).toBe("Yy"); expect(rows[0].checkName).toBe(""); });
+});
+
+describe("checkLabel", () => {
+  it("shows the table and the tab name together", () => { expect(checkLabel("92", "Yy", "Counter tab")).toBe("Table 92 · Yy"); });
+  it("shows whichever one there is", () => {
+    expect(checkLabel("92", "", "Counter tab")).toBe("Table 92");
+    expect(checkLabel("", "test", "Counter tab")).toBe("test");
+    expect(checkLabel("", undefined, "Counter tab")).toBe("Counter tab");
+    expect(checkLabel("", "  ", "Tab")).toBe("Tab");
+  });
+  it("does not repeat a name that is only the table", () => {
+    expect(checkLabel("92", "92", "Tab")).toBe("Table 92");
+    expect(checkLabel("Patio 4", "table patio 4", "Tab")).toBe("Table Patio 4");
+  });
 });
 
 describe("lockedElsewhere", () => {

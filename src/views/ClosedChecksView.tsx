@@ -7,7 +7,7 @@
  */
 
 import { useState } from "react";
-import type { ClosedCheck } from "@/protocol/tables";
+import { checkLabel, type ClosedCheck } from "@/protocol/tables";
 
 const fmt = (n: number) => `$${n.toFixed(2)}`;
 
@@ -25,7 +25,7 @@ export interface ClosedChecksViewProps {
 
 export default function ClosedChecksView(p: ClosedChecksViewProps) {
   const [pick, setPick] = useState<ClosedCheck | null>(null);
-  const label = (r: ClosedCheck) => r.tableId ? `Table ${p.nameForTable(r.tableId)}` : (r.checkName || "Tab");
+  const label = (r: ClosedCheck) => checkLabel(r.tableId ? p.nameForTable(r.tableId) : "", r.checkName, "Tab");   // table number and tab name
 
   return (
     <div className="tabsview">

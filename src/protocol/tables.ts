@@ -27,6 +27,18 @@ export interface OpenCheck {
   isAllergy: boolean;
   lastModified: string;
   lockedBy?: string;        // Locking_Terminal_POS_ID when Is_Locked="1" ("?" if the server names no terminal); "" / absent = not locked
+  checkName?: string;       // Check_Name — the tab name
+}
+
+/** How a check is labelled on the open and closed check lists: the table (if any) and the tab name (if
+ *  any): "Table 92 · Yy", "Table 92", "Yy". A name that only repeats the table is not shown twice. */
+export function checkLabel(tableName: string, checkName: string | undefined, fallback: string): string {
+  const table = tableName.trim(), name = (checkName ?? "").trim();
+  const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+  const tableLabel = table ? `Table ${table}` : "";
+  const showName = name !== "" && !(table && (same(name, table) || same(name, tableLabel)));
+  if (tableLabel && showName) return `${tableLabel} · ${name}`;
+  return tableLabel || (showName ? name : fallback);
 }
 
 /** True when another terminal holds the check's lock (this terminal's own lock is the check it is working on). */
@@ -90,6 +102,7 @@ export function parseOpenChecks(parsed: XmlDict, businessDateId: string): OpenCh
     isAllergy: textOf(findKey(r, "Is_Allergy")) === "1",
     lastModified: textOf(findKey(r, "Last_Modified_Time")) || textOf(findKey(r, "last_Modified_Time")),
     lockedBy: textOf(r["Is_Locked"]) === "1" ? (textOf(findKey(r, "Locking_Terminal_POS_ID")) || "?") : "",
+    checkName: textOf(findKey(r, "Check_Name")),
   }));
 }
 
