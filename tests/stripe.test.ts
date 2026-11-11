@@ -91,6 +91,14 @@ describe("intent → CardResult", () => {
     expect(r.authCode).toBe("123456"); expect(r.last4).toBe("4242"); expect(r.brand).toBe("VISA"); expect(r.authorizedAmount).toBe(20); expect(r.capturedAmount).toBeUndefined();
     expect(r.receipt?.customer).toContain("TSI: E800"); expect(r.receipt?.customer).toContain("ENTRY: contact emv");
   });
+  it("an unknown account type prints no Account line; a known funding type stands in for a missing one", () => {
+    const cp = (charge().payment_method_details as { card_present: Record<string, unknown> }).card_present;
+    const rc = cp.receipt as Record<string, unknown>;
+    expect(receiptLines({ ...cp, receipt: { ...rc, account_type: "unknown" } })).not.toMatch(/Account/);
+    expect(receiptLines({ ...cp, funding: "unknown", receipt: { ...rc, account_type: "Unknown" } })!.split("\n")[0]).toBe("APN: VISA CREDIT");
+    expect(receiptLines({ ...cp, funding: "debit", receipt: { ...rc, account_type: undefined } })!.split("\n")[0]).toBe("Account: debit");
+    expect(receiptLines({ ...cp, funding: "debit", receipt: { ...rc, account_type: "unknown" } })).not.toMatch(/Account/);
+  });
   it("an Interac (debit) charge: details come from interac_present and the brand is INTERAC", () => {
     const interac = { id: "ch_2", object: "charge", captured: true, amount: 632, amount_captured: 632, amount_refunded: 0,
       payment_method_details: { type: "interac_present", interac_present: {

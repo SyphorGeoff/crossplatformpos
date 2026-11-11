@@ -130,8 +130,12 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
   const togglePin = (id: string) => setPins((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); saveJSON(pinsKey, [...next]); return next; });
   const [coverPrompt, setCoverPrompt] = useState<DiningTable | null>(null);
   // Tab-name prompt gating send / pay / print (payingCheck / sendCheck / print paths)
-  const [tabNamePrompt, setTabNamePrompt] = useState<{ after: () => void } | null>(null);
+  type TabAction = "print" | "printOptions" | "sendStay" | "send" | "pay";
+  const [tabNamePrompt, setTabNamePrompt] = useState<{ after: TabAction } | null>(null);
   const [tabNameDraft, setTabNameDraft] = useState("");
+  // The action waiting on the tab name, and the current render's version of each action (assigned below).
+  const [tabNamePending, setTabNamePending] = useState<TabAction | null>(null);
+  const tabActionsRef = useRef<Partial<Record<TabAction, () => void>>>({});
   // Split Item: pick the guests to divide the selection among (GuestSelection SPLIT_GUESTS)
   const [splitGuests, setSplitGuests] = useState<Set<number> | null>(null);
   // Change Guest: the selection captured when the pad opened (guest pad, not window.prompt)
@@ -154,6 +158,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
   const [tabsFromManager, setTabsFromManager] = useState(false); // Open Checks opened from the Manager's Menu → back goes there
   const [tabsMineOnly, setTabsMineOnly] = useState(true);        // open-checks list: mine (default) or everyone's (job see_All_Checks)
   const [editing, setEditing] = useState(false);
+  const [checkOpen, setCheckOpen] = useState(false);   // mini layout only: the check panel is slid over the menu (button-driven, no swipe)
   const [sel, setSel] = useState<Set<string>>(new Set()); // selected line keys in Edit mode
   const [adjPick, setAdjPick] = useState<null | "discount" | "service">(null);
   // an Is_Open adjustment waiting for its percent / amount on the pad (replaces window.prompt)
@@ -227,6 +232,15 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
 
   const ck = useCheck(init.rcId, settings.terminalPosId);
   const checkRef = useRef(ck.check); checkRef.current = ck.check; // always-current check for async flows
+  // The tab-name prompt's pending action (Send / Pay / Print…) runs here, on the render AFTER the name is
+  // on the check. Run straight from the prompt's OK it posted the check as it was before the name was
+  // typed, so the server never got Check_Name and the name was gone on reopen (2026-11-11, check 280021).
+  useEffect(() => {
+    if (!tabNamePending || !ck.check.tableName.trim()) return;
+    const run = tabActionsRef.current[tabNamePending];
+    setTabNamePending(null);
+    run?.();
+  }, [tabNamePending, ck.check.tableName]);
   // Every tender except hidden ones, like the iPad's payment bank. Applies_To_Check is an unused legacy
   // flag and is not read anywhere in xpos (Geoff 2026-11-06).
   const payTenders = useMemo(() => loadTenders().filter((t) => !t.hidden).sort((a, b) => a.sort - b.sort), [defsVersion]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -516,8 +530,8 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     if (barMode && !ck.check.diningTableId) return true;
     return ck.check.lines.some((l) => l.kind === "M" && !l.sent && cat.miById.get(l.menuItemId)?.forceTabName);
   };
-  const withTabName = (after: () => void) => {
-    if (needsTabName()) { setTabNameDraft(""); setTabNamePrompt({ after }); return; }
+  const withTabName = (kind: TabAction, after: () => void) => {
+    if (needsTabName()) { setTabNameDraft(""); setTabNamePrompt({ after: kind }); return; }   // runs once the name is on the check (effect above)
     after();
   };
 
@@ -2270,6 +2284,9 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
       setSendError(r.ok ? `Emailed the check to ${email.trim()}` : `Email failed: ${r.message}`);
     } catch (e) { setSendError(String((e as Error).message ?? e)); }
   };
+  // This render's versions of the actions the tab-name prompt can be waiting on (see the effect near `ck`).
+  tabActionsRef.current = { print: () => void doPrintCheck(), printOptions: openPrintOptions, sendStay: () => void doSendStay(), send: () => void doSend2(), pay: () => void openPay() };
+
   const printOptionsModal = printOpts ? (() => {
     const n = highestGuestNumber(ck.check);
     const toggle = (g: number) => setPrintOpts((p) => { if (!p) return p; const s = new Set(p.guests); s.has(g) ? s.delete(g) : s.add(g); return { guests: s }; });
@@ -2596,9 +2613,9 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
       <TopBar
         onLogout={() => void doSignOut()} onTables={() => void goToFloor()} onTabs={() => void goToTabs()}
         onHub={() => setShowHub(true)} onEdit={() => setEditing((e) => !e)} editing={editing}
-        onPrint={ck.check.lines.length ? () => withTabName(() => void doPrintCheck()) : undefined}
-        onPrintOptions={ck.check.lines.length ? () => withTabName(openPrintOptions) : undefined}
-        onSendStay={() => withTabName(() => void doSendStay())} onSend={() => withTabName(() => void doSend2())} onPay={() => withTabName(() => void openPay())}
+        onPrint={ck.check.lines.length ? () => withTabName("print", () => void doPrintCheck()) : undefined}
+        onPrintOptions={ck.check.lines.length ? () => withTabName("printOptions", openPrintOptions) : undefined}
+        onSendStay={() => withTabName("sendStay", () => void doSendStay())} onSend={() => withTabName("send", () => void doSend2())} onPay={() => withTabName("pay", () => void openPay())}
         canSend={unsentLines(ck.check).length > 0} canSendExit={ck.check.lines.length > 0} canPay={ck.check.lines.length > 0} sending={sending}
         onMessages={openMessages} unread={msgs.unread}
       />
@@ -2618,7 +2635,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
 
       {showHub && hubMenu}
 
-      <div className="order">
+      <div className={`order ${checkOpen ? "checkopen" : ""}`}>
         {editing ? (
           <EditCheck
             checkNo={ck.check.checkNumber || "—"}
@@ -2689,7 +2706,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
           onSetTable={ck.setTable}
           onSetGuests={ck.setGuests}
           onSend={doSend}
-          onPay={() => withTabName(() => void openPay())}
+          onPay={() => withTabName("pay", () => void openPay())}
           onSplit={(keys) => { setSel(keys); setSplitGuests(new Set()); }}
           onVoid={voidSelected}
           onNewCheck={() => { if (blockIfUnsent()) return; ck.reset(rcId); setSendError(""); }}
@@ -2718,6 +2735,13 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
           onAddingCourse={() => setCoursePick({ mode: "adding" })}
         />
       </div>
+      {/* mini layout: the bar that slides the check panel on/off screen (hidden by CSS on the full layout) */}
+      <button className="checktoggle" onClick={() => setCheckOpen((v) => !v)} aria-expanded={checkOpen}>
+        {checkOpen ? <><i>◂</i><b>Menu</b></> : (() => {
+          const n = ck.check.lines.filter((l) => l.kind === "M" && !l.transferOut && !l.isSplit && !isVoidReversal(l)).length;
+          return <><b>Check</b><span>{n ? `${n} item${n === 1 ? "" : "s"}` : "empty"}</span><em>{`$${grandTotal(checkSubtotal(ck.check), tax).toFixed(2)}`}</em><i>▸</i></>;
+        })()}
+      </button>
 
       {splitMode && (
         <SplitCheck
@@ -2744,10 +2768,10 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
             <div className="authtitle">Tab name</div>
             <div className="authsub">A name is required for this check</div>
             <input className="ctable tabname" autoFocus value={tabNameDraft} onChange={(e) => setTabNameDraft(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && tabNameDraft.trim()) { ck.setTable(tabNameDraft.trim()); const a = tabNamePrompt.after; setTabNamePrompt(null); a(); } }} />
+              onKeyDown={(e) => { if (e.key === "Enter" && tabNameDraft.trim()) { ck.setTable(tabNameDraft.trim()); setTabNamePending(tabNamePrompt.after); setTabNamePrompt(null); } }} />
             <div className="mfactions">
               <button className="mfbtn ghost" onClick={() => setTabNamePrompt(null)}>Cancel</button>
-              <button className="mfbtn go" disabled={!tabNameDraft.trim()} onClick={() => { ck.setTable(tabNameDraft.trim()); const a = tabNamePrompt.after; setTabNamePrompt(null); a(); }}>OK</button>
+              <button className="mfbtn go" disabled={!tabNameDraft.trim()} onClick={() => { ck.setTable(tabNameDraft.trim()); setTabNamePending(tabNamePrompt.after); setTabNamePrompt(null); }}>OK</button>
             </div>
           </div>
         </div>

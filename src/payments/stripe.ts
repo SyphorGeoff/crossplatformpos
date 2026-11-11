@@ -170,12 +170,14 @@ const needsPresent = (ref: string, amountCents: number): CardResult =>
 const presentRefunds = new Map<string, { readerId: string }>();
 
 /** The card lines a slip prints, in slip order: Account / APN / AID / TVR / TSI / Cryptogram / ENTRY.
- *  Account (credit / checking / savings / prepaid) is on every card: card networks require it on
- *  receipts outside the US, and Interac always. Same text for the merchant and the guest copy. */
+ *  Account (credit / checking / savings / prepaid) prints whenever the card states it; "unknown" is
+ *  left off. Same text for the merchant and the guest copy. */
 export function receiptLines(card: Obj): string | undefined {
   const r = obj(card.receipt);
   const lines: string[] = [];
-  const account = str(r.account_type) ?? str(card.funding);
+  // Stripe reports "unknown" when the card does not say; an "Account: unknown" line only raises questions, so it is left off.
+  const known = (v: string | undefined) => (v && v.trim().toLowerCase() !== "unknown" ? v : undefined);
+  const account = str(r.account_type) ? known(str(r.account_type)) : known(str(card.funding));   // the funding type only stands in when the card gives no account type at all
   if (account) lines.push(`Account: ${account}`);
   if (str(r.application_preferred_name)) lines.push(`APN: ${r.application_preferred_name}`);
   if (str(r.dedicated_file_name)) lines.push(`AID: ${r.dedicated_file_name}`);
