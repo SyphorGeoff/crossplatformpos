@@ -6,7 +6,7 @@
  * Success = Status_Code=="100". Clock-out references the open card by Sequence.
  */
 
-import { apiServerAddress, asList, findKey, parseXmlResponse, postXml, textOf } from "./hbroker";
+import { apiServerAddress, asList, findKey, parseXmlResponse, postXml, textOf, type XmlDict } from "./hbroker";
 import { escapeXml, type SessionConfig } from "./order";
 
 const XML_HEAD = '<?xml version="1.0" encoding="UTF-8"?>';
@@ -30,11 +30,25 @@ export interface ClockedInEmp {
  * The returned Job_POS_ID / Default_Dining_Room_POS_ID / Sequence let a
  * clocked-in employee go straight in (skipping the clock-in gate).
  */
+/** The server answered a request with an error status, not data. */
+export class ServerReplyError extends Error {
+  constructor(public statusCode: string, message: string) { super(message); this.name = "ServerReplyError"; }
+}
+
+/** Throw when a reply is a <Message_Status> error (Status_Code 400 and up) and not data. */
+function refuseErrorReply(parsed: XmlDict): void {
+  const ms = findKey(parsed, "Message_Status");
+  if (ms === undefined) return;
+  const code = textOf(findKey(parsed, "Status_Code"));
+  if (code && Number(code) >= 400) throw new ServerReplyError(code, textOf(findKey(parsed, "Status_Text")) || `status ${code}`);
+}
+
 export async function fetchClockedInEmp(cfg: SessionConfig, empId: string): Promise<ClockedInEmp | null> {
   const xml = `${XML_HEAD}${TRANS_DTD}<Transactional_Request Trans_Type="Clocked_In_Emps">` +
     el("ISIS_Ver", cfg.isisVer) + el("Store_ID", cfg.storeId) + el("Security_Token", cfg.token) + `</Transactional_Request>`;
   const nn = (v: string) => (/^[<(]?null[>)]?$/i.test(v.trim()) ? "" : v); // server sends literal "null"
   const parsed = parseXmlResponse(await postXml(apiServerAddress(cfg.enterpriseServerUrl), xml));
+  refuseErrorReply(parsed);   // an error is never read as "not clocked in" (2026-11-11: Invalid Token put a clocked-in employee on the clock-in screen)
   for (const r of asList(findKey(parsed, "Clocked_In_Emp"))) {
     if (textOf(findKey(r, "Emp_POS_ID")) !== empId) continue;
     return {

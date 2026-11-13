@@ -14,6 +14,7 @@ import { ISIS_VER, useSettings } from "./state/useSettings";
 import { DefinitionError, fullSync, loadSeqMap, incrementalSync, pullTable, type SyncConfig } from "./protocol/defsync";
 import { clearTerminalData } from "./platform/storage";
 import { requestStandardToken } from "./protocol/activation";
+import { setTokenRenewer } from "./protocol/hbroker";
 
 export default function App() {
   const { settings, update } = useSettings();
@@ -97,6 +98,37 @@ export default function App() {
   }, [update]);
   // Only an explicit server refusal counts — never a network failure or an odd/empty reply.
   const tokenRefused = (tok: { ok: boolean; error?: string }): boolean => !tok.ok && !!tok.error && !/unreachable|no token in response/i.test(tok.error);
+  // Token failure on ANY call (protocol/hbroker postXml sees "Invalid Token"): get a new Standard token
+  // and the call is retried with it. If the server refuses the request, the license was removed or this
+  // POS configuration was assigned to another terminal: the assignment is dropped and the terminal goes
+  // back to activation (Geoff 2026-11-11). A network failure renews nothing and drops nothing.
+  const renewing = useRef<Promise<string | null> | null>(null);
+  useEffect(() => {
+    if (!settings.activated) { setTokenRenewer(null); return; }
+    let launched = false;
+    void launch.promise.then(() => { launched = true; });
+    setTokenRenewer(async (stale) => {
+      if (!launched) return null;                                                   // the launch flow mints its own token; never race it
+      if (tokenRef.current && tokenRef.current !== stale) return tokenRef.current;   // already renewed by another call
+      if (!renewing.current) {
+        renewing.current = (async () => {
+          const tok = await requestStandardToken({
+            enterpriseServerUrl: settings.enterpriseServerUrl, isisVer: ISIS_VER,
+            storeId: settings.storeId, terminalPosId: settings.terminalPosId,
+            terminalUID: settings.terminalUid, enterpriseCode: settings.enterpriseCode,
+          });
+          console.info("[token] rejected by the server, re-minted", tok.ok ? "ok" : `FAILED ${tok.error ?? ""}`);
+          if (tokenRefused(tok)) { dropAssignment(`standard token refused: ${tok.error}`); return null; }
+          if (!tok.ok || !tok.token) return null;
+          tokenRef.current = tok.token; update({ token: tok.token });
+          return tok.token;
+        })().finally(() => { renewing.current = null; });
+      }
+      return renewing.current;
+    });
+    return () => setTokenRenewer(null);
+  }, [settings.activated, settings.enterpriseServerUrl, settings.storeId, settings.terminalPosId, settings.terminalUid, settings.enterpriseCode, launch, dropAssignment, update]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const checkStillAssigned = useCallback(async (): Promise<boolean> => {
     try {
       const rows = await pullTable(syncCfg(), "Terminals");

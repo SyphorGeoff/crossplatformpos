@@ -57,6 +57,8 @@ export interface CardSupport {
   /** A card payment was approved: the parent prints its slip. `tender` is the tender that was pressed (its
    *  threshold decides printing). Not called when a bar tab is opened; that slip prints when the tab is finished. */
   onApproved?: (a: { kind: "sale" | "auth"; tender: Tender; cardType: string; last4?: string; authCode?: string; amount: number; tip: number; cardLines: string[] }) => void;
+  /** A card payment was taken back at the processor (void / refund): the parent prints the void slip. */
+  onVoided?: (a: { cardType: string; last4?: string; authCode?: string; amount: number; cardLines: string[] }) => void;
 }
 
 export interface PaymentViewProps {
@@ -227,6 +229,7 @@ export default function PaymentView(p: PaymentViewProps) {
       setMode({ kind: "tenders" });
       setBusy(false);
       if (r.status !== "ok" && r.status !== "cancelled") { setMsg(`${t.name} void failed: ${r.message}`); return; }
+      card.onVoided?.({ cardType: t.brand ?? t.name, last4: t.last4, authCode: t.authCode || t.ref, amount: total, cardLines: (r.receipt?.customer ?? "").split("\n").filter((l) => l.trim() !== "") });
       p.voidTender(t.key); setMsg(`${t.name} voided — ${r.message}`); return;
     }
     p.voidTender(t.key); setMsg(`${t.name} voided`);
@@ -416,15 +419,21 @@ export default function PaymentView(p: PaymentViewProps) {
   );
 }
 
-function CashPad({ due, rounding, onApply, onBack }: { due: number; rounding: string; onApply: (n: number) => void; onBack: () => void }) {
-  const [entry, setEntry] = useState("");
+/** Cash amount pad. It opens on the balance with Apply ready, so the exact amount is one press; the first
+ *  key typed replaces it (a different amount tendered), backspace edits it. */
+export function CashPad({ due, rounding, onApply, onBack }: { due: number; rounding: string; onApply: (n: number) => void; onBack: () => void }) {
+  const [entry, setEntry] = useState(() => (due > 0 ? round2(due).toFixed(2) : ""));
+  const [fresh, setFresh] = useState(due > 0);   // still showing the prefilled balance
   const val = Number(entry) || 0;
   const quick = [round2(due), 20, 50, 100].filter((v, i, a) => a.indexOf(v) === i && v >= due || v === round2(due));
-  const key = (k: string) => setEntry((e) => (k === "." && e.includes(".") ? e : (e + k).slice(0, 8)));
+  const key = (k: string) => {
+    if (fresh) { setFresh(false); setEntry(k === "." ? "0." : k); return; }
+    setEntry((e) => (k === "." && e.includes(".") ? e : (e + k).slice(0, 8)));
+  };
   return (
     <div className="cashpad">
       <div className="cashrow">
-        <input className="cashin" value={entry} onChange={(e) => setEntry(e.target.value.replace(/[^0-9.]/g, ""))} placeholder={fmt(due)} inputMode="decimal" />
+        <input className="cashin" value={entry} onChange={(e) => { setFresh(false); setEntry(e.target.value.replace(/[^0-9.]/g, "")); }} placeholder={fmt(due)} inputMode="decimal" />
         {rounding && <span className="pvnote">rounds to {rounding}</span>}
       </div>
       <div className="quickrow">
@@ -432,7 +441,7 @@ function CashPad({ due, rounding, onApply, onBack }: { due: number; rounding: st
       </div>
       <div className="keypad">
         {["1","2","3","4","5","6","7","8","9",".","0","⌫"].map((k) => (
-          <button key={k} className="kkey" onClick={() => (k === "⌫" ? setEntry((e) => e.slice(0, -1)) : key(k))}>{k}</button>
+          <button key={k} className="kkey" onClick={() => (k === "⌫" ? (setFresh(false), setEntry((e) => e.slice(0, -1))) : key(k))}>{k}</button>
         ))}
       </div>
       <div className="pvactions">

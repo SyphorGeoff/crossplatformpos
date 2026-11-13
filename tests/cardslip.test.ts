@@ -78,6 +78,26 @@ describe("guest copy", () => {
   });
 });
 
+describe("void (CREDITVOID) slip", () => {
+  const ctx: CardSlipCtx = { ...base, kind: "void", cardType: "INTERAC", last4: "1933", amount: 3.3, tip: 0, authCode: "497390", cardLines: ["APN: Interac", "ENTRY: contactless emv"], trailerLines: ["18%: {SUBT*18%}"] };
+  const m = text(buildCardSlip(ctx, "merchant", 40)), g = text(buildCardSlip(ctx, "guest", 40));
+  it("says CreditVoidSale / CREDITVOID and prints the amount negative", () => {
+    expect(m).toContain("CreditVoidSale"); expect(m).toContain("CREDITVOID"); expect(m).not.toContain("PURCHASE");
+    const amt = m.find((l) => l.startsWith("Amount:"))!;
+    expect(amt.endsWith("$-3.30")).toBe(true);
+    expect(m).toContain("INTERAC"); expect(m).toContain("Card#:1933"); expect(m).toContain("APN: Interac"); expect(m).toContain("Auth#: 497390");
+  });
+  it("has no tip or total lines and no trailer, on either copy", () => {
+    for (const t of [m, g]) { const all = t.join("\n"); expect(all).not.toMatch(/Tip|Total|18%/); }
+  });
+  it("names each copy", () => {
+    expect(m).toContain("----- Merchant Copy -------"); expect(g).toContain("----- Guest Copy -------");
+  });
+  it("always prints, whatever the threshold or print-on-demand setting", () => {
+    expect(shouldPrintCardSlip("void", 1, 50, true)).toBe(true); expect(shouldPrintCardSlip("void", 1, 0, true)).toBe(true);
+  });
+});
+
 describe("buildCardSlips", () => {
   it("returns the Merchant Copy first, then the Guest Copy", () => {
     const [a, b] = buildCardSlips(base, 40);

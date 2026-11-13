@@ -58,14 +58,42 @@ export function buildDefinitionRequest(p: {
   return `${head}<ISIS_Ver>${p.isisVer}</ISIS_Ver><Store_ID>${p.storeId}</Store_ID><Current_Revision_Seq>${cur}</Current_Revision_Seq>${changeSeq}<Security_Token>${p.securityToken}</Security_Token></Definition_Request>`;
 }
 
-/** POST an XML document (postToServer:/sendSynchronousRequest:, text/xml). */
-export async function postXml(url: string, xml: string): Promise<string> {
+async function send(url: string, xml: string): Promise<string> {
   const res = await httpRequest(url, {
     method: "POST",
     headers: { "Content-type": "text/xml" },
     body: xml,
   });
   return res.text();
+}
+
+/* ---- session token renewal ----
+ * The server keeps ONE Standard token per terminal and it lapses daily, so any call can come back
+ * <Message_Status Status_Code="400">…<Status_Text>Invalid Token</Status_Text>. Geoff 2026-11-11: on a
+ * token failure the POS gets a new one; if it cannot, the license was removed or this POS
+ * configuration was assigned to another terminal. So every request passes through here: an Invalid
+ * Token reply asks the registered renewer (App.tsx) for a fresh token and the same request is sent
+ * once more with it. The renewer returns null when it has none to give — a refused token request
+ * has by then dropped the terminal's assignment — and the original reply is passed on unchanged. */
+export type TokenRenewer = (staleToken: string) => Promise<string | null>;
+let tokenRenewer: TokenRenewer | null = null;
+export function setTokenRenewer(fn: TokenRenewer | null): void { tokenRenewer = fn; }
+
+export const isInvalidTokenReply = (text: string): boolean =>
+  /<Message_Status\b[^>]*\bStatus_Code="400"[^>]*>[\s\S]{0,400}?<Status_Text>\s*Invalid Token/i.test(text);
+const sentToken = (xml: string): string => /<Security_Token>([^<]+)<\/Security_Token>/.exec(xml)?.[1] ?? "";
+
+/** POST an XML document (postToServer:/sendSynchronousRequest:, text/xml). An Invalid Token reply is
+ *  retried once with a renewed session token. */
+export async function postXml(url: string, xml: string): Promise<string> {
+  const text = await send(url, xml);
+  if (!tokenRenewer || !isInvalidTokenReply(text)) return text;
+  const stale = sentToken(xml);
+  if (!stale) return text;                       // a token request itself carries no session token
+  let fresh: string | null = null;
+  try { fresh = await tokenRenewer(stale); } catch { fresh = null; }
+  if (!fresh || fresh === stale) return text;
+  return send(url, xml.split(`<Security_Token>${stale}</Security_Token>`).join(`<Security_Token>${fresh}</Security_Token>`));
 }
 
 /* ---- XML response parsing (NSXMLParser dictionaryStack analog) ---- */

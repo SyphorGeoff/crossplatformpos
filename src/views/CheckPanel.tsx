@@ -88,17 +88,18 @@ function LineRow({ line, selecting, checked, showGuest, onToggle, onQty, onRemov
     );
   }
   const isMod = line.kind === "Mo";
-  const selectable = selecting && !isMod;
+  // A tap selects the line at any time, as on the iPad (CheckTableViewController.m:257 → [lineItem selectItem]);
+  // `selecting` now only means the Edit Check function screen is up (inline controls hide while it is).
+  const selectable = !isMod;
   const cyclable = !selecting && line.kind === "M" && !!onCyclePrefix && !!prefixCyclable?.(line);
   return (
     <div
       className={`cl ${isMod ? "mod" : ""} ${line.sent ? "sent" : "fresh"} ${line.isVoid ? "void" : ""} ${selectable ? "selectable" : ""} ${checked ? "picked" : ""}`}
       style={{ paddingLeft: 10 + line.indentLevel * 16 }}
-      onClick={selectable ? () => onToggle(line.key) : () => { if (fired.current) fired.current = false; }}
+      onClick={() => { if (fired.current) { fired.current = false; return; } if (selectable) onToggle(line.key); }}   // a long press (course chooser) is not a tap
       {...press}
     >
       <div className="clmain">
-        {selectable && <span className="clcheck">{checked ? "☑" : "☐"}</span>}
         {!!course && line.kind === "M" && <span className="clcourse" style={{ "--ch": courseHue(course) } as React.CSSProperties}>C{course}</span>}
         {(showGuest || line.appliedToGuests === "0") && line.kind === "M" && (
           <span className="clguest">{line.appliedToGuests === "0" ? "T" : `G${line.guestNumber ?? 1}`}</span>
@@ -117,10 +118,10 @@ function LineRow({ line, selecting, checked, showGuest, onToggle, onQty, onRemov
       )}
       {!selecting && !line.sent && line.kind === "M" && (
         <div className="clctl">
-          <button onClick={() => onQty(line.key, line.quantity - 1)}>–</button>
+          <button onClick={(e) => { e.stopPropagation(); onQty(line.key, line.quantity - 1); }}>–</button>
           <span>{line.quantity}</span>
-          <button onClick={() => onQty(line.key, line.quantity + 1)}>+</button>
-          <button className="rm" onClick={() => onRemove(line.key)}>Remove</button>
+          <button onClick={(e) => { e.stopPropagation(); onQty(line.key, line.quantity + 1); }}>+</button>
+          <button className="rm" onClick={(e) => { e.stopPropagation(); onRemove(line.key); }}>Remove</button>
         </div>
       )}
     </div>
@@ -129,17 +130,16 @@ function LineRow({ line, selecting, checked, showGuest, onToggle, onQty, onRemov
 
 /** A payment on the check, drawn like any other line (iPad CheckTableCellView.m isTypeTender 456-471,
  *  813-820): the tender name with the card's last four in brackets, the amount, and the tip under it.
- *  A voided payment is struck through; its reversal line is not shown. In Edit mode it is selectable
- *  like an item, and Void Selected voids it (manager authorization and a reason). (The iPad's guest badge on a
+ *  A voided payment is struck through; its reversal line is not shown. A tap selects it like an item,
+ *  and Edit Check → Void Selected voids it (manager authorization and a reason). (The iPad's guest badge on a
  *  payment needs applied_to_guests on tender lines, which posx does not record yet.) */
-function TenderRow({ t, selecting, checked, onToggle }: { t: TenderLine; selecting: boolean; checked: boolean; onToggle: (k: string) => void }) {
+function TenderRow({ t, checked, onToggle }: { t: TenderLine; checked: boolean; onToggle: (k: string) => void }) {
   const name = `${t.name}${t.last4 ? `(${t.last4})` : ""}`;
-  const selectable = selecting && !t.isVoid;   // Edit mode: pick it like an item, then Void Selected
+  const selectable = !t.isVoid;   // a tap selects it at any time, like an item; Edit Check → Void Selected voids it
   return (
     <div className={`cl tender ${t.sent ? "sent" : "fresh"} ${t.isVoid ? "void" : ""} ${selectable ? "selectable" : ""} ${checked ? "picked" : ""}`}
       onClick={selectable ? () => onToggle(t.key) : undefined}>
       <div className="clmain">
-        {selectable && <span className="clcheck">{checked ? "☑" : "☐"}</span>}
         <span className="clqty" />
         <span className="clname">{name}{t.finalized === false && <span className="clheld">AUTH</span>}{t.reference && <span className="clitemnote">{t.reference}</span>}</span>
         <span className="clamt">{fmt(t.amount)}{t.tip > 0 && <span className="cltip">tip {fmt(t.tip)}</span>}</span>
@@ -155,7 +155,7 @@ export default function CheckPanel(p: CheckPanelProps) {
   const subtotal = checkSubtotal(check);
   const total = grandTotal(subtotal, tax);
   const nUnsent = unsentLines(check).length;
-  const selecting = p.editing ?? false;                    // Edit mode is controlled by the top strip
+  const selecting = p.editing ?? false;                    // the Edit Check function screen is up (top strip / Edit check button); selection itself needs no mode
   const sel = p.selectedKeys ?? new Set<string>();          // selection is owned by Menu (shared with the Edit grid)
 
   // Hide void-off/reversal lines and machine-only reference lines (only shown
@@ -166,6 +166,8 @@ export default function CheckPanel(p: CheckPanelProps) {
   // Payments show on the check like any other line (a void's reversal line is hidden, as for items).
   const payments = check.tenders.filter((t) => !(t.isVoid && t.parentLineNumber !== undefined));
   const paid = tenderApplied(check);
+  // What is selected right now (keys of lines / payments still on the check).
+  const nSelected = shown.filter((l) => sel.has(l.key)).length + payments.filter((t) => sel.has(t.key)).length;
   const balance = balanceWithTax(subtotal, tax, paid);
   // Sort Guest: order item families (item + its modifiers) by guest number.
   const display = p.sortByGuest ? sortLinesByGuest(shown) : shown;
@@ -296,7 +298,7 @@ export default function CheckPanel(p: CheckPanelProps) {
             {unsentHeads.length > 0 && <button className="csentpill collapse" onClick={() => setSentExpanded(false)}>▲ BACK TO NEW ITEMS</button>}
           </>
         )}
-        {payments.map((t) => <TenderRow key={t.key} t={t} selecting={selecting} checked={sel.has(t.key)} onToggle={p.onToggleLine ?? (() => {})} />)}
+        {payments.map((t) => <TenderRow key={t.key} t={t} checked={sel.has(t.key)} onToggle={p.onToggleLine ?? (() => {})} />)}
       </div>
 
       {!selecting && p.onSelectGuest && (
@@ -325,13 +327,13 @@ export default function CheckPanel(p: CheckPanelProps) {
         {p.sendError && <div className="cerr">{p.sendError}</div>}
         {selecting ? (
           <div className="cactions">
-            <span className="cselcount">{sel.size} selected</span>
+            <span className="cselcount">{nSelected} selected</span>
             <button className="csend" onClick={() => p.onEditingChange?.(false)}>Done</button>
           </div>
         ) : (
           <div className="cactions">
             <button className="cnew" onClick={p.onNewCheck} disabled={p.sending}>New</button>
-            {itemCount >= 1 && <button className="cnew wide" onClick={() => p.onEditingChange?.(true)} disabled={p.sending}>Edit check</button>}
+            {itemCount >= 1 && <button className="cnew wide" onClick={() => p.onEditingChange?.(true)} disabled={p.sending}>Edit check{nSelected > 0 ? ` · ${nSelected} selected` : ""}</button>}
           </div>
         )}
       </div>

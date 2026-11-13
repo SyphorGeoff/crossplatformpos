@@ -7,6 +7,9 @@
  *                         sale (Pay At Table / counter) or a bar tab being finished.
  *   auth  (iPad PREAUTH)  a hold on a normal terminal: blank Tip and Total lines
  *                         for the guest to fill in; the tip is keyed at Finalize.
+ *   void  (iPad CREDITVOID) a card payment taken back: the amount prints negative,
+ *                         no tip lines, no trailer. Prints whenever the processor
+ *                         confirms the reversal (CheckViewController.m 29984-30010).
  *
  * Left out on purpose (Geoff 2026-11-10): every signature line and agreement
  * text, Cardholder's Name, processor-specific lines (host response, FreedomPay
@@ -20,7 +23,7 @@
 import { PrintDoc } from "@/platform/escpos";
 import { replaceTokens, type TokenCtx } from "./printjobs";
 
-export type SlipKind = "sale" | "auth";
+export type SlipKind = "sale" | "auth" | "void";
 export type SlipCopy = "merchant" | "guest";
 
 export interface CardSlipCtx {
@@ -70,15 +73,17 @@ export function buildCardSlip(ctx: CardSlipCtx, copy: SlipCopy, cpl = 40): strin
   d.centered("Transaction Record");
   d.two(`Server Name: ${slipServerName(ctx.server)} ${ctx.time}`.trimEnd(), ctx.date);
   d.line(`Check #:${ctx.checkNo}  ${ctx.tabName}`.trimEnd());
-  d.bold(ctx.kind === "sale" ? "CreditSale" : "CreditPreAuth");
+  d.bold(ctx.kind === "sale" ? "CreditSale" : ctx.kind === "auth" ? "CreditPreAuth" : "CreditVoidSale");
   d.line("");
-  d.line("PURCHASE");
+  d.line(ctx.kind === "void" ? "CREDITVOID" : "PURCHASE");
   d.line("");
   d.line(ctx.cardType);
   d.line(`Card#:${ctx.last4}`);
   d.feed(2);
-  d.two("Amount:", money(ctx.amount));
-  if (ctx.kind === "sale") {
+  d.two("Amount:", ctx.kind === "void" ? `$-${Math.abs(ctx.amount).toFixed(2)}` : money(ctx.amount));
+  if (ctx.kind === "void") {
+    for (const l of ctx.cardLines) d.line(l);
+  } else if (ctx.kind === "sale") {
     d.two("Tip   :", money(ctx.tip));
     d.two("Total :", money(round2(ctx.amount + ctx.tip)));
     d.line("");
@@ -93,7 +98,10 @@ export function buildCardSlip(ctx: CardSlipCtx, copy: SlipCopy, cpl = 40): strin
   }
   d.line(`Auth#: ${ctx.authCode}`);
   d.line("");
-  if (copy === "merchant") {
+  if (ctx.kind === "void") {
+    d.feed(4);
+    d.centered(copy === "merchant" ? "----- Merchant Copy -------" : "----- Guest Copy -------");
+  } else if (copy === "merchant") {
     d.line("----- Merchant Copy --------");
   } else {
     const trailer = (ctx.trailerLines ?? []).map((t) => (t ?? "").trim()).filter((t) => t !== "");
@@ -118,8 +126,10 @@ export function buildCardSlips(ctx: CardSlipCtx, cpl = 40): [string, string] {
 /** Does this payment print a slip? (CheckViewController.m 7517-7541)
  *    sale: a tender with a threshold prints at or above it; with no threshold it prints unless the
  *          store prints non-cash receipts on demand only.
- *    auth: prints at or above the tender's threshold (always, when there is none). */
+ *    auth: prints at or above the tender's threshold (always, when there is none).
+ *    void: always. */
 export function shouldPrintCardSlip(kind: SlipKind, amountPlusTip: number, threshold: number, printOnDemand: boolean): boolean {
+  if (kind === "void") return true;   // a reversal always leaves a record
   if (kind === "auth") return amountPlusTip >= threshold - 0.005;
   if (threshold > 0) return amountPlusTip >= threshold - 0.005;
   return !printOnDemand;

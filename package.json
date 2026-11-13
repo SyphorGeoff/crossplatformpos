@@ -1,12 +1,14 @@
 {
   "name": "aireus-pos",
   "private": true,
-  "version": "1.29",
+  "version": "1.31",
+  "miniVersion": "0.5",
   "type": "module",
   "description": "Aireus POS EDGE — cross-platform POS client (web / Android / iOS). Protocol parity with the iOS Objective-C ISIS client.",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:mini": "tsc -b && POS_MINI=1 vite build --outDir dist-mini",
     "preview": "vite preview",
     "test": "vitest run"
   },

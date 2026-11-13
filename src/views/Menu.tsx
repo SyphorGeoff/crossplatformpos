@@ -64,7 +64,7 @@ import EditPaymentView from "./EditPaymentView";
 import type { CardSupport } from "./PaymentView";
 import type { Adjustment, DiningTable, Employee, Job, MenuItem, ScreenGroup, Tender } from "@/model/catalog";
 import { can, jobsForEmployee, permsForEmployee, type AuthAction, type Authorizer } from "@/model/permissions";
-import { clockIn, clockOut, fetchClockedInEmp, fetchClockedInEmpIds, fetchClockedInEmps, type ClockedInEmp } from "@/protocol/timeclock";
+import { clockIn, clockOut, fetchClockedInEmp, fetchClockedInEmpIds, fetchClockedInEmps, type ClockedInEmp, ServerReplyError } from "@/protocol/timeclock";
 import {
   fetchHighestCheck, resolveBusinessDate, sendCheck,
   type SendContext, type SessionConfig,
@@ -542,7 +542,8 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
   const toggleLine = (k: string) => setSel((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
   const selectAll = () => setSel(new Set(selectableKeys()));
   const unselectAll = () => setSel(new Set());
-  useEffect(() => { if (!editing) setSel(new Set()); }, [editing]); // clear picks when leaving Edit
+  // Lines are selected by tapping them at any time, as on the iPad; Edit Check only calls up the function
+  // screen, so leaving it keeps the selection. A different check starts with nothing selected (effect below).
 
   // Catch the check-number counter up to the server's highest check once per
   // session, so numbers stay gapless and don't collide with other terminals.
@@ -559,7 +560,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     })();
   }, [employee]); // eslint-disable-line react-hooks/exhaustive-deps
   // per check: the exemption set starts from what the server holds for it (P13), Edit closes, course picker resets
-  useEffect(() => { setTaxExempt(new Set(ck.check.exemptTaxGroups ?? [])); setEditing(false); setAddingCourse(0); }, [ck.check.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setTaxExempt(new Set(ck.check.exemptTaxGroups ?? [])); setEditing(false); setSel(new Set()); setAddingCourse(0); }, [ck.check.id]); // eslint-disable-line react-hooks/exhaustive-deps
   // …and the check remembers it, so a browser reload or a re-post keeps the exemption
   useEffect(() => {
     const cur = ck.check.exemptTaxGroups ?? [];
@@ -645,7 +646,13 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
           setClock({ empId: employee.id, jobId: emp.jobId, jobName, sequence: emp.sequence, defaultRoomId: emp.defaultRoomId });
           setFloorRoomId(emp.defaultRoomId); setMode(landingMode(employee.id, emp.jobId));
         } else setSigningIn(false); // not clocked in → the gate handles clock-in
-      } catch { if (!cancelled) setSigningIn(false); }
+      } catch (e) {
+        if (cancelled) return;
+        // The server answered with an error (the token could not be renewed, or another refusal): that says
+        // nothing about the time clock, so the clock-in screen must not appear. Back to the keypad with the reason.
+        if (e instanceof ServerReplyError) { setDefsStatus(`Could not sign in: ${e.message}`); signOut(); return; }
+        setSigningIn(false);   // unreachable server: unchanged
+      }
     })();
     return () => { cancelled = true; };
   }, [employee, clock]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1500,6 +1507,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     brandTender: (brand) => allTenders.find((t) => t.isCredit && !t.hidden && t.iCatCode === brand),
     mintKey: mintLineKey,
     onApproved: (a) => printCardSlip(a),
+    onVoided: (a) => printCardSlip({ kind: "void", tip: 0, ...a }),
     resize: resizeCardLine,
     barTabs: terminalDef?.useRepeatSale ?? false,
     finishTab: (key, tip) => finishTab(key, tip),
@@ -1720,6 +1728,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
   const applyVoid = async (reasonId: string) => {
     if (!voidReason) return;
     const { keys, auth } = voidReason; setVoidReason(null);
+    unselectAll();
     let next = ck.check;
     for (const k of keys) {
       const tender = next.tenders.find((t) => t.key === k);
@@ -1740,6 +1749,9 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
             });
           } catch (e) { r = { status: "error", message: String((e as Error).message ?? e) }; }
           if (r.status !== "ok" && r.status !== "cancelled") { setSendError(`Card void failed: ${r.message}`); continue; }
+          // The void slip (iPad printReceipt:CREDITVOID): the processor has confirmed the money went back.
+          printCardSlip({ kind: "void", cardType: tender.brand ?? tender.name, last4: tender.last4, authCode: tender.authCode || tender.ref, amount: total, tip: 0,
+            cardLines: (r.receipt?.customer ?? "").split("\n").filter((l) => l.trim() !== "") });
         }
         next = voidTenderLine(next, k, reasonId, auth.id); continue;   // a posted payment (cash / card)
       }
@@ -2517,7 +2529,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
     reorder: canReorder
       ? () => {
           for (const k of sel) { const l = lineOf(k); if (l?.kind === "M" && !l.isVoid) countRing(l.menuItemId, l.quantity); } // reorderItems decrements again
-          ck.reorder(new Set(sel)); setEditing(false);
+          ck.reorder(new Set(sel)); unselectAll(); setEditing(false);
         }
       : undefined,
     holdUnhold: sel.size ? () => { ck.holdUnhold(new Set(sel)); unselectAll(); } : undefined,
@@ -2644,7 +2656,7 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
 
       {showHub && hubMenu}
 
-      <div className={`order ${checkOpen ? "checkopen" : ""}`}>
+      <div className={`order ${checkOpen ? "checkopen" : ""} ${editing ? "editing" : ""}`}>
         {editing ? (
           <EditCheck
             checkNo={ck.check.checkNumber || "—"}
@@ -2746,9 +2758,14 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
       </div>
       {/* mini layout: the bar that slides the check panel on/off screen (hidden by CSS on the full layout) */}
       <button className="checktoggle" onClick={() => setCheckOpen((v) => !v)} aria-expanded={checkOpen}>
-        {checkOpen ? <><i>◂</i><b>Menu</b></> : (() => {
+        {(() => {
           const n = ck.check.lines.filter((l) => l.kind === "M" && !l.transferOut && !l.isSplit && !isVoidReversal(l)).length;
-          return <><b>Check</b><span>{n ? `${n} item${n === 1 ? "" : "s"}` : "empty"}</span><em>{`$${grandTotal(checkSubtotal(ck.check), tax).toFixed(2)}`}</em><i>▸</i></>;
+          return <>
+            <b>{checkOpen ? "Hide Check" : "Show Check"}</b>
+            <span>{n ? `${n} item${n === 1 ? "" : "s"}` : "empty"}</span>
+            <em>{`$${grandTotal(checkSubtotal(ck.check), tax).toFixed(2)}`}</em>
+            <i aria-hidden="true">{checkOpen ? "◀" : "▶"}</i>
+          </>;
         })()}
       </button>
 

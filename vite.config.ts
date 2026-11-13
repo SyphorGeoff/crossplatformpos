@@ -1,7 +1,10 @@
 import { defineConfig, type Plugin } from "vite";
 import { readFileSync } from "node:fs";
 // One version for the web build: package.json "version" (keep it equal to the APK versionName at each release).
-const APP_VERSION = (JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")) as { version: string }).version;
+const PKG = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")) as { version: string; miniVersion: string };
+// POS_MINI=1 (npm run build:mini) builds xmini: the posx mini layout baked in, its own version line.
+const IS_MINI = process.env.POS_MINI === "1";
+const APP_VERSION = IS_MINI ? PKG.miniVersion : PKG.version;
 import { fileURLToPath } from "node:url";
 import net from "node:net";
 import react from "@vitejs/plugin-react";
@@ -86,7 +89,7 @@ function devPrintRelay(): Plugin {
 export default defineConfig({
   plugins: [react(), devForwarder(), devPrintRelay()],
   base: "./",
-  define: { __APP_VERSION__: JSON.stringify(APP_VERSION) },
+  define: { __APP_VERSION__: JSON.stringify(APP_VERSION), __APP_MINI__: JSON.stringify(IS_MINI) },
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
   test: { environment: "node", include: ["tests/**/*.test.ts"] },
 } as Parameters<typeof defineConfig>[0]);

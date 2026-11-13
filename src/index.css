@@ -285,10 +285,7 @@ body { background: var(--cream); color: var(--ink); font-family: "Helvetica Neue
 @media (max-width: 1000px) { .ecgrid { grid-template-columns: repeat(4, 1fr); } }
 @media (max-width: 760px) { .echero { grid-template-columns: 1fr; } .ecgrid { grid-template-columns: repeat(3, 1fr); } }
 
-@media (max-width: 760px) {
-  .order { flex-direction: column; }
-  .checkpanel { width: auto; flex: 0 0 auto; max-height: 44vh; border-left: none; border-top: 1px solid var(--line); }
-}
+/* Narrow screens use the posx mini layout (html[data-layout="mini"], end of file). */
 
 /* Employee PIN login — cream sign-in keypad */
 .login { position: fixed; inset: 0; background: var(--cream); color: var(--ink-soft); display: flex; flex-direction: column; align-items: center; padding: 28px 16px; }
@@ -603,3 +600,131 @@ body { background: var(--cream); color: var(--ink); font-family: "Helvetica Neue
 .table .tchk .lockico svg { width: 10px; height: 10px; }
 .authtitle .lockico { margin: 0 6px 0 0; }
 .authtitle .lockico svg { width: 15px; height: 15px; }
+
+/* ---- posx mini (html[data-layout="mini"], set by platform/layout.ts from the viewport width) ----
+   posx on the Stripe S710: ~360x640 CSS px portrait. One column; the check panel is an
+   overlay that slides in over the menu from the left, driven by the .checktoggle bar
+   (a button, never a swipe). The POS code is untouched: these rules only re-place what
+   Menu.tsx already renders. */
+.checktoggle { display: none; }
+html[data-layout="mini"] .pos, html[data-layout="mini"] .floor, html[data-layout="mini"] .mgrmenu { height: 100%; }
+html[data-layout="mini"] .activate, html[data-layout="mini"] .setup { min-height: 100%; height: 100%; overflow-y: auto; }
+html[data-layout="mini"] .order { position: relative; overflow: hidden; }
+html[data-layout="mini"] .checkpanel { position: absolute; inset: 0; width: 100%; min-width: 0; max-width: none; z-index: 5; border-right: none; transform: translateX(-100%); transition: transform .25s ease, box-shadow .25s ease; }
+html[data-layout="mini"] .order.checkopen .checkpanel { transform: none; box-shadow: 8px 0 24px rgba(26,26,26,.18); }
+/* check panel: compact header and footer so the line list gets the height (Geoff 2026-11-11, phone test) */
+html[data-layout="mini"] .chead { padding: 8px 12px 4px; align-items: center; gap: 8px; }
+html[data-layout="mini"] .chl { gap: 1px; }
+html[data-layout="mini"] .cparty { font-size: 11px; letter-spacing: .08em; }
+html[data-layout="mini"] .ctime { font-size: 10px; }
+html[data-layout="mini"] .ccheckno { font-size: 10px; }
+html[data-layout="mini"] .ctotal { font-size: 17px; }
+html[data-layout="mini"] .cbreak { font-size: 10px; }
+html[data-layout="mini"] .csub2 { padding: 0 12px 6px; gap: 6px; }
+html[data-layout="mini"] .ctable { padding: 6px 8px; font-size: 13px; }
+html[data-layout="mini"] .cguests button { width: 24px; height: 24px; font-size: 14px; }
+html[data-layout="mini"] .cguests span { min-width: 24px; font-size: 13px; }
+html[data-layout="mini"] .clines { padding: 6px; gap: 4px; }
+html[data-layout="mini"] .cl { padding: 7px 9px; }
+html[data-layout="mini"] .cguestbar { padding: 5px 10px; gap: 5px; }
+html[data-layout="mini"] .gbtn { min-width: 26px; height: 26px; font-size: 12px; }
+html[data-layout="mini"] .cfoot { padding: 6px 10px 8px; gap: 6px; }
+html[data-layout="mini"] .cnew { padding: 9px 12px; font-size: 14px; }
+html[data-layout="mini"] .csend, html[data-layout="mini"] .cpay { padding: 9px; font-size: 14px; }
+html[data-layout="mini"] .csub b { font-size: 20px; }
+html[data-layout="mini"] .checktoggle { display: flex; align-items: center; gap: 10px; width: 100%; padding: 12px 16px; border: none; border-top: 1px solid var(--line); background: var(--ink); color: var(--cream); font: inherit; font-size: 15px; cursor: pointer; }
+html[data-layout="mini"] .checktoggle b { font-weight: 800; letter-spacing: .04em; white-space: nowrap; }
+html[data-layout="mini"] .checktoggle span { font-size: 13px; opacity: .7; }
+html[data-layout="mini"] .checktoggle em { margin-left: auto; font-style: normal; font-family: var(--serif); font-size: 20px; font-weight: 900; font-variant-numeric: tabular-nums; }
+html[data-layout="mini"] .checktoggle i { font-style: normal; font-size: 18px; line-height: 1; color: var(--gold); }
+/* top strip: the nav scrolls sideways on one row, the fire pills share a full row */
+html[data-layout="mini"] .topbar { flex-wrap: wrap; gap: 8px; padding: 8px 10px; }
+html[data-layout="mini"] .tbnav { flex: 1 1 100%; flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+html[data-layout="mini"] .tbbtn { padding: 7px 11px; font-size: 13px; }
+html[data-layout="mini"] .tbfire { flex: 1 1 100%; }
+html[data-layout="mini"] .tbpill { flex: 1; padding: 9px 6px; font-size: 13px; }
+html[data-layout="mini"] .topbar { padding: 6px 8px; gap: 6px; }
+/* name / search / revenue-centre row folded into one line (Geoff 2026-11-11) */
+html[data-layout="mini"] .subbar { flex-wrap: nowrap; gap: 6px; padding: 4px 8px; }
+html[data-layout="mini"] .subbar .ident { flex: 0 1 auto; max-width: 34%; min-width: 0; }
+html[data-layout="mini"] .subbar .ident b { font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+html[data-layout="mini"] .subbar .ident span { font-size: 9px; overflow: hidden; text-overflow: ellipsis; }
+html[data-layout="mini"] .subbar .tools { flex: 0 0 auto; gap: 4px; }
+html[data-layout="mini"] .subbar .search { width: 88px; padding: 6px 8px; font-size: 12px; }
+html[data-layout="mini"] .subbar .clr, html[data-layout="mini"] .subbar .station { padding: 5px 7px; font-size: 11px; }
+html[data-layout="mini"] .subbar .rcs { flex: 1 1 0; min-width: 60px; order: 3; gap: 4px; }
+html[data-layout="mini"] .posbar { flex-wrap: wrap; gap: 8px; padding: 8px 10px; }       /* floor header: ident / tools row (scrolls) / room chips */
+html[data-layout="mini"] .posbar .tools { flex: 1 1 100%; overflow-x: auto; }
+html[data-layout="mini"] .posbar .rcs { flex: 1 1 100%; }
+html[data-layout="mini"] .cashrow { flex-wrap: wrap; }
+html[data-layout="mini"] .cashrow .pvnote { flex: 1 1 100%; margin-top: 4px; }
+html[data-layout="mini"] .search { max-width: none; }
+html[data-layout="mini"] .menutop { padding: 8px 10px 2px; }
+html[data-layout="mini"] .mtitle { font-size: 18px; }
+/* tiles: three columns at about half the tablet height, so ~18 items show at once */
+html[data-layout="mini"] .menugrid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; padding: 8px; }
+html[data-layout="mini"] .tile { min-height: 46px; padding: 6px 7px; border-radius: 9px; gap: 2px; min-width: 0; }
+html[data-layout="mini"] .tile .tname { font-size: 11.5px; line-height: 1.1; overflow-wrap: anywhere; }
+html[data-layout="mini"] .tile.item .tprice { font-size: 12px; }
+html[data-layout="mini"] .tile.group .tinto { font-size: 16px; }
+html[data-layout="mini"] .tile .tmod { top: 3px; right: 6px; font-size: 11px; }
+html[data-layout="mini"] .tile .tcount { min-width: 18px; height: 18px; font-size: 10px; top: -5px; right: -5px; }
+html[data-layout="mini"] .mfgrid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; padding: 10px; }
+html[data-layout="mini"] .tabs { padding: 4px 8px 0; }
+html[data-layout="mini"] .tab { padding: 7px 10px; font-size: 13px; }
+html[data-layout="mini"] .rc { padding: 6px 11px; font-size: 12px; }
+html[data-layout="mini"] .crumbs { padding: 4px 8px; }
+/* sheets fill the width and never outgrow the screen (max-height in % so the ?mini frame counts, not the window) */
+html[data-layout="mini"] .backdrop { padding: 10px; }
+html[data-layout="mini"] .payview, html[data-layout="mini"] .mgrpanel, html[data-layout="mini"] .modflow, html[data-layout="mini"] .sheet,
+html[data-layout="mini"] .authbox, html[data-layout="mini"] .finview, html[data-layout="mini"] .msgcompose, html[data-layout="mini"] .hubbox { width: 100%; max-height: 100%; overflow-y: auto; }
+html[data-layout="mini"] .pvbal { font-size: 32px; }
+/* edit check (Geoff 2026-11-11, option 2): one scrolling panel — the check's lines on top, then a
+   compact 3-up function grid. The check panel stops being an overlay while editing; the toggle bar
+   is moot and hidden; Done in the panel footer leaves Edit. */
+html[data-layout="mini"] .order.editing { flex-direction: column; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+html[data-layout="mini"] .order.editing .checkpanel { position: static; transform: none; box-shadow: none; flex: 0 0 auto; order: -1; border-bottom: 1px solid var(--line); }
+html[data-layout="mini"] .order.editing .clines { flex: 0 0 auto; overflow: visible; }
+html[data-layout="mini"] .order.editing .cfoot { position: sticky; bottom: 0; z-index: 2; }
+html[data-layout="mini"] .order.editing + .checktoggle { display: none; }
+html[data-layout="mini"] .editcheck { flex: 0 0 auto; overflow: visible; padding: 8px 8px 16px; }
+/* header at half height, buttons half as tall (glyph beside the label, helper text dropped), tight Done row (Geoff 2026-11-11) */
+html[data-layout="mini"] .echead { display: flex; flex-direction: row; align-items: baseline; flex-wrap: wrap; gap: 0 8px; padding-bottom: 4px; margin-bottom: 6px; }
+html[data-layout="mini"] .eckicker { display: none; }
+html[data-layout="mini"] .echead h1 { font-size: 14px; }
+html[data-layout="mini"] .ecmeta { position: static; text-align: left; font-size: 10px; line-height: 1.2; }
+html[data-layout="mini"] .ecmeta br { display: none; }
+html[data-layout="mini"] .ecmeta span::before { content: " · "; }
+html[data-layout="mini"] .echero { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; margin-bottom: 5px; }
+html[data-layout="mini"] .echerocard { flex-direction: row; align-items: center; justify-content: center; text-align: center; gap: 5px; padding: 0 4px; min-height: 34px; font-size: 11px; line-height: 1.1; }
+html[data-layout="mini"] .echerocard .ecglyph { font-size: 14px; }
+html[data-layout="mini"] .ecgrid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+html[data-layout="mini"] .ecfn { flex-direction: row; min-height: 34px; padding: 0 4px; gap: 5px; border-radius: 8px; }
+html[data-layout="mini"] .ecglyph { font-size: 13px; }
+html[data-layout="mini"] .ecfnlabel { font-size: 11px; line-height: 1.1; }
+html[data-layout="mini"] .ecfnsub { display: none; }
+html[data-layout="mini"] .order.editing .cfoot { padding: 3px 10px 4px; }
+html[data-layout="mini"] .order.editing .csend { padding: 6px; font-size: 13px; }
+html[data-layout="mini"] .order.editing .cselcount { font-size: 12px; }
+/* split check: the columns stack and the page scrolls */
+html[data-layout="mini"] .sphead { flex-direction: column; align-items: stretch; padding: 12px 12px 8px; }
+html[data-layout="mini"] .sptabs { overflow-x: auto; }
+html[data-layout="mini"] .spcols { flex-direction: column; overflow-x: hidden; overflow-y: auto; padding: 10px; }
+html[data-layout="mini"] .spcol, html[data-layout="mini"] .spcol.orig { flex: 0 0 auto; max-height: 360px; }
+html[data-layout="mini"] .spbar { padding: 10px 12px; flex-wrap: wrap; gap: 8px; }
+html[data-layout="mini"] .spinfo { flex: 1 1 100%; order: -1; text-align: left; }
+html[data-layout="mini"] .spbar > button { flex: 1 1 auto; }
+/* login: keypad above the Kitchen Board; open-checks list one per row */
+html[data-layout="mini"] .loginbody { flex-direction: column; gap: 16px; }
+html[data-layout="mini"] .loginpad, html[data-layout="mini"] .cinbox, html[data-layout="mini"] .card { width: 100%; }   /* not vw-based: the ?mini frame is narrower than the window */
+html[data-layout="mini"] .loginkeys { gap: 10px 20px; }
+html[data-layout="mini"] .bulletin { width: 100%; }
+html[data-layout="mini"] .msgtoast { left: 12px; right: 12px; max-width: none; }
+html[data-layout="mini"] .tabsgrid { grid-template-columns: 1fr; padding: 10px 12px 16px; }
+html[data-layout="mini"] .tabshead { padding: 14px 12px 6px; flex-wrap: wrap; gap: 8px; }
+
+/* ?mini in a desktop browser: the app boxed in a 360x640 frame. The frame's transform makes it
+   the containing block for every position:fixed sheet, so the whole UI stays inside it. */
+html.miniframe, html.miniframe body { height: 100%; }
+html.miniframe body { display: flex; align-items: center; justify-content: center; background: #2B2824; }
+html.miniframe #root { width: 380px; height: 660px; flex: 0 0 auto; /* 360x640 inside the 10px bezel */ overflow: clip; border-radius: 22px; border: 10px solid #111; box-shadow: 0 30px 80px rgba(0,0,0,.5); transform: translateZ(0); background: var(--cream); }
