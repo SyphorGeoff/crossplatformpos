@@ -3,13 +3,14 @@
  *   1. "Welcome / {name}" confirm (Cancel returns to the keypad)
  *   2. pick a job → clock in (Time_Card)  [a clock-in chit prints unless the
  *      job suppresses it — handled by the caller]
- *   3. if the job is NOT Skip_Table, pick the default dining room
+ *   3. if the job is NOT Skip_Table / clock-only / a Manager-Menu job, pick the default dining room
  * Ordering opens only once the shift is committed — no check without a clock-in.
  */
 
 import { useState } from "react";
 import type { CurrentEmployee } from "@/state/useEmployee";
 import type { DiningRoom, Job } from "@/model/catalog";
+import { clockInNeedsRoom } from "@/model/permissions";
 
 export interface ShiftCommit { jobId: string; jobName: string; sequence: string; defaultRoomId: string; }
 
@@ -36,7 +37,7 @@ export default function ClockInGate({ employee, jobs, rooms, onClockIn, onCommit
     onCommit({ jobId: job.id, jobName: job.name, sequence: r.sequence, defaultRoomId: roomId });
   };
   const pickJob = async (job: Job) => {
-    if (job.skipTable || job.timeclockOnly || rooms.length === 0) { await post(job, ""); return; } // bar mode / clock-only: no room
+    if (!clockInNeedsRoom(job, rooms.length)) { await post(job, ""); return; } // counter / clock-only / manager: no room
     setShift({ job }); setPhase("room");
   };
   const pickRoom = (roomId: string) => { if (shift) void post(shift.job, roomId); };

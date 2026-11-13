@@ -76,3 +76,10 @@ export function jobsForEmployee(empId: string): Job[] {
   const jobIds = new Set(employeeJobs().filter((e) => e.empId === empId).map((e) => e.jobId));
   return jobs().filter((j) => jobIds.has(j.id));
 }
+
+/** Does this clock-in need a default dining room? Not for a counter (Skip_Table)
+ *  or clock-only job, not when the store has no rooms, and never for a manager
+ *  job that lands on the Manager's Menu (Mgr_Menu without managerServerMode) —
+ *  a room is irrelevant to a manager clock-in (Geoff, 2026-11-13). */
+export const clockInNeedsRoom = (job: Pick<Job, "skipTable" | "timeclockOnly" | "mgrMenu" | "managerServerMode">, roomCount: number): boolean =>
+  roomCount > 0 && !job.skipTable && !job.timeclockOnly && !(job.mgrMenu && !job.managerServerMode);
