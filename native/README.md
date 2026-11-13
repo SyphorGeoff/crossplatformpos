@@ -100,3 +100,49 @@ cd android && JAVA_HOME=/usr/local/opt/openjdk@21 ./gradlew assembleRelease
 # versionCode/versionName in ../apk-upload/pos-version.json (the in-app Update button reads it)
 npx cap open ios       # build in Xcode, distribute in-house
 ```
+
+## Stripe Terminal SDK (StripeTerminalPlugin)
+
+`native/android/StripeTerminalPlugin.java` puts the Stripe Terminal Android SDK
+(`com.stripe:stripeterminal-core` + `stripeterminal-appsondevices`, 6.0.0, in
+`android/app/build.gradle`; minSdk 26 in `variables.gradle`) behind a Capacitor
+plugin for both flavours. `MainApplication.java` (manifest `android:name`) gives
+the SDK its lifecycle hook; `ACCESS_FINE_LOCATION` is in the manifest because the
+SDK refuses payments until it can locate the device (granted at install on the
+S710, requested once on a tablet). The JS driver is `src/payments/stripeSdk.ts`
+over the seam in `src/platform/stripeterminal.ts`; the Manager Console switch
+"Stripe cards: Terminal SDK / REST" (`src/payments/transport.ts`) picks it, and a
+web build is always REST. Connection tokens are minted by the app with the
+back-office secret key; no payment service. On the S710 the plugin connects in
+handoff mode (the app and the reader are one device); on a tablet it finds the
+terminal's reader over the LAN by its `tmr_` id; in test mode with no real reader
+it uses the SDK's simulated reader (the amount's cents pick the card, as with REST).
+
+## xmini (posx mini on the Stripe S710)
+
+The same Android project builds two products as Gradle flavours in
+`android/app/build.gradle`: `pos` (the tablet POS: `com.aireus.pos`, landscape,
+in-app Update pill) and `mini` (`com.aireus.xmini`, orientation left to the
+device — S710 portrait, T600 landscape — its own `versionCode`/`versionName` in
+the flavour block, kept equal to `package.json` `miniVersion`). Neither flavour
+forces a layout: the screen width decides (`src/platform/layout.ts`, 760px or
+narrower = mini), and the Manager Console "Layout" row can force mini on a wide
+screen for testing. `android/app/src/mini/` holds the mini-only app name and a
+manifest that removes `REQUEST_INSTALL_PACKAGES`, which is not on Stripe's Apps
+on Devices permission allowlist; the reader updates apps through the Stripe
+Dashboard, and `canSelfUpdate()` is off in the mini bundle.
+
+```bash
+npm run build:mini                                  # Node 18 → dist-mini/ (mini layout baked in, miniVersion)
+nvm use 22 && POS_MINI=1 npx cap sync android       # copies dist-mini into the shared assets folder
+cd android && JAVA_HOME=/usr/local/opt/openjdk@21 ./gradlew assembleMiniRelease
+# → android/app/build/outputs/apk/mini/release/app-mini-release.apk (signed with the same keystore)
+```
+
+`cap sync` copies whichever bundle the config names into the one shared assets
+folder, so sync the matching bundle before each flavour's `assemble…Release`
+(plain `npx cap sync android` + `assemblePosRelease` for the tablet APK) and
+check the APK's `assets/public/index.html` hash against the dist folder before
+handing it on. The xmini APK goes to Stripe (Dashboard → Terminal → Software →
+Create app, package `com.aireus.xmini`, device type Stripe Reader S700/S710),
+then a deploy group that holds the reader's location; it is never put on UpdateKit.

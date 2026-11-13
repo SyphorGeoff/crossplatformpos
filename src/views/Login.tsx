@@ -14,6 +14,8 @@
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { setSimulatorOn, simState, subscribeSim } from "@/platform/printsim";
+import { sdkAvailable, setStripeTransport, stripeTransportSetting } from "@/payments/transport";
+import { layoutInForce, layoutSetting, setLayoutSetting } from "@/platform/layout";
 import { ISIS_VER, type Settings } from "@/state/useSettings";
 import { loadJSON, saveJSON } from "@/platform/storage";
 import { clearBroadcast, fetchBroadcasts, type BroadcastNotice } from "@/protocol/messaging";
@@ -115,6 +117,8 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
   const [authPurpose, setAuthPurpose] = useState<"update" | "reset" | "console">("update");
   // Manager Console: press the version number → manager ID + PIN → terminal settings (the printer simulator for now).
   const [consoleOpen, setConsoleOpen] = useState(false);
+  const [transport, setTransport] = useState(stripeTransportSetting);   // Stripe cards: Terminal SDK or REST (console switch)
+  const [layout, setLayout] = useState(layoutSetting);                    // Layout: auto by width, or mini forced (console switch)
   const sim = useSyncExternalStore(subscribeSim, simState);
   const askConsole = () => { setAuthPurpose("console"); setAuthPhase("id"); setAuthId(""); setAuthEntry(""); setAuthError(""); setAuthOpen(true); };
   const [confirmReset, setConfirmReset] = useState(false);
@@ -213,8 +217,14 @@ export default function Login({ settings, lookup, usePin, onLogin, status = "", 
         <div className="authsub">Settings for this terminal</div>
         <div className="mgrlist">
           <button className="mgrrow" onClick={() => setSimulatorOn(!sim.on)}>Printer simulator<span>{sim.on ? "On" : "Off"}</span></button>
+          <button className="mgrrow" onClick={() => { setLayoutSetting(layout === "mini" ? "auto" : "mini"); setLayout(layoutSetting()); }}>
+            Layout<span>{layout === "mini" ? "Mini (forced)" : `Auto · ${layoutInForce() === "mini" ? "mini" : "tablet"}`}</span>
+          </button>
+          <button className="mgrrow" disabled={!sdkAvailable()} onClick={() => { setStripeTransport(transport === "sdk" ? "rest" : "sdk"); setTransport(stripeTransportSetting()); }}>
+            Stripe cards<span>{sdkAvailable() ? (transport === "sdk" ? "Terminal SDK" : "REST") : "REST (web)"}</span>
+          </button>
         </div>
-        <div className="authsub">Shows this terminal's receipts, check prints and clock chits in a window on screen. They still go to the printer.</div>
+        <div className="authsub">Printer simulator shows this terminal's receipts, check prints and clock chits in a window on screen; they still go to the printer. Layout follows the screen width (small = mini, large = tablet); Mini forces the small layout on a large screen, in a phone-sized frame. Stripe cards: the Terminal SDK takes payments offline and runs the reader directly; REST is the server-driven path, the only one a browser has.</div>
         <div className="mfactions"><button className="mfbtn go" onClick={() => setConsoleOpen(false)}>Done</button></div>
       </div>
     </div>

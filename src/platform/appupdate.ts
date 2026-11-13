@@ -30,6 +30,7 @@ const plugin = (): AppUpdatePlugin | undefined => capacitor()?.Plugins?.AppUpdat
 /** True only on a native build with the plugin compiled in — i.e. Android: the
  *  plugin is never added to the iOS target, so its presence is the platform gate. */
 export function canSelfUpdate(): boolean {
+  if (__APP_MINI__) return false;   // xmini on the Stripe reader is updated through the Stripe Dashboard, never by itself
   return isNative() && !!plugin();
 }
 

@@ -30,6 +30,11 @@ import NumberPad from "./NumberPad";
 const fmt = (n: number) => (n < 0 ? `-$${Math.abs(n).toFixed(2)}` : `$${n.toFixed(2)}`);
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
+/** Whether the app's own tip pad runs for a tender: only an OFFLINE tender with Ask_For_Tip. A card never
+ *  takes its tip on the app — an auth takes it at finalize, a one-shot sale (Pay At Table, auto-capture)
+ *  leaves it to the payment device the guest is holding (Geoff 2026-11-13). */
+export const appTipPadApplies = (tender: Pick<Tender, "askForTip" | "isOnline">): boolean => tender.askForTip && !tender.isOnline;
+
 type Mode = { kind: "tenders" } | { kind: "cash" } | { kind: "gift"; tender: Tender } | { kind: "room"; tender: Tender }
   | { kind: "card"; tender: Tender } | { kind: "tip"; tender: Tender; amount: number } | { kind: "divide" }
   | { kind: "processing"; tender: Tender; text: string }                     // waiting on the processor / device
@@ -138,8 +143,10 @@ export default function PaymentView(p: PaymentViewProps) {
       if (tender.overpayIsTip) { finishCard(tender, target, round2(amt - target)); return; }
       setMsg(`Amount exceeds the ${divideNum > 1 ? "share" : "balance due"} (${fmt(target)})`); setMode({ kind: "tenders" }); return;
     }
-    // An online auth takes no tip now — the tip is entered at finalize (capture); a one-shot sale asks first.
-    if (tender.askForTip && (!tender.isOnline || oneShot(tender))) { setMode({ kind: "tip", tender, amount: amt }); return; }
+    // The app's tip pad is for offline tenders only. A card never takes its tip here: an auth takes it at
+    // finalize (capture), and a one-shot sale (Pay At Table, auto-capture) leaves it to the payment device —
+    // the guest is holding the reader and keys the tip privately there (Geoff 2026-11-13).
+    if (appTipPadApplies(tender)) { setMode({ kind: "tip", tender, amount: amt }); return; }
     finishCard(tender, amt, 0);
   };
   const tipPct = p.card?.maxTipPercent ?? 50;

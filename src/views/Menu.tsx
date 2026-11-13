@@ -7,7 +7,7 @@
  * the server exactly as the iPad does.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ISIS_VER, type Settings } from "@/state/useSettings";
 import { useCheck } from "@/state/useCheck";
 import { mintCheckNumber, syncCheckCounter } from "@/state/checkcounter";
@@ -51,6 +51,7 @@ import {
   storeConfig, tenders as loadTenders, terminals as loadTerminals, voidReasons,
 } from "@/model/catalog";
 import { selectProcessor } from "@/payments/select";
+import { stripeTransportSetting, subscribeStripeTransport } from "@/payments/transport";
 import "@/payments/tsys";                                   // registers the TSYS processor (side effect)
 import "@/payments/stripe";                                 // registers the Stripe processor (side effect)
 import CardSetup from "./CardSetup";
@@ -249,7 +250,9 @@ export default function Menu({ settings, defsVersion, refreshDefinitions, onChan
   const terminalName = (id: string) => loadTerminals().find((t) => t.id === id)?.name || id;
   const terminalDef = useMemo(() => loadTerminals().find((t) => t.id === settings.terminalPosId), [defsVersion, settings.terminalPosId]); // eslint-disable-line react-hooks/exhaustive-deps
   // The card processor for the working check's revenue center (RC override, else the Store); null = online tenders disabled.
-  const cardSel = useMemo(() => selectProcessor(store, cat.rcById.get(ck.check.revenueCenterId) ?? null), [store, cat, ck.check.revenueCenterId]);
+  // Re-selected when the Manager Console flips Stripe between the Terminal SDK and REST (the registry decides per selection).
+  const stripeTransport = useSyncExternalStore(subscribeStripeTransport, stripeTransportSetting);
+  const cardSel = useMemo(() => selectProcessor(store, cat.rcById.get(ck.check.revenueCenterId) ?? null), [store, cat, ck.check.revenueCenterId, stripeTransport]);
   const [showFinalize, setShowFinalize] = useState(false);
   const [showCardSetup, setShowCardSetup] = useState(false);
   const [presentRun, setPresentRun] = useState<{ text: string; cancel: () => void } | null>(null);   // a card-present refund waiting for the card

@@ -48,6 +48,8 @@ import { loadJSON, saveJSON } from "@/platform/storage";
 import type { ProcessorConfig } from "./config";
 import { brandFromText, declined, failed, type CardAmounts, type CardProcessor, type CardRequest, type CardResult, type CheckRef } from "./processor";
 import { registerProcessor } from "./select";
+import { makeStripeSdk } from "./stripeSdk";
+import { effectiveStripeTransport } from "./transport";
 
 export const STRIPE_API = "https://api.stripe.com/v1";
 export const STRIPE_VERSION = "2024-06-20";
@@ -282,6 +284,17 @@ export async function checkStripeKey(cfg: ProcessorConfig): Promise<{ ok: boolea
   const r = await call(cfg, "GET", "/terminal/locations", { limit: 1 });
   if (!r.ok) return { ok: false, message: r.error?.message ?? `HTTP ${r.status}`, mode };
   return { ok: true, message: `Key OK (${mode || "unknown"} mode)`, mode };
+}
+
+/** A Terminal connection token for the SDK driver (stripeSdk.ts): the account's own key mints it, so
+ *  there is no payment service. Throws when Stripe cannot be reached, which is what the SDK needs offline. */
+export async function createConnectionToken(cfg: ProcessorConfig): Promise<string> {
+  const location = stripeLocation(cfg);
+  const r = await call(cfg, "POST", "/terminal/connection_tokens", { location: location || undefined });
+  if (!r.ok) throw new Error(r.error?.message ?? `HTTP ${r.status}`);
+  const secret = str(r.body.secret);
+  if (!secret) throw new Error("Stripe returned no connection token");
+  return secret;
 }
 
 /* ---------------- currency ---------------- */
@@ -565,4 +578,6 @@ export function makeStripe(cfg: ProcessorConfig): CardProcessor {
   };
 }
 
-registerProcessor("stripe", makeStripe);
+// The transport setting (transport.ts) picks the SDK driver (stripeSdk.ts, Android plugin) or this one at
+// selection time; a build without the plugin always gets this one.
+registerProcessor("stripe", (cfg) => (effectiveStripeTransport() === "sdk" ? makeStripeSdk(cfg) : makeStripe(cfg)));

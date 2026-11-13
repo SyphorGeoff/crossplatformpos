@@ -1,25 +1,42 @@
 /*
- * Layout mode. "mini" is the posx mini layout (posx on a Stripe S710: a 5.5"
- * 1920x1080 portrait panel the WebView reports at roughly 360x640 CSS px):
- * single column, the check panel slides over the menu behind a button.
+ * Layout mode. "mini" is the small-screen layout (a phone, or the Stripe S710: a
+ * 5.5" panel the WebView reports at roughly 360x640 CSS px): one column, the check
+ * panel slides over the menu behind a button. "full" is the tablet layout.
  *
- * The xmini build (npm run build:mini, __APP_MINI__ true, its own version
- * line in package.json "miniVersion") forces mini; the xpos build picks it by
- * viewport width. On a screen wider than a phone, a forced mini boxes the app
- * into a 360x640 frame (the frame is the containing block for every
- * fixed-position sheet, so the whole UI stays inside it); on a phone or the
- * reader it just fills the screen. `?mini` forces it on the dev server.
+ * One rule everywhere (Geoff 2026-11-13): the screen width decides — 760px or
+ * narrower is mini, wider is full — and the Manager Console can force mini on a
+ * wide screen (for testing the small layout on a PC or tablet). On a wide screen a
+ * forced mini is boxed into a 360x640 frame. Nothing can force the tablet layout
+ * onto a small screen, and no build forces either: a landscape countertop reader
+ * gets the tablet layout by its width just as a phone gets mini by its own.
  */
 
-const MINI_QUERY = "(max-width: 760px)";   // xpos: narrow viewport → mini layout
-const FRAME_QUERY = "(min-width: 440px)";  // forced mini: room for the 380px frame → draw it
+import { loadStr, saveStr } from "./storage";
+
+export type LayoutSetting = "auto" | "mini";
+
+const KEY = "layout.v1";
+const MINI_QUERY = "(max-width: 760px)";   // narrow screen → mini
+const FRAME_QUERY = "(min-width: 440px)";  // forced mini with room for the 380px frame → draw it
+
+export function layoutSetting(): LayoutSetting { return loadStr(KEY, "auto") === "mini" ? "mini" : "auto"; }
+
+let apply: (() => void) | null = null;
+
+/** Store the console's choice and re-lay the page at once. */
+export function setLayoutSetting(v: LayoutSetting): void { saveStr(KEY, v); apply?.(); }
+
+/** What is in force now: "mini" or "full" (what the console row shows beside its setting). */
+export function layoutInForce(): "mini" | "full" {
+  return document.documentElement.dataset.layout === "mini" ? "mini" : "full";
+}
 
 export function installLayout(): void {
   const html = document.documentElement;
-  const forced = __APP_MINI__ || new URLSearchParams(window.location.search).has("mini");
   const mini = window.matchMedia(MINI_QUERY);
   const room = window.matchMedia(FRAME_QUERY);
-  const apply = () => {
+  apply = () => {
+    const forced = layoutSetting() === "mini";
     html.dataset.layout = forced || mini.matches ? "mini" : "full";
     html.classList.toggle("miniframe", forced && room.matches);
   };

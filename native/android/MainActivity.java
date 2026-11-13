@@ -7,7 +7,7 @@ import androidx.core.view.WindowInsetsControllerCompat;
 import com.getcapacitor.BridgeActivity;
 
 /**
- * Capacitor host activity. Registers the TcpPrint and AppUpdate plugins and runs the app
+ * Capacitor host activity. Registers the TcpPrint, AppUpdate and StripeTerminal plugins and runs the app
  * full-screen: the Android status bar and the navigation bar / tablet taskbar
  * are hidden ("immersive sticky") — an edge swipe peeks them for a few seconds,
  * then they hide again on their own. Re-applied whenever the window regains
@@ -18,6 +18,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(TcpPrintPlugin.class);
         registerPlugin(AppUpdatePlugin.class);
+        registerPlugin(StripeTerminalPlugin.class);
         super.onCreate(savedInstanceState);
     }
 
